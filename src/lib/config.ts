@@ -72,5 +72,6 @@ export const NAV_ITEMS: NavItem[] = [
     { id: 'reputation', label: 'Reputation', href: '/reputation', icon: 'star' },
     { id: 'content', label: 'Content', href: '/content', icon: 'layout' },
     { id: 'publish', label: 'Publish', href: '/publish', icon: 'send' },
+    { id: 'creatives', label: 'Creatives', href: '/creatives', icon: 'sparkles' },
     { id: 'settings', label: 'Settings', href: '/settings', icon: 'settings', adminOnly: true },
 ];

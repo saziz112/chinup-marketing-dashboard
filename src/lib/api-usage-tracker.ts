@@ -1,7 +1,7 @@
 // API Usage Tracker — in-memory singleton for monitoring API call counts,
 // cache efficiency, and quota consumption across all integrations.
 
-type ApiName = 'mindbody' | 'meta' | 'metaAds' | 'youtube' | 'googleAds' | 'googleBusiness' | 'yelp' | 'realself' | 'googleSearchConsole';
+type ApiName = 'mindbody' | 'meta' | 'metaAds' | 'youtube' | 'googleAds' | 'googleBusiness' | 'yelp' | 'realself' | 'googleSearchConsole' | 'kieAi';
 
 interface CallRecord {
   timestamp: number;
@@ -94,6 +94,12 @@ const API_CONFIGS: Record<ApiName, {
     displayName: 'Google Search Console',
     quotaLimit: 2000,
     quotaUnit: 'queries',
+    quotaPeriod: 'day',
+  },
+  kieAi: {
+    displayName: 'Kie.ai (Creatives)',
+    quotaLimit: null,
+    quotaUnit: 'generations',
     quotaPeriod: 'day',
   }
 };

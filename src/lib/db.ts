@@ -18,6 +18,7 @@ export async function initAllTables() {
         initReviewMetricsDailyTable(),
         initSearchConsoleDailyTable(),
         initSyncLogTable(),
+        initCreativeImagesTable(),
     ]);
 }
 
@@ -250,4 +251,29 @@ async function initSyncLogTable() {
             completed_at TIMESTAMP WITH TIME ZONE
         )
     `;
+}
+
+async function initCreativeImagesTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS creative_images (
+            id TEXT PRIMARY KEY,
+            prompt TEXT NOT NULL,
+            enhanced_prompt TEXT,
+            style VARCHAR(50),
+            aspect_ratio VARCHAR(20),
+            resolution VARCHAR(10),
+            reference_image_url TEXT,
+            task_id VARCHAR(100),
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            image_url TEXT,
+            blob_url TEXT,
+            fail_msg TEXT,
+            cost_time_ms INT,
+            created_by VARCHAR(255),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP WITH TIME ZONE
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_creative_images_status ON creative_images(status)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_creative_images_created ON creative_images(created_at)`;
 }

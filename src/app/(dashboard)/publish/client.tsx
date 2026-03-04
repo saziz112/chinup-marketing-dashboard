@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { upload } from '@vercel/blob/client';
 import { PostRecord, Platform } from '@/lib/content-publisher';
 import { PostType } from '@/lib/integrations/meta-publisher';
@@ -106,6 +107,7 @@ export default function PublishDashboardClient() {
 // ─── Create Post Form ───────────────────────────────────────────────────────
 
 function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
+    const searchParams = useSearchParams();
     const [caption, setCaption] = useState('');
     const [platforms, setPlatforms] = useState<Platform[]>([]);
     const [postType, setPostType] = useState<PostType>('feed');
@@ -121,6 +123,18 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'partial'; message: string; details?: string[] } | null>(null);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Pre-fill media from query param (e.g. from AI Creatives "Send to Publish")
+    useEffect(() => {
+        const prefillUrl = searchParams.get('mediaUrl');
+        if (prefillUrl) {
+            setMediaUrl(prefillUrl);
+            setMediaPreview(prefillUrl);
+            setMediaType(prefillUrl.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'photo');
+            // Clear the param so it doesn't persist on refresh
+            window.history.replaceState({}, '', '/publish');
+        }
+    }, [searchParams]);
 
     const togglePlatform = (p: Platform) => {
         setPlatforms(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
