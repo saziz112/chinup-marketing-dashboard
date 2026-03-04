@@ -1,22 +1,31 @@
 /**
  * Meta Publishing API Client
- * 
+ *
  * Handles live publishing to Facebook Pages and Instagram Business accounts
  * using the Meta Graph API v21.0.
- * 
+ *
  * Facebook:
  *   - Text: POST /{page-id}/feed
  *   - Photo: POST /{page-id}/photos (url param)
  *   - Video: POST /{page-id}/videos (file_url param)
- * 
+ *
  * Instagram (two-step container API):
  *   - Photo: POST /{ig-user-id}/media (image_url) → media_publish
  *   - Reel:  POST /{ig-user-id}/media (video_url + media_type=REELS) → media_publish
- * 
+ *
+ * Auto-resizes images for Instagram aspect ratio compliance (4:5 to 1.91:1).
+ *
  * Requires: META_PAGE_ACCESS_TOKEN, META_PAGE_ID, META_IG_USER_ID
  */
 
+import sharp from 'sharp';
+import { put } from '@vercel/blob';
+
 const GRAPH_API_BASE = 'https://graph.facebook.com/v21.0';
+
+// Instagram aspect ratio constraints
+const IG_MIN_RATIO = 0.8;   // 4:5 portrait
+const IG_MAX_RATIO = 1.91;  // 1.91:1 landscape
 
 function getEnv(key: string): string {
     const val = process.env[key];
@@ -125,18 +134,88 @@ export async function publishToFacebook(
     }
 }
 
+// ─── Instagram Image Auto-Resize ────────────────────────────────────────────
+
+/**
+ * Ensures an image meets Instagram's aspect ratio requirements (4:5 to 1.91:1).
+ * If the image is outside bounds, it center-crops to the nearest valid ratio
+ * and re-uploads the cropped version to Vercel Blob.
+ *
+ * Returns the original URL if already compliant, or the new cropped URL.
+ */
+async function ensureInstagramAspectRatio(imageUrl: string): Promise<string> {
+    try {
+        // Download the image
+        const res = await fetch(imageUrl);
+        if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
+        const buffer = Buffer.from(await res.arrayBuffer());
+
+        // Get dimensions
+        const metadata = await sharp(buffer).metadata();
+        const { width, height } = metadata;
+        if (!width || !height) return imageUrl;
+
+        const ratio = width / height;
+        console.log(`[IG Resize] Image ${width}x${height}, ratio ${ratio.toFixed(3)} (valid: ${IG_MIN_RATIO}-${IG_MAX_RATIO})`);
+
+        // Already within Instagram's valid range
+        if (ratio >= IG_MIN_RATIO && ratio <= IG_MAX_RATIO) {
+            return imageUrl;
+        }
+
+        // Calculate crop dimensions
+        let cropWidth = width;
+        let cropHeight = height;
+
+        if (ratio > IG_MAX_RATIO) {
+            // Too wide (e.g. panoramic) → crop sides, keep height
+            cropWidth = Math.round(height * IG_MAX_RATIO);
+        } else {
+            // Too tall → crop top/bottom, keep width
+            cropHeight = Math.round(width / IG_MIN_RATIO);
+        }
+
+        // Center-crop
+        const left = Math.round((width - cropWidth) / 2);
+        const top = Math.round((height - cropHeight) / 2);
+
+        console.log(`[IG Resize] Cropping to ${cropWidth}x${cropHeight} (from ${width}x${height})`);
+
+        const cropped = await sharp(buffer)
+            .extract({ left, top, width: cropWidth, height: cropHeight })
+            .jpeg({ quality: 92 })
+            .toBuffer();
+
+        // Re-upload cropped version to Vercel Blob
+        const filename = `publish/ig_cropped_${Date.now()}.jpg`;
+        const blob = await put(filename, cropped, {
+            access: 'public',
+            addRandomSuffix: false,
+            contentType: 'image/jpeg',
+        });
+
+        console.log(`[IG Resize] Cropped image uploaded: ${blob.url}`);
+        return blob.url;
+    } catch (err: any) {
+        console.error('[IG Resize] Error:', err.message);
+        // Fall back to original URL — Instagram will reject if still invalid
+        return imageUrl;
+    }
+}
+
 // ─── Instagram Publishing ───────────────────────────────────────────────────
 
 /**
  * Publish a photo or reel to Instagram.
- * 
+ *
  * Two-step process:
  * 1. Create a media container: POST /{ig-user-id}/media
  *    - Photo: { image_url, caption }
  *    - Reel:  { video_url, caption, media_type: 'REELS' }
  * 2. Poll container until ready
  * 3. Publish the container: POST /{ig-user-id}/media_publish
- * 
+ *
+ * Photos are auto-resized to meet Instagram's aspect ratio requirements.
  * NOTE: Both image_url and video_url MUST be publicly accessible HTTPS URLs.
  */
 export async function publishToInstagram(
@@ -166,6 +245,12 @@ export async function publishToInstagram(
     const isVideo = mediaType === 'video' || isVideoUrl(mediaUrl);
 
     try {
+        // Auto-resize photos if aspect ratio is out of Instagram's bounds
+        let finalMediaUrl = mediaUrl;
+        if (!isVideo) {
+            finalMediaUrl = await ensureInstagramAspectRatio(mediaUrl);
+        }
+
         // Step 1: Create media container
         const containerBody: Record<string, string> = {
             caption: caption,
@@ -173,10 +258,10 @@ export async function publishToInstagram(
         };
 
         if (isVideo) {
-            containerBody.video_url = mediaUrl;
+            containerBody.video_url = finalMediaUrl;
             containerBody.media_type = 'REELS';
         } else {
-            containerBody.image_url = mediaUrl;
+            containerBody.image_url = finalMediaUrl;
         }
 
         const containerRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media`, {
