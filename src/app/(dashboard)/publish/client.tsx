@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { upload } from '@vercel/blob/client';
 import { PostRecord, Platform } from '@/lib/content-publisher';
 import {
     Calendar, CheckCircle, Clock, History, PenTool, LayoutTemplate,
@@ -130,16 +131,21 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
         setMediaType(file.type.startsWith('video/') ? 'video' : 'photo');
 
         try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const res = await fetch('/api/upload', { method: 'POST', body: formData });
-            const data = await res.json();
+            // Client-side upload: file goes directly from browser → Vercel Blob
+            // Bypasses the 4.5MB serverless function body limit
+            const ext = file.name.split('.').pop() || 'jpg';
+            const cleanName = file.name
+                .replace(/\.[^/.]+$/, '')
+                .replace(/[^a-zA-Z0-9-_]/g, '_')
+                .substring(0, 50);
+            const filename = `publish/${cleanName}_${Date.now()}.${ext}`;
 
-            if (!res.ok) {
-                throw new Error(data.error || 'Upload failed');
-            }
+            const blob = await upload(filename, file, {
+                access: 'public',
+                handleUploadUrl: '/api/upload/token',
+            });
 
-            setMediaUrl(data.url);
+            setMediaUrl(blob.url);
         } catch (err: any) {
             setUploadError(err.message || 'Upload failed');
             setMediaPreview(null);

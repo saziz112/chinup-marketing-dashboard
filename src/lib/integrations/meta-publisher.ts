@@ -189,9 +189,14 @@ export async function publishToInstagram(
 
         if (containerData.error) {
             console.error('[Meta Publish IG] Container error:', containerData.error);
+            let errorMsg = containerData.error.message || 'Failed to create Instagram media container';
+            // Provide helpful context for common IG errors
+            if (errorMsg.toLowerCase().includes('aspect ratio')) {
+                errorMsg += ' Instagram requires images between 4:5 (portrait) and 1.91:1 (landscape). Try cropping the image before uploading.';
+            }
             return {
                 success: false,
-                error: containerData.error.message || 'Failed to create Instagram media container',
+                error: errorMsg,
                 platform: 'instagram',
             };
         }
