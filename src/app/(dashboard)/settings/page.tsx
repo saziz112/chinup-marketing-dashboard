@@ -4,30 +4,58 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-export default function SettingsPage() {
-    const { data: session } = useSession();
-    const router = useRouter();
+interface UserRow {
+    id: number;
+    email: string;
+    staff_id: string;
+    role: string;
+    last_login_at: string | null;
+    is_active: boolean;
+    created_at: string;
+    failed_login_attempts: number;
+}
 
+interface APIStats {
+    apiName: string;
+    displayName: string;
+    totalCalls: number;
+    cacheHits: number;
+    cacheMisses: number;
+    cacheHitRate: number;
+    quotaLimit: number | null;
+    quotaUsed: number;
+    quotaUnit: string;
+    quotaPeriod: string;
+    lastRefresh: string | null;
+    estimatedCost: string;
+}
+
+export default function SettingsPage() {
+    const { data: session, update: updateSession } = useSession();
+    const router = useRouter();
     const user = session?.user as Record<string, unknown> | undefined;
     const isAdmin = user?.isAdmin === true;
 
-    interface APIStats {
-        apiName: string;
-        displayName: string;
-        totalCalls: number;
-        cacheHits: number;
-        cacheMisses: number;
-        cacheHitRate: number;
-        quotaLimit: number | null;
-        quotaUsed: number;
-        quotaUnit: string;
-        quotaPeriod: string;
-        lastRefresh: string | null;
-        estimatedCost: string;
-    }
-
+    // --- State ---
+    const [users, setUsers] = useState<UserRow[]>([]);
+    const [usersLoading, setUsersLoading] = useState(true);
     const [usage, setUsage] = useState<{ trackedSince: string; apis: APIStats[] } | null>(null);
     const [usageLoading, setUsageLoading] = useState(true);
+    const [showAddUser, setShowAddUser] = useState(false);
+    const [addEmail, setAddEmail] = useState('');
+    const [addStaffId, setAddStaffId] = useState('');
+    const [addRole, setAddRole] = useState('marketing_manager');
+    const [actionMsg, setActionMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+    const [processing, setProcessing] = useState<string | null>(null);
+
+    // Change own password
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [pwMsg, setPwMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+    // --- Tab state ---
+    const [activeTab, setActiveTab] = useState<'users' | 'accounts' | 'usage'>('users');
 
     useEffect(() => {
         if (user && !isAdmin) {
@@ -35,6 +63,17 @@ export default function SettingsPage() {
         }
     }, [user, isAdmin, router]);
 
+    // Fetch users
+    useEffect(() => {
+        if (!isAdmin) return;
+        fetch('/api/admin/users')
+            .then(r => r.json())
+            .then(d => setUsers(d.users || []))
+            .catch(() => { })
+            .finally(() => setUsersLoading(false));
+    }, [isAdmin]);
+
+    // Fetch API usage
     useEffect(() => {
         if (!isAdmin) return;
         fetch('/api/usage')
@@ -46,157 +85,527 @@ export default function SettingsPage() {
 
     if (!isAdmin) return null;
 
+    const showFlash = (text: string, type: 'success' | 'error') => {
+        setActionMsg({ text, type });
+        setTimeout(() => setActionMsg(null), 4000);
+    };
+
+    const handleAddUser = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setProcessing('add');
+        try {
+            const res = await fetch('/api/admin/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: addEmail, staff_id: addStaffId, role: addRole }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Failed to add user');
+            showFlash(`User ${addEmail} added. Default password: chinup2026`, 'success');
+            setAddEmail(''); setAddStaffId(''); setAddRole('marketing_manager'); setShowAddUser(false);
+            // Refresh
+            const r2 = await fetch('/api/admin/users');
+            const d2 = await r2.json();
+            setUsers(d2.users || []);
+        } catch (e: any) {
+            showFlash(e.message, 'error');
+        } finally {
+            setProcessing(null);
+        }
+    };
+
+    const handleDeleteUser = async (id: number, email: string) => {
+        if (!confirm(`Are you sure you want to delete ${email}? This cannot be undone.`)) return;
+        setProcessing(`del-${id}`);
+        try {
+            const res = await fetch('/api/admin/users', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id }),
+            });
+            if (!res.ok) throw new Error('Failed to delete');
+            showFlash(`${email} has been removed.`, 'success');
+            setUsers(prev => prev.filter(u => u.id !== id));
+        } catch (e: any) {
+            showFlash(e.message, 'error');
+        } finally {
+            setProcessing(null);
+        }
+    };
+
+    const handleResetPassword = async (id: number, email: string) => {
+        if (!confirm(`Reset password for ${email}? New password will be: chinup2026`)) return;
+        setProcessing(`reset-${id}`);
+        try {
+            const res = await fetch('/api/admin/users', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, action: 'reset_password' }),
+            });
+            if (!res.ok) throw new Error('Failed to reset password');
+            showFlash(`Password for ${email} reset to: chinup2026`, 'success');
+        } catch (e: any) {
+            showFlash(e.message, 'error');
+        } finally {
+            setProcessing(null);
+        }
+    };
+
+    const handleChangeOwnPassword = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (newPassword !== confirmPassword) {
+            setPwMsg({ text: 'Passwords do not match', type: 'error' });
+            return;
+        }
+        if (newPassword.length < 6) {
+            setPwMsg({ text: 'Password must be at least 6 characters', type: 'error' });
+            return;
+        }
+        setProcessing('pw');
+        try {
+            const res = await fetch('/api/auth/change-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ currentPassword, newPassword }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to change password');
+            setPwMsg({ text: 'Password updated successfully!', type: 'success' });
+            setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+            if (updateSession) await updateSession();
+        } catch (e: any) {
+            setPwMsg({ text: e.message, type: 'error' });
+        } finally {
+            setProcessing(null);
+        }
+    };
+
+    const formatDate = (d: string | null) => {
+        if (!d) return 'Never';
+        return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    };
+
+    const loginStatus = (u: UserRow) => {
+        if (!u.last_login_at) return { label: 'Never logged in', color: 'var(--text-muted)' };
+        const diff = Date.now() - new Date(u.last_login_at).getTime();
+        if (diff < 24 * 60 * 60 * 1000) return { label: 'Active today', color: '#22c55e' };
+        if (diff < 7 * 24 * 60 * 60 * 1000) return { label: 'Active this week', color: '#22c55e' };
+        if (diff < 30 * 24 * 60 * 60 * 1000) return { label: 'Active this month', color: '#f59e0b' };
+        return { label: 'Inactive', color: '#ef4444' };
+    };
+
+    const tabs = [
+        { id: 'users' as const, label: 'Users & Security', icon: '👥' },
+        { id: 'accounts' as const, label: 'Connected Accounts', icon: '🔗' },
+        { id: 'usage' as const, label: 'API Usage', icon: '📊' },
+    ];
+
     const platforms = [
-        { name: 'Instagram', connected: false },
-        { name: 'Facebook', connected: false },
-        { name: 'YouTube', connected: false },
-        { name: 'Meta Ads', connected: false },
-        { name: 'Google Ads', connected: false },
-        { name: 'Google Business', connected: false },
-        { name: 'Search Console', connected: false },
-        { name: 'MindBody', connected: false },
-        { name: 'Yelp', connected: false },
-        { name: 'RealSelf', connected: false },
+        { name: 'MindBody', connected: true },
+        { name: 'Instagram', connected: true },
+        { name: 'Facebook', connected: true },
+        { name: 'YouTube', connected: true },
+        { name: 'Meta Ads', connected: true },
+        { name: 'Google Ads', connected: true },
+        { name: 'Google Business', connected: true },
+        { name: 'Search Console', connected: true },
     ];
 
     return (
         <>
             <div className="page-header">
                 <h1>Settings</h1>
-                <p className="subtitle">Manage connected accounts, sync status, and users</p>
+                <p className="subtitle">Manage users, connected accounts, and API usage</p>
             </div>
 
-            <div className="section-card">
-                <h3>Connected Accounts</h3>
-                <div className="data-table-wrapper"><table className="data-table">
-                    <thead>
-                        <tr>
-                            <th>Platform</th>
-                            <th>Status</th>
-                            <th>Last Sync</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {platforms.map(p => (
-                            <tr key={p.name}>
-                                <td style={{ fontWeight: 600 }}>{p.name}</td>
-                                <td>
-                                    <span className={`badge ${p.connected ? 'success' : 'warning'}`}>
-                                        {p.connected ? 'Connected' : 'Not connected'}
-                                    </span>
-                                </td>
-                                <td style={{ color: 'var(--text-muted)' }}>Never</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table></div>
+            {/* Flash Message */}
+            {actionMsg && (
+                <div style={{
+                    padding: '12px 20px',
+                    borderRadius: '8px',
+                    marginBottom: '16px',
+                    background: actionMsg.type === 'success' ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                    border: `1px solid ${actionMsg.type === 'success' ? '#22c55e' : '#ef4444'}`,
+                    color: actionMsg.type === 'success' ? '#22c55e' : '#ef4444',
+                    fontSize: '0.875rem',
+                    fontWeight: 500,
+                }}>
+                    {actionMsg.text}
+                </div>
+            )}
+
+            {/* Tab Navigation */}
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '4px' }}>
+                {tabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        style={{
+                            flex: 1,
+                            padding: '10px 16px',
+                            borderRadius: '8px',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '0.875rem',
+                            fontWeight: activeTab === tab.id ? 600 : 400,
+                            background: activeTab === tab.id ? 'rgba(255,255,255,0.08)' : 'transparent',
+                            color: activeTab === tab.id ? '#fff' : 'var(--text-muted)',
+                            transition: 'all 0.2s',
+                        }}
+                    >
+                        {tab.icon} {tab.label}
+                    </button>
+                ))}
             </div>
 
-            <div className="section-card">
-                <h3>Data Sync</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '16px' }}>
-                    Data syncs automatically every day at 2:00 AM EST. You can also trigger a manual sync below.
-                </p>
-                <button className="login-btn" style={{ width: 'auto', padding: '10px 24px' }} disabled>
-                    Sync Now (Coming Soon)
-                </button>
-            </div>
-
-            <div className="section-card">
-                <h3>API Usage</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '16px' }}>
-                    Real-time API quota consumption and cache efficiency. All integrations are on free tiers.
-                </p>
-
-                {usageLoading ? (
-                    <p style={{ color: 'var(--text-muted)' }}>Loading...</p>
-                ) : usage ? (
-                    <>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                            {usage.apis.map(api => (
-                                <div key={api.apiName} className="metric-card" style={{ padding: '20px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                        <span style={{ fontWeight: 700, fontSize: '0.9375rem' }}>{api.displayName}</span>
-                                        <span className="badge success">{api.estimatedCost}</span>
-                                    </div>
-
-                                    {api.quotaLimit ? (
-                                        <div style={{ marginBottom: '16px' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                                                <span>{api.quotaUsed.toLocaleString()} / {api.quotaLimit.toLocaleString()} {api.quotaUnit}</span>
-                                                <span>{Math.round((api.quotaUsed / api.quotaLimit) * 100)}%</span>
-                                            </div>
-                                            <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
-                                                <div style={{
-                                                    height: '100%',
-                                                    width: `${Math.min((api.quotaUsed / api.quotaLimit) * 100, 100)}%`,
-                                                    background: (api.quotaUsed / api.quotaLimit) > 0.8 ? '#f59e0b' : '#22c55e',
-                                                    borderRadius: '3px',
-                                                    transition: 'width 0.3s',
-                                                }} />
-                                            </div>
-                                            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                                per {api.quotaPeriod}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div style={{ marginBottom: '16px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                            {api.quotaUsed} {api.quotaUnit} today (no hard limit)
-                                        </div>
-                                    )}
-
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '0.75rem' }}>
-                                        <div>
-                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '2px' }}>API Calls</div>
-                                            <div style={{ fontWeight: 700 }}>{api.totalCalls}</div>
-                                        </div>
-                                        <div>
-                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '2px' }}>Cache Rate</div>
-                                            <div style={{ fontWeight: 700, color: '#22c55e' }}>{api.cacheHitRate}%</div>
-                                        </div>
-                                        <div>
-                                            <div style={{ color: 'var(--text-muted)', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '2px' }}>Last Refresh</div>
-                                            <div style={{ fontWeight: 600, fontSize: '0.6875rem' }}>
-                                                {api.lastRefresh ? new Date(api.lastRefresh).toLocaleTimeString() : 'Never'}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
+            {/* ==================== USERS TAB ==================== */}
+            {activeTab === 'users' && (
+                <>
+                    {/* User Management */}
+                    <div className="section-card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h3 style={{ margin: 0 }}>User Management</h3>
+                            <button
+                                onClick={() => setShowAddUser(!showAddUser)}
+                                className="login-btn"
+                                style={{ width: 'auto', padding: '8px 20px', fontSize: '0.8125rem' }}
+                            >
+                                {showAddUser ? '✕ Cancel' : '+ Add User'}
+                            </button>
                         </div>
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.6875rem', marginTop: '12px' }}>
-                            Tracking since {new Date(usage.trackedSince).toLocaleString()}. Stats reset on server restart.
-                        </p>
-                    </>
-                ) : (
-                    <p style={{ color: 'var(--text-muted)' }}>Unable to load usage data</p>
-                )}
-            </div>
 
-            <div className="section-card">
-                <h3>Users</h3>
-                <div className="data-table-wrapper"><table className="data-table">
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Role</th>
-                            <th>Email</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td style={{ fontWeight: 600 }}>Sam Aziz</td>
-                            <td><span className="badge success">Admin</span></td>
-                            <td>sam.aziz@chinupaesthetics.com</td>
-                        </tr>
-                        <tr>
-                            <td style={{ fontWeight: 600 }}>Sharia Philadelphia</td>
-                            <td><span className="badge info">Marketing Manager</span></td>
-                            <td>sharia@chinupaesthetics.com</td>
-                        </tr>
-                    </tbody>
-                </table></div>
-            </div>
+                        {/* Add User Form */}
+                        {showAddUser && (
+                            <form onSubmit={handleAddUser} style={{
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: '10px',
+                                padding: '20px',
+                                marginBottom: '20px',
+                                display: 'grid',
+                                gridTemplateColumns: '1fr 1fr 1fr auto',
+                                gap: '12px',
+                                alignItems: 'end',
+                            }}>
+                                <div>
+                                    <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Email Address</label>
+                                    <input
+                                        type="email"
+                                        value={addEmail}
+                                        onChange={e => setAddEmail(e.target.value)}
+                                        placeholder="name@chinupaesthetics.com"
+                                        required
+                                        style={{
+                                            width: '100%', padding: '8px 12px', borderRadius: '6px',
+                                            border: '1px solid var(--border-color)', background: 'var(--card-bg)',
+                                            color: '#fff', fontSize: '0.875rem', outline: 'none',
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Staff ID</label>
+                                    <input
+                                        type="text"
+                                        value={addStaffId}
+                                        onChange={e => setAddStaffId(e.target.value)}
+                                        placeholder="e.g. 100000123"
+                                        required
+                                        style={{
+                                            width: '100%', padding: '8px 12px', borderRadius: '6px',
+                                            border: '1px solid var(--border-color)', background: 'var(--card-bg)',
+                                            color: '#fff', fontSize: '0.875rem', outline: 'none',
+                                        }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Role</label>
+                                    <select
+                                        value={addRole}
+                                        onChange={e => setAddRole(e.target.value)}
+                                        style={{
+                                            width: '100%', padding: '8px 12px', borderRadius: '6px',
+                                            border: '1px solid var(--border-color)', background: 'var(--card-bg)',
+                                            color: '#fff', fontSize: '0.875rem', outline: 'none',
+                                        }}
+                                    >
+                                        <option value="admin">Admin</option>
+                                        <option value="marketing_manager">Marketing Manager</option>
+                                    </select>
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={processing === 'add'}
+                                    className="login-btn"
+                                    style={{ width: 'auto', padding: '8px 20px', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}
+                                >
+                                    {processing === 'add' ? 'Adding...' : 'Add User'}
+                                </button>
+                            </form>
+                        )}
+
+                        {/* Users Table */}
+                        {usersLoading ? (
+                            <p style={{ color: 'var(--text-muted)' }}>Loading users...</p>
+                        ) : (
+                            <div className="data-table-wrapper">
+                                <table className="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Email</th>
+                                            <th>Role</th>
+                                            <th>Last Login</th>
+                                            <th>Status</th>
+                                            <th style={{ textAlign: 'right' }}>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {users.map(u => {
+                                            const status = loginStatus(u);
+                                            const isSelf = (user?.staffId as string) === u.staff_id;
+                                            return (
+                                                <tr key={u.id}>
+                                                    <td style={{ fontWeight: 600 }}>
+                                                        {u.email}
+                                                        {isSelf && <span style={{ marginLeft: '8px', fontSize: '0.6875rem', color: 'var(--accent)', fontWeight: 700 }}>YOU</span>}
+                                                    </td>
+                                                    <td>
+                                                        <span className={`badge ${u.role === 'admin' ? 'success' : 'info'}`}>
+                                                            {u.role === 'admin' ? 'Admin' : 'Marketing Manager'}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>
+                                                        {formatDate(u.last_login_at)}
+                                                    </td>
+                                                    <td>
+                                                        <span style={{ color: status.color, fontSize: '0.8125rem', fontWeight: 500 }}>
+                                                            ● {status.label}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ textAlign: 'right' }}>
+                                                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                                                            <button
+                                                                onClick={() => handleResetPassword(u.id, u.email)}
+                                                                disabled={processing === `reset-${u.id}`}
+                                                                style={{
+                                                                    padding: '4px 10px', borderRadius: '4px', fontSize: '0.75rem',
+                                                                    background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)',
+                                                                    color: '#f59e0b', cursor: 'pointer',
+                                                                }}
+                                                            >
+                                                                {processing === `reset-${u.id}` ? '...' : 'Reset PW'}
+                                                            </button>
+                                                            {!isSelf && (
+                                                                <button
+                                                                    onClick={() => handleDeleteUser(u.id, u.email)}
+                                                                    disabled={processing === `del-${u.id}`}
+                                                                    style={{
+                                                                        padding: '4px 10px', borderRadius: '4px', fontSize: '0.75rem',
+                                                                        background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                                                                        color: '#ef4444', cursor: 'pointer',
+                                                                    }}
+                                                                >
+                                                                    {processing === `del-${u.id}` ? '...' : 'Delete'}
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Change Own Password */}
+                    <div className="section-card">
+                        <h3>Change Your Password</h3>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '16px' }}>
+                            Update your own login password below.
+                        </p>
+                        {pwMsg && (
+                            <div style={{
+                                padding: '8px 16px', borderRadius: '6px', marginBottom: '12px',
+                                background: pwMsg.type === 'success' ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                                border: `1px solid ${pwMsg.type === 'success' ? '#22c55e' : '#ef4444'}`,
+                                color: pwMsg.type === 'success' ? '#22c55e' : '#ef4444',
+                                fontSize: '0.8125rem',
+                            }}>
+                                {pwMsg.text}
+                            </div>
+                        )}
+                        <form onSubmit={handleChangeOwnPassword} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
+                            <div>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Current Password</label>
+                                <input
+                                    type="password"
+                                    value={currentPassword}
+                                    onChange={e => setCurrentPassword(e.target.value)}
+                                    required
+                                    style={{
+                                        width: '100%', padding: '8px 12px', borderRadius: '6px',
+                                        border: '1px solid var(--border-color)', background: 'var(--card-bg)',
+                                        color: '#fff', fontSize: '0.875rem', outline: 'none',
+                                    }}
+                                />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>New Password</label>
+                                <input
+                                    type="password"
+                                    value={newPassword}
+                                    onChange={e => setNewPassword(e.target.value)}
+                                    required
+                                    minLength={6}
+                                    style={{
+                                        width: '100%', padding: '8px 12px', borderRadius: '6px',
+                                        border: '1px solid var(--border-color)', background: 'var(--card-bg)',
+                                        color: '#fff', fontSize: '0.875rem', outline: 'none',
+                                    }}
+                                />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Confirm New Password</label>
+                                <input
+                                    type="password"
+                                    value={confirmPassword}
+                                    onChange={e => setConfirmPassword(e.target.value)}
+                                    required
+                                    style={{
+                                        width: '100%', padding: '8px 12px', borderRadius: '6px',
+                                        border: '1px solid var(--border-color)', background: 'var(--card-bg)',
+                                        color: '#fff', fontSize: '0.875rem', outline: 'none',
+                                    }}
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={processing === 'pw'}
+                                className="login-btn"
+                                style={{ width: 'auto', padding: '8px 20px', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}
+                            >
+                                {processing === 'pw' ? 'Updating...' : 'Update Password'}
+                            </button>
+                        </form>
+                    </div>
+                </>
+            )}
+
+            {/* ==================== CONNECTED ACCOUNTS TAB ==================== */}
+            {activeTab === 'accounts' && (
+                <div className="section-card">
+                    <h3>Connected Accounts</h3>
+                    <div className="data-table-wrapper"><table className="data-table">
+                        <thead>
+                            <tr>
+                                <th>Platform</th>
+                                <th>Status</th>
+                                <th>Last Sync</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {platforms.map(p => (
+                                <tr key={p.name}>
+                                    <td style={{ fontWeight: 600 }}>{p.name}</td>
+                                    <td>
+                                        <span className={`badge ${p.connected ? 'success' : 'warning'}`}>
+                                            {p.connected ? 'Connected' : 'Not connected'}
+                                        </span>
+                                    </td>
+                                    <td style={{ color: 'var(--text-muted)' }}>
+                                        {p.connected ? 'Auto-sync daily' : 'Never'}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table></div>
+
+                    <div style={{ marginTop: '20px' }}>
+                        <h3>Data Sync</h3>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '16px' }}>
+                            Data syncs automatically every day at 2:00 AM EST. You can also trigger a manual sync below.
+                        </p>
+                        <button className="login-btn" style={{ width: 'auto', padding: '10px 24px' }} disabled>
+                            Sync Now (Coming Soon)
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ==================== API USAGE TAB ==================== */}
+            {activeTab === 'usage' && (
+                <div className="section-card">
+                    <h3>API Usage</h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '16px' }}>
+                        Real-time API quota consumption and cache efficiency. All integrations are on free tiers.
+                    </p>
+
+                    {usageLoading ? (
+                        <p style={{ color: 'var(--text-muted)' }}>Loading...</p>
+                    ) : usage ? (
+                        <>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+                                {usage.apis.map(api => (
+                                    <div key={api.apiName} className="metric-card" style={{ padding: '20px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                            <span style={{ fontWeight: 700, fontSize: '0.9375rem' }}>{api.displayName}</span>
+                                            <span className="badge success">{api.estimatedCost}</span>
+                                        </div>
+
+                                        {api.quotaLimit ? (
+                                            <div style={{ marginBottom: '16px' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                                                    <span>{api.quotaUsed.toLocaleString()} / {api.quotaLimit.toLocaleString()} {api.quotaUnit}</span>
+                                                    <span>{Math.round((api.quotaUsed / api.quotaLimit) * 100)}%</span>
+                                                </div>
+                                                <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                    <div style={{
+                                                        height: '100%',
+                                                        width: `${Math.min((api.quotaUsed / api.quotaLimit) * 100, 100)}%`,
+                                                        background: (api.quotaUsed / api.quotaLimit) > 0.8 ? '#f59e0b' : '#22c55e',
+                                                        borderRadius: '3px',
+                                                        transition: 'width 0.3s',
+                                                    }} />
+                                                </div>
+                                                <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                                    per {api.quotaPeriod}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div style={{ marginBottom: '16px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                {api.quotaUsed} {api.quotaUnit} today (no hard limit)
+                                            </div>
+                                        )}
+
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '0.75rem' }}>
+                                            <div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '2px' }}>API Calls</div>
+                                                <div style={{ fontWeight: 700 }}>{api.totalCalls}</div>
+                                            </div>
+                                            <div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '2px' }}>Cache Rate</div>
+                                                <div style={{ fontWeight: 700, color: '#22c55e' }}>{api.cacheHitRate}%</div>
+                                            </div>
+                                            <div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '2px' }}>Last Refresh</div>
+                                                <div style={{ fontWeight: 600, fontSize: '0.6875rem' }}>
+                                                    {api.lastRefresh ? new Date(api.lastRefresh).toLocaleTimeString() : 'Never'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <p style={{ color: 'var(--text-muted)', fontSize: '0.6875rem', marginTop: '12px' }}>
+                                Tracking since {new Date(usage.trackedSince).toLocaleString()}. Stats reset on server restart.
+                            </p>
+                        </>
+                    ) : (
+                        <p style={{ color: 'var(--text-muted)' }}>Unable to load usage data</p>
+                    )}
+                </div>
+            )}
         </>
     );
 }

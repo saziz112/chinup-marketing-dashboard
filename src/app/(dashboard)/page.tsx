@@ -287,13 +287,13 @@ export default function OverviewPage() {
                 <h3>Platform Overview</h3>
                 <div className="platform-grid">
                     {[
-                        { name: 'Instagram', icon: 'instagram', color: '#E1306C' },
-                        { name: 'Facebook', icon: 'facebook', color: '#1877F2' },
-                        { name: 'YouTube', icon: 'youtube', color: '#FF0000' },
+                        { name: 'Instagram', icon: 'instagram', color: '#E1306C', tab: 'instagram' },
+                        { name: 'Facebook', icon: 'facebook', color: '#1877F2', tab: 'facebook' },
+                        { name: 'YouTube', icon: 'youtube', color: '#FF0000', tab: 'youtube' },
                     ].map(platform => {
                         const data = platforms[platform.name];
                         return (
-                            <div key={platform.name} className="platform-card">
+                            <a key={platform.name} href={`/organic?tab=${platform.tab}`} className="platform-card" style={{ textDecoration: 'none', color: 'inherit', cursor: 'pointer', transition: 'transform 0.2s, box-shadow 0.2s' }}>
                                 <div className="platform-card-header">
                                     <div className={`platform-icon ${platform.icon}`}>
                                         <span style={{ color: platform.color }}>{platform.name[0]}</span>
@@ -315,7 +315,7 @@ export default function OverviewPage() {
                                         <div className="value">{data?.engagement || '--%'}</div>
                                     </div>
                                 </div>
-                            </div>
+                            </a>
                         );
                     })}
                 </div>

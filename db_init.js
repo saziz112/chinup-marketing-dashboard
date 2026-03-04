@@ -1,7 +1,16 @@
 require('dotenv').config({ path: '.env.development.local' });
+// Map prefixed Vercel Postgres variables to the standard ones expected by @vercel/postgres
+Object.keys(process.env).forEach(key => {
+    if (key.startsWith('MD__POSTGRES_') || key.startsWith('MD__PG') || key.startsWith('MD__DATABASE_')) {
+        const standardKey = key.replace('MD__', '');
+        process.env[standardKey] = process.env[key];
+    }
+});
+
 const { sql } = require('@vercel/postgres');
+
 async function init() {
-  console.log('Starting DB init...');
+  console.log('Starting DB init on new Database...');
   
   // Create tables manually to bypass Next.js API route requirement
   await sql`
@@ -212,6 +221,6 @@ async function init() {
             completed_at TIMESTAMP WITH TIME ZONE
         )
     `;
-    console.log('SUCCESS: All 11 tables created.');
+    console.log('SUCCESS: All 11 tables created on NEW database.');
 }
 init().catch(e => console.error(e));

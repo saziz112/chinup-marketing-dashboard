@@ -112,6 +112,8 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     const [caption, setCaption] = useState('');
     const [platforms, setPlatforms] = useState<Platform[]>([]);
     const [mediaUrl, setMediaUrl] = useState('');
+    const [mediaPreview, setMediaPreview] = useState<string | null>(null);
+    const [mediaFile, setMediaFile] = useState<File | null>(null);
     const [scheduleDate, setScheduleDate] = useState('');
     const [scheduleTime, setScheduleTime] = useState('');
     const [submitting, setSubmitting] = useState(false);
@@ -124,8 +126,21 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
-            setMediaUrl(e.target.files[0].name);
+            const file = e.target.files[0];
+            setMediaFile(file);
+            setMediaUrl(file.name);
+            // Create visual preview
+            const previewUrl = URL.createObjectURL(file);
+            setMediaPreview(previewUrl);
         }
+    };
+
+    const clearMedia = () => {
+        if (mediaPreview) URL.revokeObjectURL(mediaPreview);
+        setMediaFile(null);
+        setMediaUrl('');
+        setMediaPreview(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const handleCreate = async () => {
@@ -150,7 +165,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
             if (res.ok) {
                 setCaption('');
                 setPlatforms([]);
-                setMediaUrl('');
+                clearMedia();
                 setScheduleDate('');
                 setScheduleTime('');
                 onPostCreated();
@@ -162,37 +177,41 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
         }
     };
 
-    return (
-        <div className="bg-slate-900/40 p-10 rounded-3xl max-w-4xl relative overflow-hidden group shadow-xl">
-            {/* Subtle glow effect behind form */}
-            <div className="absolute top-0 right-0 w-96 h-96 bg-[var(--accent)]/5 rounded-full blur-[100px] pointer-events-none transition-opacity duration-700 opacity-50 group-hover:opacity-100"></div>
+    const inputStyle: React.CSSProperties = {
+        background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '12px',
+        padding: '14px 20px', color: 'rgba(255,255,255,0.9)', fontSize: '0.9375rem',
+        outline: 'none', width: '100%', fontWeight: 300, transition: 'background 0.3s',
+    };
 
-            <div className="relative z-10 flex flex-col gap-10">
+    return (
+        <div className="section-card" style={{ padding: '32px', maxWidth: '900px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
 
                 {/* Platform Selection */}
                 <div>
-                    <label className="text-sm font-medium text-slate-400 block mb-4 tracking-wide">Select Destinations</label>
-                    <div className="flex flex-wrap gap-4">
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Select Destinations</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                         {['instagram', 'facebook', 'youtube'].map((p) => {
                             const isSelected = platforms.includes(p as Platform);
+                            const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', youtube: '#FF0000' };
                             return (
                                 <button
                                     key={p}
                                     onClick={() => togglePlatform(p as Platform)}
-                                    className={`relative px-6 py-3.5 rounded-2xl text-sm capitalize flex items-center gap-2.5 transition-all duration-300 overflow-hidden outline-none ${isSelected
-                                        ? 'text-white shadow-lg scale-105'
-                                        : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
-                                        }`}
+                                    style={{
+                                        padding: '10px 20px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                                        fontSize: '0.875rem', textTransform: 'capitalize', fontWeight: isSelected ? 600 : 400,
+                                        display: 'flex', alignItems: 'center', gap: '8px',
+                                        background: isSelected ? `${colors[p]}20` : 'rgba(255,255,255,0.05)',
+                                        color: isSelected ? colors[p] : 'var(--text-muted)',
+                                        transition: 'all 0.2s',
+                                        boxShadow: isSelected ? `0 0 12px ${colors[p]}15` : 'none',
+                                    }}
                                 >
-                                    {isSelected && <div className="absolute inset-0 bg-gradient-to-r from-[var(--accent)]/90 to-[#B89615]/90 opacity-25"></div>}
-                                    {isSelected && <div className="absolute inset-0 bg-[var(--accent)]/10 mix-blend-overlay"></div>}
-
-                                    <span className="relative z-10 flex items-center gap-2.5 font-medium tracking-wide">
-                                        {p === 'instagram' && <Instagram size={18} className={isSelected ? 'text-[#E1306C]' : ''} />}
-                                        {p === 'facebook' && <Facebook size={18} className={isSelected ? 'text-[#1877F2]' : ''} />}
-                                        {p === 'youtube' && <Youtube size={18} className={isSelected ? 'text-[#FF0000]' : ''} />}
-                                        {p}
-                                    </span>
+                                    {p === 'instagram' && <Instagram size={16} />}
+                                    {p === 'facebook' && <Facebook size={16} />}
+                                    {p === 'youtube' && <Youtube size={16} />}
+                                    {p}
                                 </button>
                             );
                         })}
@@ -201,92 +220,130 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
 
                 {/* Caption Input */}
                 <div>
-                    <label className="text-sm font-medium text-slate-400 block mb-4 tracking-wide">Caption</label>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Caption</label>
                     <textarea
                         value={caption}
                         onChange={e => setCaption(e.target.value)}
                         placeholder="Write something engaging..."
-                        className="w-full h-36 bg-white/5 rounded-2xl p-6 text-white/90 placeholder-slate-600 focus:outline-none focus:bg-white/10 transition-all duration-300 resize-none border-none ring-0 shadow-inner font-light leading-relaxed text-lg"
+                        style={{ ...inputStyle, height: '120px', resize: 'none', lineHeight: 1.6 }}
                     />
                 </div>
 
                 {/* Media Input */}
                 <div>
-                    <label className="text-sm font-medium text-slate-400 block mb-4 tracking-wide">Visual Assets</label>
-                    <div className="flex flex-col sm:flex-row gap-4">
-                        <div className="flex-grow flex items-center bg-white/5 rounded-2xl px-6 py-4 transition-all duration-300 focus-within:bg-white/10 shadow-inner">
-                            <ImageIcon size={20} className="text-slate-500 mr-4" strokeWidth={1.5} />
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Visual Assets</label>
+
+                    {/* Image Preview */}
+                    {mediaPreview && (
+                        <div style={{ position: 'relative', marginBottom: '12px', display: 'inline-block' }}>
+                            <img
+                                src={mediaPreview}
+                                alt="Upload preview"
+                                style={{
+                                    maxHeight: '200px', maxWidth: '100%', borderRadius: '12px',
+                                    border: '1px solid var(--border-color)', objectFit: 'cover',
+                                }}
+                            />
+                            <button
+                                onClick={clearMedia}
+                                style={{
+                                    position: 'absolute', top: '-8px', right: '-8px',
+                                    width: '24px', height: '24px', borderRadius: '50%',
+                                    background: '#ef4444', border: 'none', cursor: 'pointer',
+                                    color: '#fff', fontSize: '14px', fontWeight: 700,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <div style={{ ...inputStyle, flex: 1, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px' }}>
+                            <ImageIcon size={18} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                             <input
                                 type="text"
                                 value={mediaUrl}
-                                onChange={e => setMediaUrl(e.target.value)}
-                                placeholder="Media URL or select file"
-                                className="bg-transparent border-none text-white/90 placeholder-slate-600 focus:outline-none w-full font-light"
+                                onChange={e => { setMediaUrl(e.target.value); setMediaPreview(null); }}
+                                placeholder="Paste media URL or select a file →"
+                                style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.9)', outline: 'none', width: '100%', fontWeight: 300 }}
                             />
                         </div>
                         <input
                             type="file"
                             ref={fileInputRef}
                             onChange={handleFileSelect}
-                            className="hidden"
+                            style={{ display: 'none' }}
                             accept="image/*,video/*"
                         />
                         <button
                             onClick={() => fileInputRef.current?.click()}
-                            className="px-8 py-4 rounded-2xl bg-white/5 text-slate-300 hover:text-white hover:bg-white/10 transition-all duration-300 flex items-center gap-2 whitespace-nowrap shadow-sm font-medium tracking-wide"
+                            style={{
+                                padding: '12px 20px', borderRadius: '12px', border: 'none', cursor: 'pointer',
+                                background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)',
+                                display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8125rem',
+                                fontWeight: 500, whiteSpace: 'nowrap', transition: 'all 0.2s',
+                            }}
                         >
-                            <Plus size={18} /> Browse Files
+                            <Plus size={16} /> Browse
                         </button>
                     </div>
                 </div>
 
                 {/* Scheduling */}
                 <div>
-                    <label className="text-sm font-medium text-slate-400 block mb-4 tracking-wide">Publish Timing</label>
-                    <div className="flex flex-wrap gap-4">
-                        <div className="relative group">
-                            <input
-                                type="date"
-                                value={scheduleDate}
-                                onChange={e => setScheduleDate(e.target.value)}
-                                className="bg-white/5 rounded-2xl px-6 py-4 text-white/90 focus:outline-none focus:bg-white/10 transition-all duration-300 border-none shadow-inner [color-scheme:dark] font-light"
-                            />
-                        </div>
-                        <div className="relative group">
-                            <input
-                                type="time"
-                                value={scheduleTime}
-                                onChange={e => setScheduleTime(e.target.value)}
-                                className="bg-white/5 rounded-2xl px-6 py-4 text-white/90 focus:outline-none focus:bg-white/10 transition-all duration-300 border-none shadow-inner [color-scheme:dark] font-light"
-                            />
-                        </div>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Publish Timing</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                        <input
+                            type="date"
+                            value={scheduleDate}
+                            onChange={e => setScheduleDate(e.target.value)}
+                            style={{ ...inputStyle, width: 'auto', colorScheme: 'dark' }}
+                        />
+                        <input
+                            type="time"
+                            value={scheduleTime}
+                            onChange={e => setScheduleTime(e.target.value)}
+                            style={{ ...inputStyle, width: 'auto', colorScheme: 'dark' }}
+                        />
                     </div>
-                    <p className="text-sm text-slate-500 mt-4 font-light">Leave blank to post immediately to selected platforms.</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginTop: '8px' }}>Leave blank to post immediately.</p>
                 </div>
 
-                {/* Submit Action */}
-                <div className="pt-8 flex justify-end gap-4 border-t border-white/5">
+                {/* Submit */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '20px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                     <button
-                        onClick={() => {
-                            setCaption(''); setPlatforms([]); setMediaUrl(''); setScheduleDate(''); setScheduleTime('');
+                        onClick={() => { setCaption(''); setPlatforms([]); clearMedia(); setScheduleDate(''); setScheduleTime(''); }}
+                        style={{
+                            padding: '10px 24px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                            fontSize: '0.8125rem', fontWeight: 500, background: 'transparent',
+                            color: 'var(--text-muted)', transition: 'color 0.2s',
                         }}
-                        className="px-8 py-4 rounded-2xl text-sm font-medium tracking-wide text-slate-500 hover:text-white hover:bg-white/5 transition-all duration-300"
                     >
                         Clear Fields
                     </button>
                     <button
                         onClick={handleCreate}
                         disabled={!caption || platforms.length === 0 || submitting}
-                        className="bg-[var(--accent)] text-black font-semibold px-10 py-4 rounded-2xl disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none disabled:cursor-not-allowed hover:bg-[#D8B41D]/90 hover:shadow-[0_0_20px_rgba(216,180,29,0.3)] hover:-translate-y-1 transition-all duration-300 flex items-center gap-3 tracking-wide text-lg"
+                        style={{
+                            padding: '12px 28px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                            fontSize: '0.9375rem', fontWeight: 600,
+                            background: (!caption || platforms.length === 0) ? 'rgba(255,255,255,0.05)' : 'var(--accent)',
+                            color: (!caption || platforms.length === 0) ? 'var(--text-muted)' : '#000',
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            transition: 'all 0.2s',
+                            opacity: submitting ? 0.7 : 1,
+                        }}
                     >
                         {submitting ? (
                             <>
-                                <Loader2 className="w-5 h-5 animate-spin" />
+                                <Loader2 size={18} style={{ animation: 'spin 0.8s linear infinite' }} />
                                 Processing
                             </>
                         ) : (
                             <>
-                                {scheduleDate ? <Calendar size={20} /> : <Send size={20} />}
+                                {scheduleDate ? <Calendar size={18} /> : <Send size={18} />}
                                 {scheduleDate ? 'Schedule' : 'Post'}
                             </>
                         )}

@@ -297,23 +297,43 @@ export default function ContentPage() {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
                     <h3 className="m-0">All Content</h3>
 
-                    <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2 text-sm bg-slate-800 p-1 rounded-md">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', background: 'rgba(255,255,255,0.05)', padding: '3px', borderRadius: '8px' }}>
                             <button
                                 onClick={() => setPlatformFilter('all')}
-                                className={`px-3 py-1.5 rounded text-sm transition-colors ${platformFilter === 'all' ? 'bg-white/10 text-white font-medium shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                                style={{
+                                    padding: '6px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                                    fontSize: '0.8125rem', transition: 'all 0.2s',
+                                    background: platformFilter === 'all' ? 'rgba(255,255,255,0.12)' : 'transparent',
+                                    color: platformFilter === 'all' ? '#fff' : 'var(--text-muted)',
+                                    fontWeight: platformFilter === 'all' ? 600 : 400,
+                                }}
                             >
                                 All
                             </button>
                             <button
                                 onClick={() => setPlatformFilter('instagram')}
-                                className={`px-3 py-1.5 rounded flex items-center gap-1 text-sm transition-colors ${platformFilter === 'instagram' ? 'bg-white/10 text-white font-medium shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                                style={{
+                                    padding: '6px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                                    fontSize: '0.8125rem', transition: 'all 0.2s',
+                                    display: 'flex', alignItems: 'center', gap: '4px',
+                                    background: platformFilter === 'instagram' ? 'rgba(225,48,108,0.15)' : 'transparent',
+                                    color: platformFilter === 'instagram' ? '#E1306C' : 'var(--text-muted)',
+                                    fontWeight: platformFilter === 'instagram' ? 600 : 400,
+                                }}
                             >
                                 <Instagram size={14} /> IG
                             </button>
                             <button
                                 onClick={() => setPlatformFilter('youtube')}
-                                className={`px-3 py-1.5 rounded flex items-center gap-1 text-sm transition-colors ${platformFilter === 'youtube' ? 'bg-white/10 text-white font-medium shadow-sm' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                                style={{
+                                    padding: '6px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                                    fontSize: '0.8125rem', transition: 'all 0.2s',
+                                    display: 'flex', alignItems: 'center', gap: '4px',
+                                    background: platformFilter === 'youtube' ? 'rgba(255,0,0,0.15)' : 'transparent',
+                                    color: platformFilter === 'youtube' ? '#FF0000' : 'var(--text-muted)',
+                                    fontWeight: platformFilter === 'youtube' ? 600 : 400,
+                                }}
                             >
                                 <Youtube size={14} /> YT
                             </button>

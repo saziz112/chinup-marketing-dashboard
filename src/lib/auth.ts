@@ -19,23 +19,33 @@ export const authOptions: NextAuthOptions = {
             async authorize(credentials) {
                 if (!credentials?.email || !credentials?.password) return null;
 
-                // Temporarily using static USERS array for local dev instead of database
-                const configUser = USERS.find(u => u.email.toLowerCase() === credentials.email.toLowerCase());
-                if (!configUser) return null;
+                try {
+                    // Fetch user from Vercel Postgres DB
+                    const dbUser = await getUserByEmail(credentials.email);
+                    if (!dbUser) return null; // No user found
 
-                // Hardcoded passwords for temporary local dev
-                const tempPassword = configUser.role === 'admin' ? 'admin2026' : 'marketing2026';
+                    // Verify hashed password
+                    const isValid = await verifyPassword(credentials.password, dbUser.password_hash);
 
-                if (credentials.password !== tempPassword) {
+                    if (!isValid) {
+                        await recordFailedLogin(credentials.email).catch(console.error);
+                        return null;
+                    }
+
+                    // Record successful login
+                    await recordSuccessfulLogin(dbUser.staff_id).catch(console.error);
+
+                    return {
+                        id: dbUser.staff_id,
+                        email: dbUser.email,
+                        name: undefined, // Will be fetched from Mindbody later if needed
+                        image: dbUser.must_change_password ? 'MUST_CHANGE' : null,
+                        role: dbUser.role, // Attach role straight from Postgres
+                    } as any;
+                } catch (error) {
+                    console.error('Auth error:', error);
                     return null;
                 }
-
-                return {
-                    id: configUser.id,
-                    email: configUser.email,
-                    name: configUser.displayName,
-                    image: null, // No mandatory password change for now
-                };
             },
         }),
     ],
@@ -43,7 +53,7 @@ export const authOptions: NextAuthOptions = {
         async jwt({ token, user, trigger }) {
             if (user) {
                 token.staffId = user.id;
-                token.role = USERS.find(u => u.id === user.id)?.role || 'marketing_manager';
+                token.role = (user as any).role || 'marketing_manager';
                 token.isAdmin = token.role === 'admin';
                 token.mustChangePassword = user.image === 'MUST_CHANGE';
             }

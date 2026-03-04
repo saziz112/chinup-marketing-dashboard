@@ -1,6 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, useCallback } from 'react';
 import { SkeletonKpiCard, SkeletonChart } from '@/components/Skeleton';
 import {
@@ -152,7 +153,20 @@ function formatDate(dateStr: string): string {
 
 export default function OrganicPage() {
     const { data: session } = useSession();
-    const [activeTab, setActiveTab] = useState<PlatformTab>('All Platforms');
+    const searchParams = useSearchParams();
+
+    // Read ?tab= query param from URL (e.g., from Overview platform cards)
+    const getInitialTab = (): PlatformTab => {
+        const tab = searchParams.get('tab');
+        const map: Record<string, PlatformTab> = {
+            instagram: 'Instagram',
+            facebook: 'Facebook',
+            youtube: 'YouTube',
+        };
+        return map[tab || ''] || 'All Platforms';
+    };
+
+    const [activeTab, setActiveTab] = useState<PlatformTab>(getInitialTab);
     const [period, setPeriod] = useState<Period>('30d');
     const [loading, setLoading] = useState(true);
 
