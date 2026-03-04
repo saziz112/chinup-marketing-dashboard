@@ -4,8 +4,14 @@
  * Handles live publishing to Facebook Pages and Instagram Business accounts
  * using the Meta Graph API v21.0.
  * 
- * Facebook: POST /{page-id}/feed (text) or /{page-id}/photos (image)
- * Instagram: POST /{ig-user-id}/media → /{ig-user-id}/media_publish
+ * Facebook:
+ *   - Text: POST /{page-id}/feed
+ *   - Photo: POST /{page-id}/photos (url param)
+ *   - Video: POST /{page-id}/videos (file_url param)
+ * 
+ * Instagram (two-step container API):
+ *   - Photo: POST /{ig-user-id}/media (image_url) → media_publish
+ *   - Reel:  POST /{ig-user-id}/media (video_url + media_type=REELS) → media_publish
  * 
  * Requires: META_PAGE_ACCESS_TOKEN, META_PAGE_ID, META_IG_USER_ID
  */
@@ -22,7 +28,14 @@ function getOptionalEnv(key: string): string | null {
     return process.env[key]?.trim() || null;
 }
 
-// ─── Facebook Page Publishing ───────────────────────────────────────────────
+/** Detect if a URL points to a video based on extension */
+function isVideoUrl(url: string): boolean {
+    const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.m4v'];
+    const lower = url.toLowerCase().split('?')[0]; // ignore query params
+    return videoExtensions.some(ext => lower.endsWith(ext));
+}
+
+// ─── Result Type ────────────────────────────────────────────────────────────
 
 export interface PublishResult {
     success: boolean;
@@ -31,15 +44,19 @@ export interface PublishResult {
     platform: 'facebook' | 'instagram';
 }
 
+// ─── Facebook Page Publishing ───────────────────────────────────────────────
+
 /**
  * Publish a post to the Facebook Page.
  * 
  * - Text-only: POST /{page-id}/feed with message
  * - Image + text: POST /{page-id}/photos with url + message
+ * - Video + text: POST /{page-id}/videos with file_url + description
  */
 export async function publishToFacebook(
     caption: string,
-    imageUrl?: string
+    mediaUrl?: string,
+    mediaType?: 'photo' | 'video'
 ): Promise<PublishResult> {
     const pageId = getEnv('META_PAGE_ID');
     const token = getEnv('META_PAGE_ACCESS_TOKEN');
@@ -48,11 +65,21 @@ export async function publishToFacebook(
         let endpoint: string;
         let body: Record<string, string>;
 
-        if (imageUrl && imageUrl.startsWith('http')) {
+        const isVideo = mediaType === 'video' || (mediaUrl && isVideoUrl(mediaUrl));
+
+        if (mediaUrl && mediaUrl.startsWith('http') && isVideo) {
+            // Video post
+            endpoint = `${GRAPH_API_BASE}/${pageId}/videos`;
+            body = {
+                file_url: mediaUrl,
+                description: caption,
+                access_token: token,
+            };
+        } else if (mediaUrl && mediaUrl.startsWith('http')) {
             // Image post
             endpoint = `${GRAPH_API_BASE}/${pageId}/photos`;
             body = {
-                url: imageUrl,
+                url: mediaUrl,
                 message: caption,
                 access_token: token,
             };
@@ -101,19 +128,21 @@ export async function publishToFacebook(
 // ─── Instagram Publishing ───────────────────────────────────────────────────
 
 /**
- * Publish an image post to Instagram.
+ * Publish a photo or reel to Instagram.
  * 
  * Two-step process:
  * 1. Create a media container: POST /{ig-user-id}/media
- * 2. Publish the container: POST /{ig-user-id}/media_publish
+ *    - Photo: { image_url, caption }
+ *    - Reel:  { video_url, caption, media_type: 'REELS' }
+ * 2. Poll container until ready
+ * 3. Publish the container: POST /{ig-user-id}/media_publish
  * 
- * NOTE: Instagram requires a publicly accessible image URL.
- * Local file paths and data URIs will NOT work.
- * Instagram also requires Business/Creator account connected via Facebook Page.
+ * NOTE: Both image_url and video_url MUST be publicly accessible HTTPS URLs.
  */
 export async function publishToInstagram(
     caption: string,
-    imageUrl: string
+    mediaUrl: string,
+    mediaType?: 'photo' | 'video'
 ): Promise<PublishResult> {
     const igUserId = getOptionalEnv('META_IG_USER_ID');
     const token = getOptionalEnv('META_PAGE_ACCESS_TOKEN');
@@ -126,24 +155,34 @@ export async function publishToInstagram(
         };
     }
 
-    if (!imageUrl || !imageUrl.startsWith('http')) {
+    if (!mediaUrl || !mediaUrl.startsWith('http')) {
         return {
             success: false,
-            error: 'Instagram requires a publicly accessible image URL (https://...). Local files are not supported.',
+            error: 'Instagram requires media to be uploaded first. Use the upload button to select a file.',
             platform: 'instagram',
         };
     }
 
+    const isVideo = mediaType === 'video' || isVideoUrl(mediaUrl);
+
     try {
         // Step 1: Create media container
+        const containerBody: Record<string, string> = {
+            caption: caption,
+            access_token: token,
+        };
+
+        if (isVideo) {
+            containerBody.video_url = mediaUrl;
+            containerBody.media_type = 'REELS';
+        } else {
+            containerBody.image_url = mediaUrl;
+        }
+
         const containerRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                image_url: imageUrl,
-                caption: caption,
-                access_token: token,
-            }),
+            body: JSON.stringify(containerBody),
         });
 
         const containerData = await containerRes.json();
@@ -166,23 +205,36 @@ export async function publishToInstagram(
             };
         }
 
-        // Step 2: Poll container status (Instagram needs a moment to process the image)
+        // Step 2: Poll container status
+        // Videos take longer to process than photos
+        const maxAttempts = isVideo ? 30 : 10;
+        const pollInterval = isVideo ? 5000 : 2000;
         let status = 'IN_PROGRESS';
         let attempts = 0;
-        while (status === 'IN_PROGRESS' && attempts < 10) {
-            await new Promise(resolve => setTimeout(resolve, 2000)); // wait 2s
+
+        while (status === 'IN_PROGRESS' && attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
             const statusRes = await fetch(
                 `${GRAPH_API_BASE}/${containerId}?fields=status_code&access_token=${token}`
             );
             const statusData = await statusRes.json();
             status = statusData.status_code || 'FINISHED';
             attempts++;
+            console.log(`[Meta Publish IG] Container status: ${status} (attempt ${attempts}/${maxAttempts})`);
         }
 
         if (status === 'ERROR') {
             return {
                 success: false,
-                error: 'Instagram media processing failed',
+                error: 'Instagram media processing failed. The file may be too large or in an unsupported format.',
+                platform: 'instagram',
+            };
+        }
+
+        if (status === 'IN_PROGRESS') {
+            return {
+                success: false,
+                error: 'Instagram is still processing the media. Try again in a moment.',
                 platform: 'instagram',
             };
         }
@@ -233,22 +285,23 @@ export async function publishToInstagram(
 export async function publishToMultiplePlatforms(
     platforms: string[],
     caption: string,
-    imageUrl?: string
+    mediaUrl?: string,
+    mediaType?: 'photo' | 'video'
 ): Promise<PublishResult[]> {
     const results: PublishResult[] = [];
 
     const tasks = platforms.map(async (platform) => {
         if (platform === 'facebook') {
-            return publishToFacebook(caption, imageUrl);
+            return publishToFacebook(caption, mediaUrl, mediaType);
         } else if (platform === 'instagram') {
-            if (!imageUrl || !imageUrl.startsWith('http')) {
+            if (!mediaUrl || !mediaUrl.startsWith('http')) {
                 return {
                     success: false,
-                    error: 'Instagram requires a public image URL',
+                    error: 'Instagram requires a photo or video. Upload a file first.',
                     platform: 'instagram' as const,
                 };
             }
-            return publishToInstagram(caption, imageUrl);
+            return publishToInstagram(caption, mediaUrl, mediaType);
         } else if (platform === 'youtube') {
             return {
                 success: false,

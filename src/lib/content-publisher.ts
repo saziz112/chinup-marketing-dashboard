@@ -9,6 +9,8 @@
 import { publishToMultiplePlatforms, PublishResult } from '@/lib/integrations/meta-publisher';
 import { sql } from '@vercel/postgres';
 
+export type MediaType = 'photo' | 'video';
+
 export type Platform = 'instagram' | 'facebook' | 'youtube';
 export type PostStatus = 'DRAFT' | 'SCHEDULED' | 'PUBLISHING' | 'PUBLISHED' | 'PARTIAL' | 'FAILED';
 
@@ -17,6 +19,7 @@ export interface PublishRequest {
     title?: string;
     caption: string;
     mediaUrls: string[];
+    mediaType?: MediaType; // 'photo' or 'video' — auto-detected if not provided
     scheduledFor?: string; // ISO string, if undefined post immediately
 }
 
@@ -26,6 +29,7 @@ export interface PostRecord {
     title?: string;
     caption: string;
     mediaUrls: string[];
+    mediaType?: MediaType;
     status: PostStatus;
     scheduledFor?: string;
     createdAt: string;
@@ -90,8 +94,8 @@ export async function createPost(req: PublishRequest): Promise<PostRecord> {
 
     // If not scheduled, publish immediately
     if (!isScheduled) {
-        const imageUrl = req.mediaUrls?.[0] || undefined;
-        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, imageUrl);
+        const mediaUrl = req.mediaUrls?.[0] || undefined;
+        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, mediaUrl, req.mediaType);
 
         const allSucceeded = publishResults.every(r => r.success);
         const someSucceeded = publishResults.some(r => r.success);

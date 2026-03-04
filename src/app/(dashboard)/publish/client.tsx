@@ -4,8 +4,9 @@ import { useState, useEffect, useRef } from 'react';
 import { PostRecord, Platform } from '@/lib/content-publisher';
 import {
     Calendar, CheckCircle, Clock, History, PenTool, LayoutTemplate,
-    Instagram, Facebook, Youtube, Plus, Send, Loader2,
-    Image as ImageIcon, Target, AlertTriangle, XCircle, TrendingUp, Zap
+    Instagram, Facebook, Youtube, Send, Loader2,
+    Image as ImageIcon, Target, AlertTriangle, XCircle, Zap,
+    Upload, Film, X
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -107,7 +108,10 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     const [platforms, setPlatforms] = useState<Platform[]>([]);
     const [mediaUrl, setMediaUrl] = useState('');
     const [mediaPreview, setMediaPreview] = useState<string | null>(null);
-    const [mediaFile, setMediaFile] = useState<File | null>(null);
+    const [mediaType, setMediaType] = useState<'photo' | 'video' | null>(null);
+    const [uploading, setUploading] = useState(false);
+    const [uploadError, setUploadError] = useState<string | null>(null);
+    const [dragging, setDragging] = useState(false);
     const [scheduleDate, setScheduleDate] = useState('');
     const [scheduleTime, setScheduleTime] = useState('');
     const [submitting, setSubmitting] = useState(false);
@@ -119,20 +123,52 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
         setPlatforms(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
     };
 
+    const uploadFile = async (file: File) => {
+        setUploading(true);
+        setUploadError(null);
+        setMediaPreview(URL.createObjectURL(file));
+        setMediaType(file.type.startsWith('video/') ? 'video' : 'photo');
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch('/api/upload', { method: 'POST', body: formData });
+            const data = await res.json();
+
+            if (!res.ok) {
+                throw new Error(data.error || 'Upload failed');
+            }
+
+            setMediaUrl(data.url);
+        } catch (err: any) {
+            setUploadError(err.message || 'Upload failed');
+            setMediaPreview(null);
+            setMediaType(null);
+        } finally {
+            setUploading(false);
+        }
+    };
+
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
-            const file = e.target.files[0];
-            setMediaFile(file);
-            setMediaUrl(file.name);
-            setMediaPreview(URL.createObjectURL(file));
+            uploadFile(e.target.files[0]);
+        }
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setDragging(false);
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            uploadFile(e.dataTransfer.files[0]);
         }
     };
 
     const clearMedia = () => {
         if (mediaPreview) URL.revokeObjectURL(mediaPreview);
-        setMediaFile(null);
         setMediaUrl('');
         setMediaPreview(null);
+        setMediaType(null);
+        setUploadError(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
@@ -297,38 +333,94 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                     </div>
                 </div>
 
-                {/* Media */}
+                {/* Media Upload */}
                 <div>
                     <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>
-                        Image URL
+                        Photo or Video
                         {platforms.includes('instagram') && <span style={{ color: '#E1306C', marginLeft: '8px', fontSize: '0.75rem' }}>Required for Instagram</span>}
                     </label>
 
+                    <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} accept="image/*,video/*" />
+
+                    {/* Uploaded preview */}
                     {mediaPreview && (
                         <div style={{ position: 'relative', marginBottom: '12px', display: 'inline-block' }}>
-                            <img src={mediaPreview} alt="Preview" style={{ maxHeight: '180px', maxWidth: '100%', borderRadius: '12px', border: '1px solid var(--border-color)', objectFit: 'cover' }} />
-                            <button onClick={clearMedia} style={{ position: 'absolute', top: '-8px', right: '-8px', width: '24px', height: '24px', borderRadius: '50%', background: '#ef4444', border: 'none', cursor: 'pointer', color: '#fff', fontSize: '14px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                            {mediaType === 'video' ? (
+                                <video src={mediaPreview} controls style={{ maxHeight: '200px', maxWidth: '100%', borderRadius: '12px', border: '1px solid var(--border-color)' }} />
+                            ) : (
+                                <img src={mediaPreview} alt="Preview" style={{ maxHeight: '200px', maxWidth: '100%', borderRadius: '12px', border: '1px solid var(--border-color)', objectFit: 'cover' }} />
+                            )}
+                            {/* Upload status overlay */}
+                            {uploading && (
+                                <div style={{
+                                    position: 'absolute', inset: 0, borderRadius: '12px',
+                                    background: 'rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column',
+                                    alignItems: 'center', justifyContent: 'center', gap: '8px',
+                                }}>
+                                    <Loader2 size={24} style={{ color: '#fff', animation: 'spin 0.8s linear infinite' }} />
+                                    <span style={{ color: '#fff', fontSize: '0.8125rem', fontWeight: 500 }}>Uploading...</span>
+                                </div>
+                            )}
+                            {/* Checkmark overlay when upload done */}
+                            {!uploading && mediaUrl && (
+                                <div style={{
+                                    position: 'absolute', top: '8px', left: '8px',
+                                    background: 'rgba(34,197,94,0.9)', borderRadius: '50%',
+                                    width: '28px', height: '28px', display: 'flex',
+                                    alignItems: 'center', justifyContent: 'center',
+                                }}>
+                                    <CheckCircle size={16} style={{ color: '#fff' }} />
+                                </div>
+                            )}
+                            {/* Remove button */}
+                            {!uploading && (
+                                <button onClick={clearMedia} style={{
+                                    position: 'absolute', top: '-8px', right: '-8px',
+                                    width: '26px', height: '26px', borderRadius: '50%',
+                                    background: '#ef4444', border: 'none', cursor: 'pointer',
+                                    color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}>
+                                    <X size={14} />
+                                </button>
+                            )}
                         </div>
                     )}
 
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                        <div style={{ ...inputStyle, flex: 1, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px' }}>
-                            <ImageIcon size={18} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                            <input
-                                type="text" value={mediaUrl}
-                                onChange={e => { setMediaUrl(e.target.value); setMediaPreview(null); }}
-                                placeholder="https://... (must be a public URL)"
-                                style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.9)', outline: 'none', width: '100%', fontWeight: 300 }}
-                            />
+                    {/* Upload error */}
+                    {uploadError && (
+                        <div style={{
+                            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+                            borderRadius: '10px', padding: '10px 14px', marginBottom: '12px',
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                        }}>
+                            <XCircle size={16} style={{ color: '#ef4444', flexShrink: 0 }} />
+                            <span style={{ color: '#ef4444', fontSize: '0.8125rem' }}>{uploadError}</span>
                         </div>
-                        <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} accept="image/*" />
-                        <button onClick={() => fileInputRef.current?.click()} style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8125rem', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                            <Plus size={16} /> Browse
-                        </button>
-                    </div>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px' }}>
-                        IG & FB need a public URL (e.g., hosted on your website). Local files create a preview but can't be sent to the API.
-                    </p>
+                    )}
+
+                    {/* Drop zone (shown when no media selected) */}
+                    {!mediaPreview && (
+                        <div
+                            onClick={() => fileInputRef.current?.click()}
+                            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                            onDragLeave={() => setDragging(false)}
+                            onDrop={handleDrop}
+                            style={{
+                                border: `2px dashed ${dragging ? 'var(--accent)' : 'rgba(255,255,255,0.1)'}`,
+                                borderRadius: '14px', padding: '36px 24px', textAlign: 'center',
+                                cursor: 'pointer', transition: 'all 0.2s',
+                                background: dragging ? 'rgba(255,255,255,0.04)' : 'transparent',
+                            }}
+                        >
+                            <Upload size={28} style={{ color: dragging ? 'var(--accent)' : 'var(--text-muted)', margin: '0 auto 10px', display: 'block', opacity: 0.6 }} />
+                            <p style={{ margin: '0 0 4px', fontSize: '0.9375rem', color: dragging ? 'var(--accent)' : '#ccc', fontWeight: 500 }}>
+                                Drag & drop or click to browse
+                            </p>
+                            <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                Photos (JPG, PNG, WebP) or Videos (MP4, MOV) — up to 10MB / 100MB
+                            </p>
+                        </div>
+                    )}
                 </div>
 
                 {/* Schedule */}
@@ -351,12 +443,12 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                     </button>
                     <button
                         onClick={handleCreate}
-                        disabled={!caption || platforms.length === 0 || submitting}
+                        disabled={!caption || platforms.length === 0 || submitting || uploading}
                         style={{
                             padding: '12px 28px', borderRadius: '10px', border: 'none', cursor: 'pointer',
                             fontSize: '0.9375rem', fontWeight: 600,
-                            background: (!caption || platforms.length === 0) ? 'rgba(255,255,255,0.05)' : 'var(--accent)',
-                            color: (!caption || platforms.length === 0) ? 'var(--text-muted)' : '#000',
+                            background: (!caption || platforms.length === 0 || uploading) ? 'rgba(255,255,255,0.05)' : 'var(--accent)',
+                            color: (!caption || platforms.length === 0 || uploading) ? 'var(--text-muted)' : '#000',
                             display: 'flex', alignItems: 'center', gap: '8px',
                             opacity: submitting ? 0.7 : 1, transition: 'all 0.2s',
                         }}
