@@ -164,40 +164,37 @@ export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
         return { status: 'pending' };
     }
 
-    const status = record.status;
+    // Kie.ai uses "state" field with values: waiting, queuing, generating, success, fail
+    const state = record.state;
     const costTimeMs = record.costTime;
 
-    if (status === 'SUCCESS' || status === 'success') {
-        // Extract image URL from resultJson — multiple possible structures
+    if (state === 'success') {
+        // resultJson is a JSON string: {"resultUrls":["https://..."]}
         let imageUrl: string | undefined;
         try {
             const resultJson = typeof record.resultJson === 'string'
                 ? JSON.parse(record.resultJson)
                 : record.resultJson;
 
-            imageUrl = resultJson?.output?.image_url
-                || resultJson?.image_url
-                || resultJson?.output?.images?.[0]
-                || resultJson?.images?.[0];
+            // Primary: resultUrls array
+            imageUrl = resultJson?.resultUrls?.[0];
+            // Fallbacks for other model formats
+            if (!imageUrl) {
+                imageUrl = resultJson?.output?.image_url
+                    || resultJson?.image_url
+                    || resultJson?.output?.images?.[0];
+            }
         } catch {
             // resultJson may not be parseable
-        }
-
-        // Fallback to direct fields
-        if (!imageUrl) {
-            imageUrl = record.resultUrl || record.imageUrl;
         }
 
         return { status: 'success', imageUrl, costTimeMs };
     }
 
-    if (status === 'FAILED' || status === 'failed') {
+    if (state === 'fail') {
         return { status: 'failed', failMsg: record.failMsg || 'Generation failed', costTimeMs };
     }
 
-    if (status === 'PROCESSING' || status === 'processing' || status === 'RUNNING') {
-        return { status: 'processing' };
-    }
-
-    return { status: 'pending' };
+    // waiting, queuing, generating — all mean still processing
+    return { status: 'processing' };
 }
