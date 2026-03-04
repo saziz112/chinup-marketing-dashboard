@@ -6,7 +6,7 @@
  * Calls real Meta Graph API for Facebook and Instagram publishing.
  */
 
-import { publishToMultiplePlatforms, PublishResult } from '@/lib/integrations/meta-publisher';
+import { publishToMultiplePlatforms, PublishResult, PostType } from '@/lib/integrations/meta-publisher';
 import { sql } from '@vercel/postgres';
 
 export type MediaType = 'photo' | 'video';
@@ -20,6 +20,7 @@ export interface PublishRequest {
     caption: string;
     mediaUrls: string[];
     mediaType?: MediaType; // 'photo' or 'video' — auto-detected if not provided
+    postType?: PostType;   // 'feed' | 'reel' | 'story' — defaults to 'feed'
     scheduledFor?: string; // ISO string, if undefined post immediately
 }
 
@@ -95,7 +96,7 @@ export async function createPost(req: PublishRequest): Promise<PostRecord> {
     // If not scheduled, publish immediately
     if (!isScheduled) {
         const mediaUrl = req.mediaUrls?.[0] || undefined;
-        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, mediaUrl, req.mediaType);
+        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, mediaUrl, req.mediaType, req.postType || 'feed');
 
         const allSucceeded = publishResults.every(r => r.success);
         const someSucceeded = publishResults.some(r => r.success);

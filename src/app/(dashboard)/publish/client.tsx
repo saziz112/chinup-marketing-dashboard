@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { upload } from '@vercel/blob/client';
 import { PostRecord, Platform } from '@/lib/content-publisher';
+import { PostType } from '@/lib/integrations/meta-publisher';
 import {
     Calendar, CheckCircle, Clock, History, PenTool, LayoutTemplate,
     Instagram, Facebook, Youtube, Send, Loader2,
@@ -107,6 +108,7 @@ export default function PublishDashboardClient() {
 function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     const [caption, setCaption] = useState('');
     const [platforms, setPlatforms] = useState<Platform[]>([]);
+    const [postType, setPostType] = useState<PostType>('feed');
     const [mediaUrl, setMediaUrl] = useState('');
     const [mediaPreview, setMediaPreview] = useState<string | null>(null);
     const [mediaType, setMediaType] = useState<'photo' | 'video' | null>(null);
@@ -180,6 +182,17 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
 
     const handleCreate = async () => {
         if (!caption || platforms.length === 0) return;
+
+        // Validate post type requirements
+        if (postType === 'reel' && mediaType !== 'video') {
+            setFeedback({ type: 'error', message: 'Reels require a video file (MP4 or MOV).' });
+            return;
+        }
+        if (postType === 'story' && !mediaUrl) {
+            setFeedback({ type: 'error', message: 'Stories require a photo or video.' });
+            return;
+        }
+
         setSubmitting(true);
         setFeedback(null);
 
@@ -196,6 +209,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                     platforms,
                     caption,
                     mediaUrls: mediaUrl ? [mediaUrl] : [],
+                    postType,
                     scheduledFor
                 })
             });
@@ -212,7 +226,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                         message: `✅ Published to ${platforms.join(' & ')}!`,
                         details: results.filter((r: any) => r.success).map((r: any) => `${r.platform}: Post ID ${r.postId}`),
                     });
-                    setCaption(''); setPlatforms([]); clearMedia(); setScheduleDate(''); setScheduleTime('');
+                    setCaption(''); setPlatforms([]); setPostType('feed'); clearMedia(); setScheduleDate(''); setScheduleTime('');
                 } else if (post.status === 'PARTIAL') {
                     const successes = results.filter((r: any) => r.success);
                     const failures = results.filter((r: any) => !r.success);
@@ -229,7 +243,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                         type: 'success',
                         message: `📅 Scheduled for ${format(new Date(scheduledFor!), 'MMM d, h:mm a')}`,
                     });
-                    setCaption(''); setPlatforms([]); clearMedia(); setScheduleDate(''); setScheduleTime('');
+                    setCaption(''); setPlatforms([]); setPostType('feed'); clearMedia(); setScheduleDate(''); setScheduleTime('');
                 } else {
                     const errors = results.filter((r: any) => !r.success);
                     setFeedback({
@@ -323,6 +337,44 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                             );
                         })}
                     </div>
+                </div>
+
+                {/* Post Type */}
+                <div>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Post Type</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                        {([
+                            { value: 'feed' as PostType, label: 'Feed Post', icon: ImageIcon, desc: 'Standard post' },
+                            { value: 'reel' as PostType, label: 'Reel', icon: Film, desc: 'Short video' },
+                            { value: 'story' as PostType, label: 'Story', icon: Clock, desc: '24h ephemeral' },
+                        ]).map(({ value, label, icon: Icon, desc }) => {
+                            const isSelected = postType === value;
+                            return (
+                                <button
+                                    key={value}
+                                    onClick={() => setPostType(value)}
+                                    style={{
+                                        padding: '10px 20px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                                        fontSize: '0.875rem', fontWeight: isSelected ? 600 : 400,
+                                        display: 'flex', alignItems: 'center', gap: '8px',
+                                        background: isSelected ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)',
+                                        color: isSelected ? '#fff' : 'var(--text-muted)',
+                                        transition: 'all 0.2s',
+                                    }}
+                                >
+                                    <Icon size={16} />
+                                    {label}
+                                    <span style={{ fontSize: '0.6875rem', opacity: 0.6 }}>({desc})</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {postType === 'reel' && (
+                        <p style={{ fontSize: '0.75rem', color: '#eab308', marginTop: '6px' }}>Reels require a video file (MP4/MOV).</p>
+                    )}
+                    {postType === 'story' && (
+                        <p style={{ fontSize: '0.75rem', color: '#eab308', marginTop: '6px' }}>Stories require a photo or video. They disappear after 24 hours.</p>
+                    )}
                 </div>
 
                 {/* Caption */}
@@ -442,7 +494,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                 {/* Submit */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                     <button
-                        onClick={() => { setCaption(''); setPlatforms([]); clearMedia(); setScheduleDate(''); setScheduleTime(''); setFeedback(null); }}
+                        onClick={() => { setCaption(''); setPlatforms([]); setPostType('feed'); clearMedia(); setScheduleDate(''); setScheduleTime(''); setFeedback(null); }}
                         style={{ padding: '10px 24px', borderRadius: '10px', border: 'none', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 500, background: 'transparent', color: 'var(--text-muted)' }}
                     >
                         Clear

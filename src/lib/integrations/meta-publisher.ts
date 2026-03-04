@@ -4,16 +4,12 @@
  * Handles live publishing to Facebook Pages and Instagram Business accounts
  * using the Meta Graph API v21.0.
  *
- * Facebook:
- *   - Text: POST /{page-id}/feed
- *   - Photo: POST /{page-id}/photos (url param)
- *   - Video: POST /{page-id}/videos (file_url param)
+ * Supported post types:
+ *   Feed Post: standard photo/video/text posts
+ *   Reel: short-form vertical video (IG Reels + FB Reels)
+ *   Story: ephemeral content (disappears after 24h)
  *
- * Instagram (two-step container API):
- *   - Photo: POST /{ig-user-id}/media (image_url) → media_publish
- *   - Reel:  POST /{ig-user-id}/media (video_url + media_type=REELS) → media_publish
- *
- * Auto-resizes images for Instagram aspect ratio compliance (4:5 to 1.91:1).
+ * Auto-resizes images for Instagram aspect ratio compliance.
  *
  * Requires: META_PAGE_ACCESS_TOKEN, META_PAGE_ID, META_IG_USER_ID
  */
@@ -23,9 +19,11 @@ import { put } from '@vercel/blob';
 
 const GRAPH_API_BASE = 'https://graph.facebook.com/v21.0';
 
-// Instagram aspect ratio constraints
+// Instagram aspect ratio constraints (feed posts)
 const IG_MIN_RATIO = 0.8;   // 4:5 portrait
 const IG_MAX_RATIO = 1.91;  // 1.91:1 landscape
+
+export type PostType = 'feed' | 'reel' | 'story';
 
 function getEnv(key: string): string {
     const val = process.env[key];
@@ -40,7 +38,7 @@ function getOptionalEnv(key: string): string | null {
 /** Detect if a URL points to a video based on extension */
 function isVideoUrl(url: string): boolean {
     const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.m4v'];
-    const lower = url.toLowerCase().split('?')[0]; // ignore query params
+    const lower = url.toLowerCase().split('?')[0];
     return videoExtensions.some(ext => lower.endsWith(ext));
 }
 
@@ -53,104 +51,14 @@ export interface PublishResult {
     platform: 'facebook' | 'instagram';
 }
 
-// ─── Facebook Page Publishing ───────────────────────────────────────────────
-
-/**
- * Publish a post to the Facebook Page.
- * 
- * - Text-only: POST /{page-id}/feed with message
- * - Image + text: POST /{page-id}/photos with url + message
- * - Video + text: POST /{page-id}/videos with file_url + description
- */
-export async function publishToFacebook(
-    caption: string,
-    mediaUrl?: string,
-    mediaType?: 'photo' | 'video'
-): Promise<PublishResult> {
-    const pageId = getEnv('META_PAGE_ID');
-    const token = getEnv('META_PAGE_ACCESS_TOKEN');
-
-    try {
-        let endpoint: string;
-        let body: Record<string, string>;
-
-        const isVideo = mediaType === 'video' || (mediaUrl && isVideoUrl(mediaUrl));
-
-        if (mediaUrl && mediaUrl.startsWith('http') && isVideo) {
-            // Video post
-            endpoint = `${GRAPH_API_BASE}/${pageId}/videos`;
-            body = {
-                file_url: mediaUrl,
-                description: caption,
-                access_token: token,
-            };
-        } else if (mediaUrl && mediaUrl.startsWith('http')) {
-            // Image post
-            endpoint = `${GRAPH_API_BASE}/${pageId}/photos`;
-            body = {
-                url: mediaUrl,
-                message: caption,
-                access_token: token,
-            };
-        } else {
-            // Text-only post
-            endpoint = `${GRAPH_API_BASE}/${pageId}/feed`;
-            body = {
-                message: caption,
-                access_token: token,
-            };
-        }
-
-        const res = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-
-        const data = await res.json();
-
-        if (data.error) {
-            console.error('[Meta Publish FB] Error:', data.error);
-            return {
-                success: false,
-                error: data.error.message || 'Unknown Facebook publishing error',
-                platform: 'facebook',
-            };
-        }
-
-        console.log('[Meta Publish FB] Success:', data.id || data.post_id);
-        return {
-            success: true,
-            postId: data.id || data.post_id,
-            platform: 'facebook',
-        };
-    } catch (err: any) {
-        console.error('[Meta Publish FB] Network error:', err);
-        return {
-            success: false,
-            error: err.message || 'Network error publishing to Facebook',
-            platform: 'facebook',
-        };
-    }
-}
-
 // ─── Instagram Image Auto-Resize ────────────────────────────────────────────
 
-/**
- * Ensures an image meets Instagram's aspect ratio requirements (4:5 to 1.91:1).
- * If the image is outside bounds, it center-crops to the nearest valid ratio
- * and re-uploads the cropped version to Vercel Blob.
- *
- * Returns the original URL if already compliant, or the new cropped URL.
- */
 async function ensureInstagramAspectRatio(imageUrl: string): Promise<string> {
     try {
-        // Download the image
         const res = await fetch(imageUrl);
         if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
         const buffer = Buffer.from(await res.arrayBuffer());
 
-        // Get dimensions
         const metadata = await sharp(buffer).metadata();
         const { width, height } = metadata;
         if (!width || !height) return imageUrl;
@@ -158,24 +66,17 @@ async function ensureInstagramAspectRatio(imageUrl: string): Promise<string> {
         const ratio = width / height;
         console.log(`[IG Resize] Image ${width}x${height}, ratio ${ratio.toFixed(3)} (valid: ${IG_MIN_RATIO}-${IG_MAX_RATIO})`);
 
-        // Already within Instagram's valid range
-        if (ratio >= IG_MIN_RATIO && ratio <= IG_MAX_RATIO) {
-            return imageUrl;
-        }
+        if (ratio >= IG_MIN_RATIO && ratio <= IG_MAX_RATIO) return imageUrl;
 
-        // Calculate crop dimensions
         let cropWidth = width;
         let cropHeight = height;
 
         if (ratio > IG_MAX_RATIO) {
-            // Too wide (e.g. panoramic) → crop sides, keep height
             cropWidth = Math.round(height * IG_MAX_RATIO);
         } else {
-            // Too tall → crop top/bottom, keep width
             cropHeight = Math.round(width / IG_MIN_RATIO);
         }
 
-        // Center-crop
         const left = Math.round((width - cropWidth) / 2);
         const top = Math.round((height - cropHeight) / 2);
 
@@ -186,7 +87,6 @@ async function ensureInstagramAspectRatio(imageUrl: string): Promise<string> {
             .jpeg({ quality: 92 })
             .toBuffer();
 
-        // Re-upload cropped version to Vercel Blob
         const filename = `publish/ig_cropped_${Date.now()}.jpg`;
         const blob = await put(filename, cropped, {
             access: 'public',
@@ -198,26 +98,257 @@ async function ensureInstagramAspectRatio(imageUrl: string): Promise<string> {
         return blob.url;
     } catch (err: any) {
         console.error('[IG Resize] Error:', err.message);
-        // Fall back to original URL — Instagram will reject if still invalid
         return imageUrl;
     }
 }
 
-// ─── Instagram Publishing ───────────────────────────────────────────────────
+// ─── Helper: Poll IG Container Status ───────────────────────────────────────
+
+async function pollIGContainer(containerId: string, token: string, isVideo: boolean): Promise<string> {
+    const maxAttempts = isVideo ? 30 : 10;
+    const pollInterval = isVideo ? 5000 : 2000;
+    let status = 'IN_PROGRESS';
+    let attempts = 0;
+
+    while (status === 'IN_PROGRESS' && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        const statusRes = await fetch(
+            `${GRAPH_API_BASE}/${containerId}?fields=status_code&access_token=${token}`
+        );
+        const statusData = await statusRes.json();
+        status = statusData.status_code || 'FINISHED';
+        attempts++;
+        console.log(`[Meta Publish IG] Container status: ${status} (attempt ${attempts}/${maxAttempts})`);
+    }
+
+    return status;
+}
+
+// ─── Helper: Publish IG Container ───────────────────────────────────────────
+
+async function publishIGContainer(igUserId: string, containerId: string, token: string): Promise<PublishResult> {
+    const publishRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media_publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creation_id: containerId, access_token: token }),
+    });
+    const publishData = await publishRes.json();
+
+    if (publishData.error) {
+        console.error('[Meta Publish IG] Publish error:', publishData.error);
+        return { success: false, error: publishData.error.message, platform: 'instagram' };
+    }
+
+    console.log('[Meta Publish IG] Success:', publishData.id);
+    return { success: true, postId: publishData.id, platform: 'instagram' };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FACEBOOK PUBLISHING
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Facebook Feed Post (text, photo, or video) */
+export async function publishToFacebook(
+    caption: string,
+    mediaUrl?: string,
+    mediaType?: 'photo' | 'video'
+): Promise<PublishResult> {
+    const pageId = getEnv('META_PAGE_ID');
+    const token = getEnv('META_PAGE_ACCESS_TOKEN');
+
+    try {
+        let endpoint: string;
+        let body: Record<string, string>;
+        const isVideo = mediaType === 'video' || (mediaUrl && isVideoUrl(mediaUrl));
+
+        if (mediaUrl && mediaUrl.startsWith('http') && isVideo) {
+            endpoint = `${GRAPH_API_BASE}/${pageId}/videos`;
+            body = { file_url: mediaUrl, description: caption, access_token: token };
+        } else if (mediaUrl && mediaUrl.startsWith('http')) {
+            endpoint = `${GRAPH_API_BASE}/${pageId}/photos`;
+            body = { url: mediaUrl, message: caption, access_token: token };
+        } else {
+            endpoint = `${GRAPH_API_BASE}/${pageId}/feed`;
+            body = { message: caption, access_token: token };
+        }
+
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            console.error('[Meta Publish FB] Error:', data.error);
+            return { success: false, error: data.error.message, platform: 'facebook' };
+        }
+
+        console.log('[Meta Publish FB] Success:', data.id || data.post_id);
+        return { success: true, postId: data.id || data.post_id, platform: 'facebook' };
+    } catch (err: any) {
+        console.error('[Meta Publish FB] Network error:', err);
+        return { success: false, error: err.message, platform: 'facebook' };
+    }
+}
 
 /**
- * Publish a photo or reel to Instagram.
- *
- * Two-step process:
- * 1. Create a media container: POST /{ig-user-id}/media
- *    - Photo: { image_url, caption }
- *    - Reel:  { video_url, caption, media_type: 'REELS' }
- * 2. Poll container until ready
- * 3. Publish the container: POST /{ig-user-id}/media_publish
- *
- * Photos are auto-resized to meet Instagram's aspect ratio requirements.
- * NOTE: Both image_url and video_url MUST be publicly accessible HTTPS URLs.
+ * Facebook Reel — 3-step process:
+ * 1. POST /{page-id}/video_reels (upload_phase=start)
+ * 2. POST rupload.facebook.com (upload video via file_url)
+ * 3. POST /{page-id}/video_reels (upload_phase=finish, video_state=PUBLISHED)
  */
+export async function publishFacebookReel(
+    caption: string,
+    videoUrl: string
+): Promise<PublishResult> {
+    const pageId = getEnv('META_PAGE_ID');
+    const token = getEnv('META_PAGE_ACCESS_TOKEN');
+
+    try {
+        // Step 1: Initialize
+        const initRes = await fetch(`${GRAPH_API_BASE}/${pageId}/video_reels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upload_phase: 'start', access_token: token }),
+        });
+        const initData = await initRes.json();
+
+        if (initData.error) {
+            return { success: false, error: initData.error.message, platform: 'facebook' };
+        }
+
+        const videoId = initData.video_id;
+        if (!videoId) {
+            return { success: false, error: 'No video_id returned from FB Reel init', platform: 'facebook' };
+        }
+
+        // Step 2: Upload via rupload
+        const uploadRes = await fetch(`https://rupload.facebook.com/video-upload/v21.0/${videoId}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `OAuth ${token}`,
+                'file_url': videoUrl,
+            },
+        });
+        const uploadData = await uploadRes.json();
+
+        if (!uploadData.success) {
+            return { success: false, error: 'Failed to upload video to Facebook', platform: 'facebook' };
+        }
+
+        // Step 3: Finish / Publish
+        const finishRes = await fetch(`${GRAPH_API_BASE}/${pageId}/video_reels`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                upload_phase: 'finish',
+                video_id: videoId,
+                video_state: 'PUBLISHED',
+                description: caption,
+                access_token: token,
+            }),
+        });
+        const finishData = await finishRes.json();
+
+        if (finishData.error) {
+            return { success: false, error: finishData.error.message, platform: 'facebook' };
+        }
+
+        console.log('[Meta Publish FB Reel] Success:', videoId);
+        return { success: true, postId: videoId, platform: 'facebook' };
+    } catch (err: any) {
+        console.error('[Meta Publish FB Reel] Error:', err);
+        return { success: false, error: err.message, platform: 'facebook' };
+    }
+}
+
+/**
+ * Facebook Story — photo or video
+ * Photo: upload unpublished → POST /{page-id}/photo_stories
+ * Video: 3-step via /{page-id}/video_stories
+ */
+export async function publishFacebookStory(
+    mediaUrl: string,
+    mediaType?: 'photo' | 'video'
+): Promise<PublishResult> {
+    const pageId = getEnv('META_PAGE_ID');
+    const token = getEnv('META_PAGE_ACCESS_TOKEN');
+    const isVideo = mediaType === 'video' || isVideoUrl(mediaUrl);
+
+    try {
+        if (isVideo) {
+            // Video Story: 3-step
+            const initRes = await fetch(`${GRAPH_API_BASE}/${pageId}/video_stories`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ upload_phase: 'start', access_token: token }),
+            });
+            const initData = await initRes.json();
+            if (initData.error) {
+                return { success: false, error: initData.error.message, platform: 'facebook' };
+            }
+
+            const videoId = initData.video_id;
+            const uploadUrl = initData.upload_url;
+
+            const uploadRes = await fetch(uploadUrl || `https://rupload.facebook.com/video-upload/v21.0/${videoId}`, {
+                method: 'POST',
+                headers: { 'Authorization': `OAuth ${token}`, 'file_url': mediaUrl },
+            });
+            const uploadData = await uploadRes.json();
+            if (uploadData.error) {
+                return { success: false, error: uploadData.error.message, platform: 'facebook' };
+            }
+
+            const finishRes = await fetch(`${GRAPH_API_BASE}/${pageId}/video_stories`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ upload_phase: 'finish', video_id: videoId, access_token: token }),
+            });
+            const finishData = await finishRes.json();
+            if (finishData.error) {
+                return { success: false, error: finishData.error.message, platform: 'facebook' };
+            }
+
+            console.log('[Meta Publish FB Story (video)] Success:', finishData.post_id || videoId);
+            return { success: true, postId: finishData.post_id || videoId, platform: 'facebook' };
+        } else {
+            // Photo Story: 2-step
+            const photoRes = await fetch(`${GRAPH_API_BASE}/${pageId}/photos`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: mediaUrl, published: 'false', access_token: token }),
+            });
+            const photoData = await photoRes.json();
+            if (photoData.error) {
+                return { success: false, error: photoData.error.message, platform: 'facebook' };
+            }
+
+            const storyRes = await fetch(`${GRAPH_API_BASE}/${pageId}/photo_stories`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ photo_id: photoData.id, access_token: token }),
+            });
+            const storyData = await storyRes.json();
+            if (storyData.error) {
+                return { success: false, error: storyData.error.message, platform: 'facebook' };
+            }
+
+            console.log('[Meta Publish FB Story (photo)] Success:', storyData.post_id || storyData.id);
+            return { success: true, postId: storyData.post_id || storyData.id, platform: 'facebook' };
+        }
+    } catch (err: any) {
+        console.error('[Meta Publish FB Story] Error:', err);
+        return { success: false, error: err.message, platform: 'facebook' };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INSTAGRAM PUBLISHING
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Instagram Feed Post (photo or reel) */
 export async function publishToInstagram(
     caption: string,
     mediaUrl: string,
@@ -227,36 +358,21 @@ export async function publishToInstagram(
     const token = getOptionalEnv('META_PAGE_ACCESS_TOKEN');
 
     if (!igUserId || !token) {
-        return {
-            success: false,
-            error: 'Instagram not configured. Set META_IG_USER_ID and META_PAGE_ACCESS_TOKEN.',
-            platform: 'instagram',
-        };
+        return { success: false, error: 'Instagram not configured. Set META_IG_USER_ID and META_PAGE_ACCESS_TOKEN.', platform: 'instagram' };
     }
-
     if (!mediaUrl || !mediaUrl.startsWith('http')) {
-        return {
-            success: false,
-            error: 'Instagram requires media to be uploaded first. Use the upload button to select a file.',
-            platform: 'instagram',
-        };
+        return { success: false, error: 'Instagram requires media. Upload a file first.', platform: 'instagram' };
     }
 
     const isVideo = mediaType === 'video' || isVideoUrl(mediaUrl);
 
     try {
-        // Auto-resize photos if aspect ratio is out of Instagram's bounds
         let finalMediaUrl = mediaUrl;
         if (!isVideo) {
             finalMediaUrl = await ensureInstagramAspectRatio(mediaUrl);
         }
 
-        // Step 1: Create media container
-        const containerBody: Record<string, string> = {
-            caption: caption,
-            access_token: token,
-        };
-
+        const containerBody: Record<string, string> = { caption, access_token: token };
         if (isVideo) {
             containerBody.video_url = finalMediaUrl;
             containerBody.media_type = 'REELS';
@@ -269,141 +385,132 @@ export async function publishToInstagram(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(containerBody),
         });
-
         const containerData = await containerRes.json();
 
         if (containerData.error) {
-            console.error('[Meta Publish IG] Container error:', containerData.error);
             let errorMsg = containerData.error.message || 'Failed to create Instagram media container';
-            // Provide helpful context for common IG errors
             if (errorMsg.toLowerCase().includes('aspect ratio')) {
-                errorMsg += ' Instagram requires images between 4:5 (portrait) and 1.91:1 (landscape). Try cropping the image before uploading.';
+                errorMsg += ' Instagram requires images between 4:5 (portrait) and 1.91:1 (landscape).';
             }
-            return {
-                success: false,
-                error: errorMsg,
-                platform: 'instagram',
-            };
+            return { success: false, error: errorMsg, platform: 'instagram' };
         }
 
         const containerId = containerData.id;
         if (!containerId) {
-            return {
-                success: false,
-                error: 'No container ID returned from Instagram',
-                platform: 'instagram',
-            };
+            return { success: false, error: 'No container ID returned from Instagram', platform: 'instagram' };
         }
 
-        // Step 2: Poll container status
-        // Videos take longer to process than photos
-        const maxAttempts = isVideo ? 30 : 10;
-        const pollInterval = isVideo ? 5000 : 2000;
-        let status = 'IN_PROGRESS';
-        let attempts = 0;
+        const status = await pollIGContainer(containerId, token, isVideo);
+        if (status === 'ERROR') return { success: false, error: 'Instagram media processing failed.', platform: 'instagram' };
+        if (status === 'IN_PROGRESS') return { success: false, error: 'Instagram is still processing. Try again.', platform: 'instagram' };
 
-        while (status === 'IN_PROGRESS' && attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, pollInterval));
-            const statusRes = await fetch(
-                `${GRAPH_API_BASE}/${containerId}?fields=status_code&access_token=${token}`
-            );
-            const statusData = await statusRes.json();
-            status = statusData.status_code || 'FINISHED';
-            attempts++;
-            console.log(`[Meta Publish IG] Container status: ${status} (attempt ${attempts}/${maxAttempts})`);
-        }
-
-        if (status === 'ERROR') {
-            return {
-                success: false,
-                error: 'Instagram media processing failed. The file may be too large or in an unsupported format.',
-                platform: 'instagram',
-            };
-        }
-
-        if (status === 'IN_PROGRESS') {
-            return {
-                success: false,
-                error: 'Instagram is still processing the media. Try again in a moment.',
-                platform: 'instagram',
-            };
-        }
-
-        // Step 3: Publish
-        const publishRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media_publish`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                creation_id: containerId,
-                access_token: token,
-            }),
-        });
-
-        const publishData = await publishRes.json();
-
-        if (publishData.error) {
-            console.error('[Meta Publish IG] Publish error:', publishData.error);
-            return {
-                success: false,
-                error: publishData.error.message || 'Failed to publish to Instagram',
-                platform: 'instagram',
-            };
-        }
-
-        console.log('[Meta Publish IG] Success:', publishData.id);
-        return {
-            success: true,
-            postId: publishData.id,
-            platform: 'instagram',
-        };
+        return publishIGContainer(igUserId, containerId, token);
     } catch (err: any) {
         console.error('[Meta Publish IG] Network error:', err);
-        return {
-            success: false,
-            error: err.message || 'Network error publishing to Instagram',
-            platform: 'instagram',
-        };
+        return { success: false, error: err.message, platform: 'instagram' };
     }
 }
 
-// ─── Multi-Platform Publish ─────────────────────────────────────────────────
+/** Instagram Story — photo or video (media_type=STORIES) */
+export async function publishInstagramStory(
+    caption: string,
+    mediaUrl: string,
+    mediaType?: 'photo' | 'video'
+): Promise<PublishResult> {
+    const igUserId = getOptionalEnv('META_IG_USER_ID');
+    const token = getOptionalEnv('META_PAGE_ACCESS_TOKEN');
 
-/**
- * Publish to multiple platforms at once.
- * Returns individual results for each platform.
- */
+    if (!igUserId || !token) {
+        return { success: false, error: 'Instagram not configured.', platform: 'instagram' };
+    }
+    if (!mediaUrl || !mediaUrl.startsWith('http')) {
+        return { success: false, error: 'Instagram Stories require media. Upload a file first.', platform: 'instagram' };
+    }
+
+    const isVideo = mediaType === 'video' || isVideoUrl(mediaUrl);
+
+    try {
+        const containerBody: Record<string, string> = { media_type: 'STORIES', access_token: token };
+        if (isVideo) {
+            containerBody.video_url = mediaUrl;
+        } else {
+            containerBody.image_url = mediaUrl;
+        }
+
+        console.log(`[Meta Publish IG Story] Creating ${isVideo ? 'video' : 'photo'} story container`);
+
+        const containerRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(containerBody),
+        });
+        const containerData = await containerRes.json();
+
+        if (containerData.error) {
+            return { success: false, error: containerData.error.message, platform: 'instagram' };
+        }
+
+        const containerId = containerData.id;
+        if (!containerId) {
+            return { success: false, error: 'No container ID for IG Story', platform: 'instagram' };
+        }
+
+        const status = await pollIGContainer(containerId, token, isVideo);
+        if (status === 'ERROR') return { success: false, error: 'Instagram Story processing failed.', platform: 'instagram' };
+        if (status === 'IN_PROGRESS') return { success: false, error: 'Still processing. Try again shortly.', platform: 'instagram' };
+
+        return publishIGContainer(igUserId, containerId, token);
+    } catch (err: any) {
+        console.error('[Meta Publish IG Story] Error:', err);
+        return { success: false, error: err.message, platform: 'instagram' };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MULTI-PLATFORM PUBLISH
+// ═══════════════════════════════════════════════════════════════════════════
+
 export async function publishToMultiplePlatforms(
     platforms: string[],
     caption: string,
     mediaUrl?: string,
-    mediaType?: 'photo' | 'video'
+    mediaType?: 'photo' | 'video',
+    postType: PostType = 'feed'
 ): Promise<PublishResult[]> {
     const results: PublishResult[] = [];
 
     const tasks = platforms.map(async (platform) => {
         if (platform === 'facebook') {
+            if (postType === 'reel') {
+                if (!mediaUrl) return { success: false, error: 'Facebook Reels require a video.', platform: 'facebook' as const };
+                return publishFacebookReel(caption, mediaUrl);
+            }
+            if (postType === 'story') {
+                if (!mediaUrl) return { success: false, error: 'Facebook Stories require media.', platform: 'facebook' as const };
+                return publishFacebookStory(mediaUrl, mediaType);
+            }
             return publishToFacebook(caption, mediaUrl, mediaType);
-        } else if (platform === 'instagram') {
+        }
+
+        if (platform === 'instagram') {
             if (!mediaUrl || !mediaUrl.startsWith('http')) {
-                return {
-                    success: false,
-                    error: 'Instagram requires a photo or video. Upload a file first.',
-                    platform: 'instagram' as const,
-                };
+                return { success: false, error: 'Instagram requires media. Upload a file first.', platform: 'instagram' as const };
+            }
+            if (postType === 'story') {
+                return publishInstagramStory(caption, mediaUrl, mediaType);
             }
             return publishToInstagram(caption, mediaUrl, mediaType);
-        } else if (platform === 'youtube') {
+        }
+
+        if (platform === 'youtube') {
             return {
                 success: false,
                 error: 'YouTube publishing is not yet supported. Upload videos directly to YouTube Studio.',
                 platform: 'youtube' as unknown as 'facebook',
             };
         }
-        return {
-            success: false,
-            error: `Unknown platform: ${platform}`,
-            platform: platform as 'facebook',
-        };
+
+        return { success: false, error: `Unknown platform: ${platform}`, platform: platform as 'facebook' };
     });
 
     const settled = await Promise.allSettled(tasks);
