@@ -93,28 +93,29 @@ export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRa
 
 // --- API Calls ---
 
+const RESOLUTION_LABEL: Record<Resolution, string> = {
+    '1024': '1K',
+    '2048': '2K',
+    '4096': '4K',
+};
+
 export async function createImageTask(req: GenerateRequest): Promise<GenerateResult> {
     const apiKey = getEnv('KIE_AI_API_KEY');
     const enhancedPrompt = enhancePrompt(req.prompt, req.style, req.aspectRatio);
-    const { width, height } = getResolutionForAspect(req.resolution, req.aspectRatio);
 
-    const body: Record<string, unknown> = {
-        modelId: 'nano-banana-2',
-        params: {
-            prompt: enhancedPrompt,
-            width,
-            height,
-            num_inference_steps: 30,
-        },
+    const input: Record<string, unknown> = {
+        prompt: enhancedPrompt,
+        aspect_ratio: req.aspectRatio,
+        resolution: RESOLUTION_LABEL[req.resolution],
+        output_format: 'png',
+        google_search: false,
+        image_input: req.referenceImageUrl ? [req.referenceImageUrl] : [],
     };
 
-    if (req.referenceImageUrl) {
-        body.params = {
-            ...(body.params as Record<string, unknown>),
-            image_url: req.referenceImageUrl,
-            strength: 0.65,
-        };
-    }
+    const body = {
+        model: 'nano-banana-2',
+        input,
+    };
 
     const res = await fetch(`${KIE_API_BASE}/createTask`, {
         method: 'POST',
