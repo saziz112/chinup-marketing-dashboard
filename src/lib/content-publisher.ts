@@ -1,5 +1,16 @@
+/**
+ * Content Publisher
+ * 
+ * Manages post creation, scheduling, and publishing to social platforms.
+ * Uses Vercel Postgres for persistent storage instead of in-memory arrays.
+ * Calls real Meta Graph API for Facebook and Instagram publishing.
+ */
+
+import { publishToMultiplePlatforms, PublishResult } from '@/lib/integrations/meta-publisher';
+import { sql } from '@vercel/postgres';
+
 export type Platform = 'instagram' | 'facebook' | 'youtube';
-export type PostStatus = 'DRAFT' | 'SCHEDULED' | 'PUBLISHED' | 'FAILED';
+export type PostStatus = 'DRAFT' | 'SCHEDULED' | 'PUBLISHING' | 'PUBLISHED' | 'PARTIAL' | 'FAILED';
 
 export interface PublishRequest {
     platforms: Platform[];
@@ -20,68 +31,188 @@ export interface PostRecord {
     createdAt: string;
     publishedAt?: string;
     errors?: Record<string, string>;
+    publishResults?: PublishResult[];
 }
 
-// In-memory store for mocked data (until DB is hooked up)
-let MOCK_POSTS: PostRecord[] = [
-    {
-        id: 'post_1',
-        platforms: ['instagram', 'facebook'],
-        caption: 'Loving the new results from our latest Morpheus8 treatment! ✨ #medspa #chinupaesthetics',
-        mediaUrls: ['https://images.unsplash.com/photo-1612450410755-f55db463510e?w=800&auto=format&fit=crop'],
-        status: 'PUBLISHED',
-        createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-        publishedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    },
-    {
-        id: 'post_2',
-        platforms: ['instagram'],
-        caption: 'Day in the life at Chin Up! Aesthetics 💉',
-        mediaUrls: [],
-        status: 'SCHEDULED',
-        scheduledFor: new Date(Date.now() + 86400000).toISOString(),
-        createdAt: new Date().toISOString(),
+// ─── Database Helpers ───────────────────────────────────────────────────────
+
+async function ensurePostsTable() {
+    try {
+        await sql`
+            CREATE TABLE IF NOT EXISTS content_posts (
+                id TEXT PRIMARY KEY,
+                platforms TEXT NOT NULL,
+                title TEXT,
+                caption TEXT NOT NULL,
+                media_urls TEXT DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'DRAFT',
+                scheduled_for TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                published_at TIMESTAMPTZ,
+                errors TEXT DEFAULT '{}',
+                publish_results TEXT DEFAULT '[]'
+            )
+        `;
+    } catch (e) {
+        // Table may already exist — ignore
     }
-];
+}
+
+function rowToPost(row: any): PostRecord {
+    return {
+        id: row.id,
+        platforms: JSON.parse(row.platforms || '[]'),
+        title: row.title,
+        caption: row.caption,
+        mediaUrls: JSON.parse(row.media_urls || '[]'),
+        status: row.status,
+        scheduledFor: row.scheduled_for?.toISOString(),
+        createdAt: row.created_at?.toISOString() || new Date().toISOString(),
+        publishedAt: row.published_at?.toISOString(),
+        errors: JSON.parse(row.errors || '{}'),
+        publishResults: JSON.parse(row.publish_results || '[]'),
+    };
+}
+
+// ─── CRUD Operations ────────────────────────────────────────────────────────
 
 export async function createPost(req: PublishRequest): Promise<PostRecord> {
+    await ensurePostsTable();
+
     const isScheduled = !!req.scheduledFor && new Date(req.scheduledFor) > new Date();
+    const id = `post_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const now = new Date();
 
-    const newPost: PostRecord = {
-        id: `post_${Date.now()}`,
-        ...req,
-        status: isScheduled ? 'SCHEDULED' : 'PUBLISHED',
-        createdAt: new Date().toISOString(),
-        ...(isScheduled ? {} : { publishedAt: new Date().toISOString() })
-    };
+    let status: PostStatus = isScheduled ? 'SCHEDULED' : 'PUBLISHING';
+    let publishedAt: Date | null = null;
+    let errors: Record<string, string> = {};
+    let publishResults: PublishResult[] = [];
 
-    MOCK_POSTS = [newPost, ...MOCK_POSTS];
-
-    // Here we would actually call the platform APIs if it's not scheduled
+    // If not scheduled, publish immediately
     if (!isScheduled) {
-        // e.g., await publishToInstagram(req.mediaUrls[0], req.caption);
+        const imageUrl = req.mediaUrls?.[0] || undefined;
+        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, imageUrl);
+
+        const allSucceeded = publishResults.every(r => r.success);
+        const someSucceeded = publishResults.some(r => r.success);
+
+        if (allSucceeded) {
+            status = 'PUBLISHED';
+            publishedAt = new Date();
+        } else if (someSucceeded) {
+            status = 'PARTIAL';
+            publishedAt = new Date();
+        } else {
+            status = 'FAILED';
+        }
+
+        // Collect any errors
+        for (const r of publishResults) {
+            if (!r.success && r.error) {
+                errors[r.platform] = r.error;
+            }
+        }
     }
 
-    return newPost;
+    // Persist to database
+    await sql`
+        INSERT INTO content_posts (id, platforms, title, caption, media_urls, status, scheduled_for, created_at, published_at, errors, publish_results)
+        VALUES (
+            ${id},
+            ${JSON.stringify(req.platforms)},
+            ${req.title || null},
+            ${req.caption},
+            ${JSON.stringify(req.mediaUrls || [])},
+            ${status},
+            ${req.scheduledFor || null},
+            ${now.toISOString()},
+            ${publishedAt?.toISOString() || null},
+            ${JSON.stringify(errors)},
+            ${JSON.stringify(publishResults)}
+        )
+    `;
+
+    return {
+        id,
+        platforms: req.platforms,
+        title: req.title,
+        caption: req.caption,
+        mediaUrls: req.mediaUrls || [],
+        status,
+        scheduledFor: req.scheduledFor,
+        createdAt: now.toISOString(),
+        publishedAt: publishedAt?.toISOString(),
+        errors: Object.keys(errors).length > 0 ? errors : undefined,
+        publishResults,
+    };
 }
 
 export async function getPosts(status?: PostStatus): Promise<PostRecord[]> {
+    await ensurePostsTable();
+
+    let result;
     if (status) {
-        return MOCK_POSTS.filter(p => p.status === status);
+        result = await sql`SELECT * FROM content_posts WHERE status = ${status} ORDER BY created_at DESC`;
+    } else {
+        result = await sql`SELECT * FROM content_posts ORDER BY created_at DESC`;
     }
-    return MOCK_POSTS;
+
+    return result.rows.map(rowToPost);
 }
 
-export async function updatePostStatus(id: string, status: PostStatus): Promise<PostRecord | null> {
-    const idx = MOCK_POSTS.findIndex(p => p.id === id);
-    if (idx === -1) return null;
+export async function getPostsByDateRange(startDate: string, endDate: string): Promise<PostRecord[]> {
+    await ensurePostsTable();
 
-    MOCK_POSTS[idx].status = status;
-    return MOCK_POSTS[idx];
+    const result = await sql`
+        SELECT * FROM content_posts 
+        WHERE created_at >= ${startDate} AND created_at <= ${endDate}
+        ORDER BY created_at DESC
+    `;
+
+    return result.rows.map(rowToPost);
+}
+
+export async function updatePostStatus(id: string, newStatus: PostStatus): Promise<PostRecord | null> {
+    await ensurePostsTable();
+
+    const result = await sql`
+        UPDATE content_posts SET status = ${newStatus}
+        WHERE id = ${id}
+        RETURNING *
+    `;
+
+    if (result.rows.length === 0) return null;
+    return rowToPost(result.rows[0]);
 }
 
 export async function deletePost(id: string): Promise<boolean> {
-    const initialLen = MOCK_POSTS.length;
-    MOCK_POSTS = MOCK_POSTS.filter(p => p.id !== id);
-    return MOCK_POSTS.length < initialLen;
+    await ensurePostsTable();
+
+    const result = await sql`DELETE FROM content_posts WHERE id = ${id}`;
+    return (result.rowCount ?? 0) > 0;
+}
+
+// ─── Publishing Stats for Goals ─────────────────────────────────────────────
+
+export async function getPostCountByPlatform(
+    startDate: string,
+    endDate: string
+): Promise<Record<string, number>> {
+    await ensurePostsTable();
+
+    const result = await sql`
+        SELECT platforms FROM content_posts 
+        WHERE status IN ('PUBLISHED', 'PARTIAL')
+        AND published_at >= ${startDate} AND published_at <= ${endDate}
+    `;
+
+    const counts: Record<string, number> = { instagram: 0, facebook: 0, youtube: 0, total: 0 };
+    for (const row of result.rows) {
+        const platforms: string[] = JSON.parse(row.platforms || '[]');
+        for (const p of platforms) {
+            counts[p] = (counts[p] || 0) + 1;
+        }
+        counts.total += 1;
+    }
+    return counts;
 }

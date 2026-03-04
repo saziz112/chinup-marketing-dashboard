@@ -2,18 +2,29 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { PostRecord, Platform } from '@/lib/content-publisher';
-import { WeeklyAccountability } from '@/lib/posting-goals';
 import {
     Calendar, CheckCircle, Clock, History, PenTool, LayoutTemplate,
-    Instagram, Facebook, Youtube, PlaySquare, Plus, Send, Activity, Loader2, Image as ImageIcon, Flame, Target
+    Instagram, Facebook, Youtube, Plus, Send, Loader2,
+    Image as ImageIcon, Target, AlertTriangle, XCircle, TrendingUp, Zap
 } from 'lucide-react';
 import { format } from 'date-fns';
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface GoalsData {
+    weekStarting: string;
+    weekEnding: string;
+    targets: Record<string, { target: number; current: number; label: string }>;
+    currentStreak: number;
+    isOnTrack: boolean;
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function PublishDashboardClient() {
     const [activeTab, setActiveTab] = useState<'create' | 'scheduled' | 'history' | 'goals'>('create');
     const [posts, setPosts] = useState<PostRecord[]>([]);
-    const [goals, setGoals] = useState<WeeklyAccountability | null>(null);
-    const [heatmap, setHeatmap] = useState<Record<string, number>>({});
+    const [goals, setGoals] = useState<GoalsData | null>(null);
     const [loading, setLoading] = useState(true);
 
     const fetchData = async () => {
@@ -28,7 +39,6 @@ export default function PublishDashboardClient() {
 
             if (pData.posts) setPosts(pData.posts);
             if (gData.goals) setGoals(gData.goals);
-            if (gData.heatmap) setHeatmap(gData.heatmap);
         } catch (e) {
             console.error(e);
         } finally {
@@ -36,77 +46,61 @@ export default function PublishDashboardClient() {
         }
     };
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    useEffect(() => { fetchData(); }, []);
 
     const scheduled = posts.filter(p => p.status === 'SCHEDULED');
     const history = posts.filter(p => p.status !== 'SCHEDULED');
 
+    const tabStyle = (active: boolean): React.CSSProperties => ({
+        display: 'flex', alignItems: 'center', gap: '6px',
+        padding: '8px 16px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+        fontSize: '0.8125rem', fontWeight: active ? 600 : 400,
+        background: active ? 'rgba(255,255,255,0.1)' : 'transparent',
+        color: active ? '#fff' : 'var(--text-muted)',
+        transition: 'all 0.2s',
+    });
+
     return (
-        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20">
-
-
+        <div style={{ paddingBottom: '80px' }}>
             {/* Nav Tabs */}
-            <div className="flex flex-wrap gap-1 bg-slate-900/50 p-1.5 rounded-2xl inline-flex backdrop-blur-md shadow-sm">
-                <TabButton
-                    active={activeTab === 'create'}
-                    onClick={() => setActiveTab('create')}
-                    icon={PenTool} label="Craft Post"
-                />
-                <TabButton
-                    active={activeTab === 'scheduled'}
-                    onClick={() => setActiveTab('scheduled')}
-                    icon={Clock} label={`Queue (${scheduled.length})`}
-                />
-                <TabButton
-                    active={activeTab === 'history'}
-                    onClick={() => setActiveTab('history')}
-                    icon={History} label="History"
-                />
-                <TabButton
-                    active={activeTab === 'goals'}
-                    onClick={() => setActiveTab('goals')}
-                    icon={Activity} label="Goals & Streaks"
-                />
+            <div style={{ display: 'inline-flex', gap: '2px', background: 'rgba(255,255,255,0.04)', padding: '4px', borderRadius: '12px', marginBottom: '24px' }}>
+                <button onClick={() => setActiveTab('create')} style={tabStyle(activeTab === 'create')}>
+                    <PenTool size={14} /> Craft Post
+                </button>
+                <button onClick={() => setActiveTab('scheduled')} style={tabStyle(activeTab === 'scheduled')}>
+                    <Clock size={14} /> Queue ({scheduled.length})
+                </button>
+                <button onClick={() => setActiveTab('history')} style={tabStyle(activeTab === 'history')}>
+                    <History size={14} /> History
+                </button>
+                <button onClick={() => setActiveTab('goals')} style={tabStyle(activeTab === 'goals')}>
+                    <Target size={14} /> Goals
+                </button>
             </div>
 
-            {/* Main Content Area */}
-            <div className="relative min-h-[500px]">
+            {/* Content */}
+            <div style={{ position: 'relative', minHeight: '400px' }}>
                 {loading && (
-                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#0B1121]/50 backdrop-blur-md rounded-3xl transition-all">
-                        <Loader2 className="w-8 h-8 animate-spin text-[var(--accent)] mb-4" />
-                        <p className="text-slate-400 font-light">Syncing workspace...</p>
+                    <div style={{
+                        position: 'absolute', inset: 0, zIndex: 10,
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        background: 'rgba(11,17,33,0.6)', backdropFilter: 'blur(8px)', borderRadius: '16px',
+                    }}>
+                        <Loader2 size={28} style={{ color: 'var(--accent)', animation: 'spin 0.8s linear infinite', marginBottom: '12px' }} />
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Loading...</p>
                     </div>
                 )}
 
                 {activeTab === 'create' && <CreatePostForm onPostCreated={fetchData} />}
-                {activeTab === 'scheduled' && <PostList posts={scheduled} emptyMessage="Your schedule is clear. Nothing waiting in queue." onUpdate={fetchData} />}
-                {activeTab === 'history' && <PostList posts={history} emptyMessage="No publishing history available yet." />}
-                {activeTab === 'goals' && goals && <GoalsScorecard goals={goals} heatmap={heatmap} />}
+                {activeTab === 'scheduled' && <PostList posts={scheduled} emptyMessage="No scheduled posts." onUpdate={fetchData} />}
+                {activeTab === 'history' && <PostList posts={history} emptyMessage="No publishing history yet." />}
+                {activeTab === 'goals' && <GoalsScorecard goals={goals} />}
             </div>
         </div>
     );
 }
 
-// ----------------------------------------------------------------------------
-// HELPER COMPONENTS
-// ----------------------------------------------------------------------------
-
-function TabButton({ active, onClick, icon: Icon, label }: any) {
-    return (
-        <button
-            onClick={onClick}
-            className={`px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 flex items-center gap-2.5 ${active
-                ? 'bg-white/10 text-white shadow-sm scale-[1.02]'
-                : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
-        >
-            <Icon size={16} className={active ? 'text-[var(--accent)]' : 'opacity-70'} />
-            <span className="tracking-wide">{label}</span>
-        </button>
-    );
-}
+// ─── Create Post Form ───────────────────────────────────────────────────────
 
 function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     const [caption, setCaption] = useState('');
@@ -117,6 +111,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     const [scheduleDate, setScheduleDate] = useState('');
     const [scheduleTime, setScheduleTime] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'partial'; message: string; details?: string[] } | null>(null);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -129,9 +124,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
             const file = e.target.files[0];
             setMediaFile(file);
             setMediaUrl(file.name);
-            // Create visual preview
-            const previewUrl = URL.createObjectURL(file);
-            setMediaPreview(previewUrl);
+            setMediaPreview(URL.createObjectURL(file));
         }
     };
 
@@ -146,6 +139,8 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     const handleCreate = async () => {
         if (!caption || platforms.length === 0) return;
         setSubmitting(true);
+        setFeedback(null);
+
         try {
             let scheduledFor = undefined;
             if (scheduleDate && scheduleTime) {
@@ -162,16 +157,52 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                     scheduledFor
                 })
             });
+
+            const data = await res.json();
+
             if (res.ok) {
-                setCaption('');
-                setPlatforms([]);
-                clearMedia();
-                setScheduleDate('');
-                setScheduleTime('');
+                const post = data.post;
+                const results = data.results || [];
+
+                if (post.status === 'PUBLISHED') {
+                    setFeedback({
+                        type: 'success',
+                        message: `✅ Published to ${platforms.join(' & ')}!`,
+                        details: results.filter((r: any) => r.success).map((r: any) => `${r.platform}: Post ID ${r.postId}`),
+                    });
+                    setCaption(''); setPlatforms([]); clearMedia(); setScheduleDate(''); setScheduleTime('');
+                } else if (post.status === 'PARTIAL') {
+                    const successes = results.filter((r: any) => r.success);
+                    const failures = results.filter((r: any) => !r.success);
+                    setFeedback({
+                        type: 'partial',
+                        message: `⚠️ Partially published (${successes.length}/${results.length} platforms)`,
+                        details: [
+                            ...successes.map((r: any) => `✅ ${r.platform}: Published`),
+                            ...failures.map((r: any) => `❌ ${r.platform}: ${r.error}`),
+                        ],
+                    });
+                } else if (post.status === 'SCHEDULED') {
+                    setFeedback({
+                        type: 'success',
+                        message: `📅 Scheduled for ${format(new Date(scheduledFor!), 'MMM d, h:mm a')}`,
+                    });
+                    setCaption(''); setPlatforms([]); clearMedia(); setScheduleDate(''); setScheduleTime('');
+                } else {
+                    const errors = results.filter((r: any) => !r.success);
+                    setFeedback({
+                        type: 'error',
+                        message: '❌ Publishing failed',
+                        details: errors.map((r: any) => `${r.platform}: ${r.error}`),
+                    });
+                }
+
                 onPostCreated();
+            } else {
+                setFeedback({ type: 'error', message: data.error || 'Something went wrong' });
             }
-        } catch (e) {
-            console.error(e);
+        } catch (e: any) {
+            setFeedback({ type: 'error', message: e.message || 'Network error' });
         } finally {
             setSubmitting(false);
         }
@@ -183,42 +214,76 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
         outline: 'none', width: '100%', fontWeight: 300, transition: 'background 0.3s',
     };
 
+    const feedbackColors = {
+        success: { bg: 'rgba(34,197,94,0.08)', border: 'rgba(34,197,94,0.2)', color: '#22c55e', icon: CheckCircle },
+        error: { bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.2)', color: '#ef4444', icon: XCircle },
+        partial: { bg: 'rgba(234,179,8,0.08)', border: 'rgba(234,179,8,0.2)', color: '#eab308', icon: AlertTriangle },
+    };
+
     return (
         <div className="section-card" style={{ padding: '32px', maxWidth: '900px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+
+                {/* Feedback Banner */}
+                {feedback && (() => {
+                    const fb = feedbackColors[feedback.type];
+                    const Icon = fb.icon;
+                    return (
+                        <div style={{
+                            background: fb.bg, border: `1px solid ${fb.border}`, borderRadius: '12px',
+                            padding: '16px 20px', display: 'flex', gap: '12px', alignItems: 'flex-start',
+                        }}>
+                            <Icon size={20} style={{ color: fb.color, flexShrink: 0, marginTop: '2px' }} />
+                            <div style={{ flex: 1 }}>
+                                <p style={{ color: fb.color, fontWeight: 600, fontSize: '0.9375rem', margin: 0 }}>{feedback.message}</p>
+                                {feedback.details && feedback.details.length > 0 && (
+                                    <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0 0' }}>
+                                        {feedback.details.map((d, i) => (
+                                            <li key={i} style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>{d}</li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                            <button onClick={() => setFeedback(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}>✕</button>
+                        </div>
+                    );
+                })()}
 
                 {/* Platform Selection */}
                 <div>
-                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Select Destinations</label>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Publish To</label>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                        {['instagram', 'facebook', 'youtube'].map((p) => {
-                            const isSelected = platforms.includes(p as Platform);
+                        {(['instagram', 'facebook', 'youtube'] as Platform[]).map((p) => {
+                            const isSelected = platforms.includes(p);
                             const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', youtube: '#FF0000' };
+                            const icons: Record<string, any> = { instagram: Instagram, facebook: Facebook, youtube: Youtube };
+                            const Icon = icons[p];
+                            const isYT = p === 'youtube';
                             return (
                                 <button
                                     key={p}
-                                    onClick={() => togglePlatform(p as Platform)}
+                                    onClick={() => !isYT && togglePlatform(p)}
                                     style={{
-                                        padding: '10px 20px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                                        padding: '10px 20px', borderRadius: '10px', border: 'none', cursor: isYT ? 'not-allowed' : 'pointer',
                                         fontSize: '0.875rem', textTransform: 'capitalize', fontWeight: isSelected ? 600 : 400,
                                         display: 'flex', alignItems: 'center', gap: '8px',
                                         background: isSelected ? `${colors[p]}20` : 'rgba(255,255,255,0.05)',
-                                        color: isSelected ? colors[p] : 'var(--text-muted)',
+                                        color: isYT ? 'rgba(255,255,255,0.2)' : (isSelected ? colors[p] : 'var(--text-muted)'),
                                         transition: 'all 0.2s',
-                                        boxShadow: isSelected ? `0 0 12px ${colors[p]}15` : 'none',
+                                        opacity: isYT ? 0.5 : 1,
                                     }}
+                                    title={isYT ? 'YouTube publishing requires YouTube Studio' : undefined}
                                 >
-                                    {p === 'instagram' && <Instagram size={16} />}
-                                    {p === 'facebook' && <Facebook size={16} />}
-                                    {p === 'youtube' && <Youtube size={16} />}
+                                    <Icon size={16} />
                                     {p}
+                                    {isYT && <span style={{ fontSize: '0.6875rem', opacity: 0.6 }}>(Soon)</span>}
                                 </button>
                             );
                         })}
                     </div>
                 </div>
 
-                {/* Caption Input */}
+                {/* Caption */}
                 <div>
                     <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Caption</label>
                     <textarea
@@ -227,35 +292,22 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                         placeholder="Write something engaging..."
                         style={{ ...inputStyle, height: '120px', resize: 'none', lineHeight: 1.6 }}
                     />
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                        <span style={{ fontSize: '0.75rem', color: caption.length > 2200 ? '#ef4444' : 'var(--text-muted)' }}>{caption.length}/2,200</span>
+                    </div>
                 </div>
 
-                {/* Media Input */}
+                {/* Media */}
                 <div>
-                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Visual Assets</label>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>
+                        Image URL
+                        {platforms.includes('instagram') && <span style={{ color: '#E1306C', marginLeft: '8px', fontSize: '0.75rem' }}>Required for Instagram</span>}
+                    </label>
 
-                    {/* Image Preview */}
                     {mediaPreview && (
                         <div style={{ position: 'relative', marginBottom: '12px', display: 'inline-block' }}>
-                            <img
-                                src={mediaPreview}
-                                alt="Upload preview"
-                                style={{
-                                    maxHeight: '200px', maxWidth: '100%', borderRadius: '12px',
-                                    border: '1px solid var(--border-color)', objectFit: 'cover',
-                                }}
-                            />
-                            <button
-                                onClick={clearMedia}
-                                style={{
-                                    position: 'absolute', top: '-8px', right: '-8px',
-                                    width: '24px', height: '24px', borderRadius: '50%',
-                                    background: '#ef4444', border: 'none', cursor: 'pointer',
-                                    color: '#fff', fontSize: '14px', fontWeight: 700,
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                }}
-                            >
-                                ✕
-                            </button>
+                            <img src={mediaPreview} alt="Preview" style={{ maxHeight: '180px', maxWidth: '100%', borderRadius: '12px', border: '1px solid var(--border-color)', objectFit: 'cover' }} />
+                            <button onClick={clearMedia} style={{ position: 'absolute', top: '-8px', right: '-8px', width: '24px', height: '24px', borderRadius: '50%', background: '#ef4444', border: 'none', cursor: 'pointer', color: '#fff', fontSize: '14px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
                         </div>
                     )}
 
@@ -263,65 +315,39 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                         <div style={{ ...inputStyle, flex: 1, display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px' }}>
                             <ImageIcon size={18} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                             <input
-                                type="text"
-                                value={mediaUrl}
+                                type="text" value={mediaUrl}
                                 onChange={e => { setMediaUrl(e.target.value); setMediaPreview(null); }}
-                                placeholder="Paste media URL or select a file →"
+                                placeholder="https://... (must be a public URL)"
                                 style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.9)', outline: 'none', width: '100%', fontWeight: 300 }}
                             />
                         </div>
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleFileSelect}
-                            style={{ display: 'none' }}
-                            accept="image/*,video/*"
-                        />
-                        <button
-                            onClick={() => fileInputRef.current?.click()}
-                            style={{
-                                padding: '12px 20px', borderRadius: '12px', border: 'none', cursor: 'pointer',
-                                background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)',
-                                display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8125rem',
-                                fontWeight: 500, whiteSpace: 'nowrap', transition: 'all 0.2s',
-                            }}
-                        >
+                        <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} accept="image/*" />
+                        <button onClick={() => fileInputRef.current?.click()} style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8125rem', fontWeight: 500, whiteSpace: 'nowrap' }}>
                             <Plus size={16} /> Browse
                         </button>
                     </div>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                        IG & FB need a public URL (e.g., hosted on your website). Local files create a preview but can't be sent to the API.
+                    </p>
                 </div>
 
-                {/* Scheduling */}
+                {/* Schedule */}
                 <div>
-                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Publish Timing</label>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Schedule (optional)</label>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                        <input
-                            type="date"
-                            value={scheduleDate}
-                            onChange={e => setScheduleDate(e.target.value)}
-                            style={{ ...inputStyle, width: 'auto', colorScheme: 'dark' }}
-                        />
-                        <input
-                            type="time"
-                            value={scheduleTime}
-                            onChange={e => setScheduleTime(e.target.value)}
-                            style={{ ...inputStyle, width: 'auto', colorScheme: 'dark' }}
-                        />
+                        <input type="date" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} style={{ ...inputStyle, width: 'auto', colorScheme: 'dark' }} />
+                        <input type="time" value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} style={{ ...inputStyle, width: 'auto', colorScheme: 'dark' }} />
                     </div>
-                    <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginTop: '8px' }}>Leave blank to post immediately.</p>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px' }}>Leave blank to publish immediately.</p>
                 </div>
 
                 {/* Submit */}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '20px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                     <button
-                        onClick={() => { setCaption(''); setPlatforms([]); clearMedia(); setScheduleDate(''); setScheduleTime(''); }}
-                        style={{
-                            padding: '10px 24px', borderRadius: '10px', border: 'none', cursor: 'pointer',
-                            fontSize: '0.8125rem', fontWeight: 500, background: 'transparent',
-                            color: 'var(--text-muted)', transition: 'color 0.2s',
-                        }}
+                        onClick={() => { setCaption(''); setPlatforms([]); clearMedia(); setScheduleDate(''); setScheduleTime(''); setFeedback(null); }}
+                        style={{ padding: '10px 24px', borderRadius: '10px', border: 'none', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 500, background: 'transparent', color: 'var(--text-muted)' }}
                     >
-                        Clear Fields
+                        Clear
                     </button>
                     <button
                         onClick={handleCreate}
@@ -332,20 +358,13 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                             background: (!caption || platforms.length === 0) ? 'rgba(255,255,255,0.05)' : 'var(--accent)',
                             color: (!caption || platforms.length === 0) ? 'var(--text-muted)' : '#000',
                             display: 'flex', alignItems: 'center', gap: '8px',
-                            transition: 'all 0.2s',
-                            opacity: submitting ? 0.7 : 1,
+                            opacity: submitting ? 0.7 : 1, transition: 'all 0.2s',
                         }}
                     >
                         {submitting ? (
-                            <>
-                                <Loader2 size={18} style={{ animation: 'spin 0.8s linear infinite' }} />
-                                Processing
-                            </>
+                            <><Loader2 size={18} style={{ animation: 'spin 0.8s linear infinite' }} /> Publishing...</>
                         ) : (
-                            <>
-                                {scheduleDate ? <Calendar size={18} /> : <Send size={18} />}
-                                {scheduleDate ? 'Schedule' : 'Post'}
-                            </>
+                            <>{scheduleDate ? <Calendar size={18} /> : <Send size={18} />} {scheduleDate ? 'Schedule' : 'Publish Now'}</>
                         )}
                     </button>
                 </div>
@@ -354,99 +373,85 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     );
 }
 
+// ─── Post List ──────────────────────────────────────────────────────────────
+
 function PostList({ posts, emptyMessage, onUpdate }: { posts: PostRecord[], emptyMessage: string, onUpdate?: () => void }) {
-    if (posts.length === 0) return (
-        <div className="py-32 flex flex-col items-center justify-center text-center rounded-3xl bg-slate-900/30 backdrop-blur-sm">
-            <LayoutTemplate className="w-16 h-16 text-slate-700 mb-6 stroke-[1]" />
-            <h3 className="text-xl font-serif tracking-wide text-slate-300">Nothing to display</h3>
-            <p className="text-slate-500 font-light mt-3">{emptyMessage}</p>
-        </div>
-    );
+    const isScheduled = posts.length > 0 && posts[0]?.status === 'SCHEDULED';
 
     const handleDelete = async (id: string) => {
-        if (!onUpdate) return;
-        if (confirm('Are you sure you want to cancel this scheduled post?')) {
+        try {
             await fetch(`/api/content/publish?id=${id}`, { method: 'DELETE' });
-            onUpdate();
+            onUpdate?.();
+        } catch (e) {
+            console.error(e);
         }
     };
 
+    if (posts.length === 0) {
+        return (
+            <div className="section-card" style={{ padding: '60px 32px', textAlign: 'center' }}>
+                <LayoutTemplate size={40} style={{ color: 'var(--text-muted)', margin: '0 auto 12px', opacity: 0.4 }} />
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9375rem' }}>{emptyMessage}</p>
+            </div>
+        );
+    }
+
+    const statusStyles: Record<string, { bg: string; color: string; label: string }> = {
+        PUBLISHED: { bg: 'rgba(34,197,94,0.1)', color: '#22c55e', label: '● Live' },
+        SCHEDULED: { bg: 'rgba(234,179,8,0.1)', color: '#eab308', label: '◷ Queued' },
+        FAILED: { bg: 'rgba(239,68,68,0.1)', color: '#ef4444', label: '✕ Failed' },
+        PARTIAL: { bg: 'rgba(234,179,8,0.1)', color: '#eab308', label: '⚠ Partial' },
+        PUBLISHING: { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6', label: '↻ Sending' },
+        DRAFT: { bg: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', label: '○ Draft' },
+    };
+
     return (
-        <div className="flex flex-col gap-6">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {posts.map(post => {
-                const isScheduled = post.status === 'SCHEDULED';
-                const isPublished = post.status === 'PUBLISHED';
-
+                const st = statusStyles[post.status] || statusStyles.DRAFT;
                 return (
-                    <div key={post.id} className="group relative bg-slate-900/40 rounded-3xl p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-8 overflow-hidden transition-all duration-500 hover:bg-slate-900/60 hover:shadow-2xl hover:-translate-y-1">
+                    <div key={post.id} className="section-card" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        {/* Status Dot */}
+                        <span style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600, background: st.bg, color: st.color, whiteSpace: 'nowrap' }}>
+                            {st.label}
+                        </span>
 
-                        {/* Dimensional Glow */}
-                        <div className="absolute -inset-1 bg-gradient-to-r from-white/0 via-white/5 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-1000 blur-md pointer-events-none"></div>
-
-                        <div className="flex flex-col gap-5 flex-grow max-w-3xl relative z-10">
-                            {/* Badges Row */}
-                            <div className="flex flex-wrap items-center gap-3">
-                                {post.platforms.map(p => (
-                                    <span key={p} className="bg-white/5 text-slate-300 px-4 py-1.5 rounded-full text-[11px] capitalize tracking-widest font-semibold shadow-sm overflow-hidden relative">
-                                        <span className="relative z-10">{p}</span>
-                                    </span>
-                                ))}
-                                <span className={`px-4 py-1.5 rounded-full text-[11px] uppercase tracking-widest font-bold shadow-sm 
-                                    ${isPublished ? 'text-green-400 bg-green-500/10' :
-                                        isScheduled ? 'text-yellow-400 bg-yellow-500/10' :
-                                            'text-red-400 bg-red-500/10'
-                                    }`}>
-                                    {post.status}
-                                </span>
-                            </div>
-
-                            {/* Copy */}
-                            <p className="text-white/80 whitespace-pre-wrap text-[16px] leading-relaxed font-light group-hover:text-white transition-colors duration-500">
-                                {post.caption}
-                            </p>
-
-                            {/* Metadata */}
-                            <div className="text-[13px] text-slate-500 flex flex-wrap items-center gap-x-8 gap-y-3 font-medium tracking-wide">
-                                <span><span className="text-slate-600 font-light">Created:</span> {format(new Date(post.createdAt), 'MMM d, yyyy')}</span>
-                                {post.scheduledFor && (
-                                    <span className="text-yellow-500/90 flex items-center gap-2 bg-yellow-500/5 px-3 py-1 rounded-lg">
-                                        <Clock size={14} strokeWidth={2.5} />
-                                        Scheduled for {format(new Date(post.scheduledFor), 'MMM d, h:mm a')}
-                                    </span>
-                                )}
-                                {post.publishedAt && (
-                                    <span className="text-green-500/90 flex items-center gap-2">
-                                        <CheckCircle size={14} strokeWidth={2.5} />
-                                        Live since {format(new Date(post.publishedAt), 'MMM d, yyyy')}
-                                    </span>
-                                )}
-                            </div>
+                        {/* Platforms */}
+                        <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                            {post.platforms.map(p => {
+                                const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', youtube: '#FF0000' };
+                                const Icon = p === 'instagram' ? Instagram : p === 'facebook' ? Facebook : Youtube;
+                                return <Icon key={p} size={14} style={{ color: colors[p] }} />;
+                            })}
                         </div>
 
-                        {/* Media Thumbnail */}
-                        <div className="flex items-center gap-6 shrink-0 w-full md:w-auto mt-6 md:mt-0 relative z-10">
-                            {post.mediaUrls[0] ? (
-                                <div className="w-28 h-28 rounded-2xl bg-black/40 overflow-hidden shadow-inner group-hover:shadow-[0_0_20px_rgba(255,255,255,0.05)] transition-shadow duration-500">
-                                    <img src={post.mediaUrls[0]} alt="Media" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-all duration-700 group-hover:scale-105" />
-                                </div>
-                            ) : (
-                                <div className="w-28 h-28 rounded-2xl bg-white/5 flex items-center justify-center shadow-inner">
-                                    <div className="text-center opacity-50">
-                                        <LayoutTemplate className="w-8 h-8 text-slate-500 mx-auto mb-2 stroke-[1]" />
-                                        <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Text Only</span>
-                                    </div>
-                                </div>
-                            )}
+                        {/* Caption */}
+                        <p style={{ flex: 1, margin: 0, fontSize: '0.875rem', color: '#ddd', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {post.caption}
+                        </p>
 
-                            {isScheduled && onUpdate && (
-                                <button
-                                    onClick={() => handleDelete(post.id)}
-                                    className="px-5 py-2.5 text-red-400/80 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all duration-300 text-sm font-semibold tracking-wide"
-                                >
-                                    Cancel
-                                </button>
-                            )}
-                        </div>
+                        {/* Date */}
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {post.publishedAt
+                                ? format(new Date(post.publishedAt), 'MMM d, h:mm a')
+                                : post.scheduledFor
+                                    ? format(new Date(post.scheduledFor), 'MMM d, h:mm a')
+                                    : format(new Date(post.createdAt), 'MMM d')}
+                        </span>
+
+                        {/* Errors */}
+                        {post.errors && Object.keys(post.errors).length > 0 && (
+                            <span title={Object.entries(post.errors).map(([k, v]) => `${k}: ${v}`).join('\n')} style={{ cursor: 'help' }}>
+                                <AlertTriangle size={14} style={{ color: '#ef4444' }} />
+                            </span>
+                        )}
+
+                        {/* Delete for scheduled */}
+                        {isScheduled && onUpdate && (
+                            <button onClick={() => handleDelete(post.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(239,68,68,0.7)', fontSize: '0.75rem', fontWeight: 600 }}>
+                                Cancel
+                            </button>
+                        )}
                     </div>
                 );
             })}
@@ -454,64 +459,140 @@ function PostList({ posts, emptyMessage, onUpdate }: { posts: PostRecord[], empt
     );
 }
 
-function GoalsScorecard({ goals, heatmap }: { goals: WeeklyAccountability, heatmap: Record<string, number> }) {
+// ─── Goals Scorecard (Redesigned — TLDR / Action-Based) ─────────────────────
+
+function GoalsScorecard({ goals }: { goals: GoalsData | null }) {
+    if (!goals) {
+        return (
+            <div className="section-card" style={{ padding: '40px', textAlign: 'center' }}>
+                <Loader2 size={24} style={{ color: 'var(--accent)', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
+                <p style={{ color: 'var(--text-muted)' }}>Loading goals...</p>
+            </div>
+        );
+    }
+
+    const { targets } = goals;
+    const totalDone = targets.total?.current || 0;
+    const totalTarget = targets.total?.target || 7;
+    const progress = Math.min((totalDone / totalTarget) * 100, 100);
+
+    // Determine "What to do today" actions
+    const actions: string[] = [];
+    for (const [key, val] of Object.entries(targets)) {
+        if (key === 'total') continue;
+        const remaining = val.target - val.current;
+        if (remaining > 0) {
+            actions.push(`Post ${remaining} more ${val.label}`);
+        }
+    }
+
+    const isComplete = actions.length === 0;
+    const statusColor = isComplete ? '#22c55e' : progress >= 50 ? '#eab308' : '#ef4444';
+    const statusLabel = isComplete ? 'All Done! 🎉' : progress >= 50 ? 'On Track' : 'Behind';
+
     return (
-        <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-4xl">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '700px' }}>
 
-            {/* Header Context */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-slate-900/40 p-8 rounded-3xl relative">
-                <div>
-                    <h3 className="text-2xl font-serif tracking-wide mb-2 flex items-center gap-3 text-white">
-                        <Flame className="text-[var(--accent)] fill-[var(--accent)]/20" size={28} strokeWidth={1.5} />
-                        {goals.currentStreak} Week Streak
-                    </h3>
-                    <p className="text-slate-400 font-light">Check off your tasks below to maintain momentum.</p>
+            {/* TLDR Header */}
+            <div className="section-card" style={{ padding: '28px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+                    <div>
+                        <h3 style={{ margin: '0 0 4px 0', fontSize: '1.125rem' }}>
+                            This Week's Content Goals
+                        </h3>
+                        <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                            {goals.weekStarting && `Week of ${format(new Date(goals.weekStarting + 'T00:00:00'), 'MMM d')} — ${format(new Date(goals.weekEnding + 'T00:00:00'), 'MMM d')}`}
+                        </p>
+                    </div>
+                    <div style={{
+                        padding: '6px 14px', borderRadius: '8px', fontSize: '0.8125rem', fontWeight: 600,
+                        background: `${statusColor}15`, color: statusColor,
+                    }}>
+                        {statusLabel}
+                    </div>
                 </div>
-                <div className="mt-6 sm:mt-0 flex flex-col items-end">
-                    <span className="text-xs uppercase tracking-widest font-bold text-[var(--accent)] mb-1">Status</span>
-                    <span className="text-sm font-medium text-white/90 bg-white/5 px-4 py-2 rounded-xl">Action Required</span>
+
+                {/* Overall Progress Bar */}
+                <div style={{ marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>Overall Progress</span>
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#fff' }}>{totalDone}/{totalTarget} posts</span>
+                    </div>
+                    <div style={{ height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{
+                            width: `${progress}%`, height: '100%', borderRadius: '4px',
+                            background: `linear-gradient(90deg, var(--accent), ${statusColor})`,
+                            transition: 'width 0.5s ease',
+                        }} />
+                    </div>
                 </div>
             </div>
 
-            {/* Accountability Tracker */}
-            <div className="bg-slate-900/40 p-8 rounded-3xl relative">
-                <h3 className="text-xl font-serif mb-6 flex items-center gap-3 tracking-wide text-white border-b border-white/5 pb-4">
-                    <Target className="text-[var(--accent)]" size={20} strokeWidth={2} />
-                    Weekly Accountability Tracker
-                </h3>
+            {/* Per-Platform Breakdown */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                {Object.entries(targets).filter(([k]) => k !== 'total').map(([key, val]) => {
+                    const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', youtube: '#FF0000' };
+                    const icons: Record<string, any> = { instagram: Instagram, facebook: Facebook, youtube: Youtube };
+                    const Icon = icons[key] || Target;
+                    const pct = val.target > 0 ? Math.min((val.current / val.target) * 100, 100) : 0;
+                    const done = val.current >= val.target;
 
-                <div className="flex flex-col gap-3 relative z-10">
-                    {goals.goals.map((g, i) => {
-                        const done = g.currentCount >= g.targetCount;
-                        return (
-                            <div
-                                key={g.id}
-                                className={`flex items-center justify-between p-4 rounded-xl transition-all duration-300 border mb-2 ${done ? 'bg-green-500/5 border-green-500/20' : 'bg-white/5 border-white/5 hover:border-white/20 hover:bg-white/10'
-                                    }`}
-                                style={{ animationDelay: `${i * 100}ms` }}
-                            >
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-6 h-6 shrink-0 rounded-full border-2 flex items-center justify-center transition-all duration-300 ${done ? 'bg-green-500 border-green-500 text-black' : 'border-slate-500 text-transparent hover:border-[var(--accent)]'
-                                        }`}>
-                                        <CheckCircle size={14} strokeWidth={3} className={done ? 'opacity-100' : 'opacity-0 hover:opacity-100 text-[var(--accent)]'} />
-                                    </div>
-                                    <div>
-                                        <p className={`text-base font-medium tracking-wide capitalize ${done ? 'text-slate-400 line-through' : 'text-slate-200'}`}>
-                                            Post {g.targetCount} {g.mediaType !== 'any' ? g.mediaType : 'Content Piece'}{g.targetCount > 1 ? 's' : ''} on {g.platform}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="flex items-center text-sm font-medium tracking-wider">
-                                    <span className={done ? 'text-green-400' : 'text-slate-300'}>{g.currentCount}</span>
-                                    <span className="text-slate-600 mx-1">/</span>
-                                    <span className="text-slate-500">{g.targetCount} completed</span>
-                                </div>
+                    return (
+                        <div key={key} className="section-card" style={{ padding: '20px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                                <Icon size={16} style={{ color: colors[key] || 'var(--text-muted)' }} />
+                                <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: '#ccc', textTransform: 'capitalize' }}>{val.label}</span>
                             </div>
-                        );
-                    })}
-                </div>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginBottom: '10px' }}>
+                                <span style={{ fontSize: '1.5rem', fontWeight: 700, color: done ? '#22c55e' : '#fff' }}>{val.current}</span>
+                                <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>/ {val.target}</span>
+                            </div>
+                            <div style={{ height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
+                                <div style={{ width: `${pct}%`, height: '100%', borderRadius: '2px', background: done ? '#22c55e' : (colors[key] || 'var(--accent)'), transition: 'width 0.5s ease' }} />
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
+
+            {/* Action Items */}
+            {!isComplete && (
+                <div className="section-card" style={{ padding: '24px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                        <Zap size={16} style={{ color: 'var(--accent)' }} />
+                        <h4 style={{ margin: 0, fontSize: '0.9375rem' }}>What To Do Next</h4>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {actions.map((action, i) => (
+                            <div key={i} style={{
+                                display: 'flex', alignItems: 'center', gap: '10px',
+                                padding: '10px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)',
+                                border: '1px solid rgba(255,255,255,0.05)',
+                            }}>
+                                <div style={{
+                                    width: '6px', height: '6px', borderRadius: '50%',
+                                    background: 'var(--accent)', flexShrink: 0,
+                                }} />
+                                <span style={{ fontSize: '0.875rem', color: '#ddd' }}>{action}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* All Complete */}
+            {isComplete && (
+                <div className="section-card" style={{
+                    padding: '32px', textAlign: 'center',
+                    background: 'rgba(34,197,94,0.05)', border: '1px solid rgba(34,197,94,0.15)',
+                }}>
+                    <CheckCircle size={32} style={{ color: '#22c55e', margin: '0 auto 12px' }} />
+                    <h4 style={{ margin: '0 0 4px', color: '#22c55e' }}>All Goals Met!</h4>
+                    <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+                        Great work this week! Keep the momentum going. 🚀
+                    </p>
+                </div>
+            )}
         </div>
     );
 }
-
