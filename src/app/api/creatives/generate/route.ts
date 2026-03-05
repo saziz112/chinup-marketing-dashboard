@@ -93,8 +93,18 @@ export async function GET(req: NextRequest) {
 
     try {
         const taskStatus = await getTaskStatus(taskId);
+        console.log('[creatives/generate GET] taskStatus:', JSON.stringify(taskStatus));
 
-        if (taskStatus.status === 'success' && taskStatus.imageUrl) {
+        if (taskStatus.status === 'success') {
+            if (!taskStatus.imageUrl) {
+                // Success but no image URL extracted — log and return error
+                console.error('[creatives/generate GET] Success but no imageUrl! Full status:', JSON.stringify(taskStatus));
+                return NextResponse.json({
+                    status: 'failed',
+                    error: 'Image generated but URL could not be extracted. Check server logs.',
+                });
+            }
+
             // Download from Kie.ai (URLs expire in 24h) and re-upload to Vercel Blob
             let blobUrl = taskStatus.imageUrl;
             try {
@@ -106,9 +116,11 @@ export async function GET(req: NextRequest) {
                         contentType: 'image/png',
                     });
                     blobUrl = blob.url;
+                } else {
+                    console.error('[creatives/generate GET] Image download failed:', imageRes.status, imageRes.statusText);
                 }
             } catch (uploadErr) {
-                console.error('Blob upload failed, using Kie.ai URL:', uploadErr);
+                console.error('[creatives/generate GET] Blob upload failed, using Kie.ai URL:', uploadErr);
             }
 
             // Update DB
@@ -134,7 +146,7 @@ export async function GET(req: NextRequest) {
         // Still processing
         return NextResponse.json({ status: taskStatus.status });
     } catch (error: unknown) {
-        console.error('Creatives poll error:', error);
+        console.error('[creatives/generate GET] Poll error:', error);
         const message = error instanceof Error ? error.message : 'Poll failed';
         return NextResponse.json({ error: message }, { status: 500 });
     }

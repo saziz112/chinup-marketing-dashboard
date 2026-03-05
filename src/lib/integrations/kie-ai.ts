@@ -159,40 +159,57 @@ export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
     const data = await res.json();
     trackCall('kieAi', 'getTaskStatus', false);
 
-    const record = data.data;
-    if (!record) {
+    // Try multiple paths — Kie.ai response structure may nest differently
+    const record = data.data || data.record || data;
+    if (!record || (!record.state && !record.status)) {
+        console.log('[kie-ai] recordInfo: no record found, keys:', Object.keys(data));
         return { status: 'pending' };
     }
 
     // Kie.ai uses "state" field with values: waiting, queuing, generating, success, fail
-    const state = record.state;
+    // Some responses may use "status" instead
+    const state = record.state || record.status;
     const costTimeMs = record.costTime;
 
-    if (state === 'success') {
-        // resultJson is a JSON string: {"resultUrls":["https://..."]}
-        let imageUrl: string | undefined;
-        try {
-            const resultJson = typeof record.resultJson === 'string'
-                ? JSON.parse(record.resultJson)
-                : record.resultJson;
+    console.log('[kie-ai] recordInfo state:', state, 'keys:', Object.keys(record));
 
-            // Primary: resultUrls array
-            imageUrl = resultJson?.resultUrls?.[0];
-            // Fallbacks for other model formats
-            if (!imageUrl) {
-                imageUrl = resultJson?.output?.image_url
+    if (state === 'success' || state === 'completed' || state === 'done') {
+        let imageUrl: string | undefined;
+
+        // Try resultJson first
+        try {
+            const raw = record.resultJson;
+            if (raw) {
+                const resultJson = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                console.log('[kie-ai] resultJson keys:', Object.keys(resultJson));
+                imageUrl = resultJson?.resultUrls?.[0]
+                    || resultJson?.output?.image_url
                     || resultJson?.image_url
-                    || resultJson?.output?.images?.[0];
+                    || resultJson?.output?.images?.[0]
+                    || resultJson?.url
+                    || resultJson?.imageUrl;
             }
-        } catch {
-            // resultJson may not be parseable
+        } catch (e) {
+            console.error('[kie-ai] resultJson parse error:', e, 'raw:', record.resultJson);
         }
 
+        // Fallback: check direct record fields
+        if (!imageUrl) {
+            imageUrl = record.resultUrl || record.imageUrl || record.image_url || record.output_url;
+        }
+
+        // Fallback: scan resultJson string for URL pattern
+        if (!imageUrl && typeof record.resultJson === 'string') {
+            const urlMatch = record.resultJson.match(/https?:\/\/[^\s"']+\.(png|jpg|jpeg|webp)/i);
+            if (urlMatch) imageUrl = urlMatch[0];
+        }
+
+        console.log('[kie-ai] extracted imageUrl:', imageUrl ? imageUrl.substring(0, 80) + '...' : 'NONE');
         return { status: 'success', imageUrl, costTimeMs };
     }
 
-    if (state === 'fail') {
-        return { status: 'failed', failMsg: record.failMsg || 'Generation failed', costTimeMs };
+    if (state === 'fail' || state === 'failed' || state === 'error') {
+        return { status: 'failed', failMsg: record.failMsg || record.error || 'Generation failed', costTimeMs };
     }
 
     // waiting, queuing, generating — all mean still processing
