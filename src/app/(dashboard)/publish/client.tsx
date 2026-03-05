@@ -7,7 +7,7 @@ import { PostRecord, Platform } from '@/lib/content-publisher';
 import { PostType } from '@/lib/integrations/meta-publisher';
 import {
     Calendar, CheckCircle, Clock, History, PenTool, LayoutTemplate,
-    Instagram, Facebook, Youtube, Send, Loader2,
+    Instagram, Facebook, Youtube, Send, Loader2, MapPin,
     Image as ImageIcon, Target, AlertTriangle, XCircle, Zap,
     Upload, Film, X
 } from 'lucide-react';
@@ -121,6 +121,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     const [scheduleTime, setScheduleTime] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'partial'; message: string; details?: string[] } | null>(null);
+    const [gbpLocations, setGbpLocations] = useState<string[]>(['decatur', 'smyrna', 'kennesaw']);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -206,6 +207,10 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
             setFeedback({ type: 'error', message: 'Stories require a photo or video.' });
             return;
         }
+        if (platforms.includes('google-business') && gbpLocations.length === 0) {
+            setFeedback({ type: 'error', message: 'Select at least one Google Business location.' });
+            return;
+        }
 
         setSubmitting(true);
         setFeedback(null);
@@ -224,7 +229,8 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                     caption,
                     mediaUrls: mediaUrl ? [mediaUrl] : [],
                     postType,
-                    scheduledFor
+                    scheduledFor,
+                    ...(platforms.includes('google-business') && { gbpLocations }),
                 })
             });
 
@@ -323,10 +329,11 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                 <div>
                     <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Publish To</label>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                        {(['instagram', 'facebook', 'youtube'] as Platform[]).map((p) => {
+                        {(['instagram', 'facebook', 'google-business', 'youtube'] as Platform[]).map((p) => {
                             const isSelected = platforms.includes(p);
-                            const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', youtube: '#FF0000' };
-                            const icons: Record<string, any> = { instagram: Instagram, facebook: Facebook, youtube: Youtube };
+                            const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', 'google-business': '#4285F4', youtube: '#FF0000' };
+                            const icons: Record<string, any> = { instagram: Instagram, facebook: Facebook, 'google-business': MapPin, youtube: Youtube };
+                            const labels: Record<string, string> = { instagram: 'Instagram', facebook: 'Facebook', 'google-business': 'Google Business', youtube: 'YouTube' };
                             const Icon = icons[p];
                             const isYT = p === 'youtube';
                             return (
@@ -335,7 +342,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                                     onClick={() => !isYT && togglePlatform(p)}
                                     style={{
                                         padding: '10px 20px', borderRadius: '10px', border: 'none', cursor: isYT ? 'not-allowed' : 'pointer',
-                                        fontSize: '0.875rem', textTransform: 'capitalize', fontWeight: isSelected ? 600 : 400,
+                                        fontSize: '0.875rem', fontWeight: isSelected ? 600 : 400,
                                         display: 'flex', alignItems: 'center', gap: '8px',
                                         background: isSelected ? `${colors[p]}20` : 'rgba(255,255,255,0.05)',
                                         color: isYT ? 'rgba(255,255,255,0.2)' : (isSelected ? colors[p] : 'var(--text-muted)'),
@@ -345,12 +352,45 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                                     title={isYT ? 'YouTube publishing requires YouTube Studio' : undefined}
                                 >
                                     <Icon size={16} />
-                                    {p}
+                                    {labels[p]}
                                     {isYT && <span style={{ fontSize: '0.6875rem', opacity: 0.6 }}>(Soon)</span>}
                                 </button>
                             );
                         })}
                     </div>
+
+                    {/* GBP Location Selector */}
+                    {platforms.includes('google-business') && (
+                        <div style={{ marginTop: '12px', padding: '12px 16px', background: 'rgba(66,133,244,0.08)', borderRadius: '8px', border: '1px solid rgba(66,133,244,0.2)' }}>
+                            <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>Post to Locations</label>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {[
+                                    { key: 'decatur', label: 'Decatur' },
+                                    { key: 'smyrna', label: 'Smyrna/Vinings' },
+                                    { key: 'kennesaw', label: 'Kennesaw' },
+                                ].map(loc => {
+                                    const selected = gbpLocations.includes(loc.key);
+                                    return (
+                                        <button
+                                            key={loc.key}
+                                            onClick={() => setGbpLocations(prev =>
+                                                selected ? prev.filter(l => l !== loc.key) : [...prev, loc.key]
+                                            )}
+                                            style={{
+                                                padding: '6px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                                                fontSize: '0.8125rem', fontWeight: selected ? 600 : 400,
+                                                background: selected ? 'rgba(66,133,244,0.2)' : 'rgba(255,255,255,0.05)',
+                                                color: selected ? '#4285F4' : 'var(--text-muted)',
+                                                transition: 'all 0.2s',
+                                            }}
+                                        >
+                                            {loc.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Post Type */}
@@ -583,8 +623,8 @@ function PostList({ posts, emptyMessage, onUpdate }: { posts: PostRecord[], empt
                         {/* Platforms */}
                         <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                             {post.platforms.map(p => {
-                                const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', youtube: '#FF0000' };
-                                const Icon = p === 'instagram' ? Instagram : p === 'facebook' ? Facebook : Youtube;
+                                const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', 'google-business': '#4285F4', youtube: '#FF0000' };
+                                const Icon = p === 'instagram' ? Instagram : p === 'facebook' ? Facebook : p === 'google-business' ? MapPin : Youtube;
                                 return <Icon key={p} size={14} style={{ color: colors[p] }} />;
                             })}
                         </div>

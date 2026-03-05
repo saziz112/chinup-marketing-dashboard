@@ -599,32 +599,32 @@ function getMockCompetitors(locationId?: LocationId): IGCompetitorMetrics[] {
     // Generate realistic competitor followers based on location
     if (locationId === 'atlanta') {
         return [
-            { username: 'atlanta_medspa_elite', followersCount: 12500, mediaCount: 840 },
-            { username: 'glow_aesthetics_atl', followersCount: 8200, mediaCount: 412 },
-            { username: 'the_beauty_lounge_atl', followersCount: 15100, mediaCount: 1205 }
+            { username: 'pureblissmedspa', followersCount: 40269, mediaCount: 553 },
+            { username: 'skinsocialspa', followersCount: 4247, mediaCount: 618 },
+            { username: 'radiancemedspaatl', followersCount: 2969, mediaCount: 1067 }
         ];
     }
 
     if (locationId === 'decatur') {
         return [
-            { username: 'decatur_aesthetics', followersCount: 4500, mediaCount: 320 },
-            { username: 'pure_medspa_decatur', followersCount: 6800, mediaCount: 550 }
+            { username: 'seamlessrecoverymedspa', followersCount: 1222, mediaCount: 236 },
+            { username: 'revolutiondecatur', followersCount: 1094, mediaCount: 340 }
         ];
     }
 
     if (locationId === 'kennesaw') {
         return [
-            { username: 'kennesaw_skin', followersCount: 5200, mediaCount: 480 },
-            { username: 'renew_medspa_kennesaw', followersCount: 3100, mediaCount: 210 }
+            { username: 'vivamedspaatl', followersCount: 3811, mediaCount: 421 },
+            { username: 'spalapazatl', followersCount: 2382, mediaCount: 443 }
         ];
     }
 
     // Default / All Locations
     return [
-        { username: 'atlanta_medspa_elite', followersCount: 12500, mediaCount: 840 },
-        { username: 'decatur_aesthetics', followersCount: 4500, mediaCount: 320 },
-        { username: 'kennesaw_skin', followersCount: 5200, mediaCount: 480 },
-        { username: 'glow_aesthetics_atl', followersCount: 8200, mediaCount: 412 },
+        { username: 'pureblissmedspa', followersCount: 40269, mediaCount: 553 },
+        { username: 'seamlessrecoverymedspa', followersCount: 1222, mediaCount: 236 },
+        { username: 'vivamedspaatl', followersCount: 3811, mediaCount: 421 },
+        { username: 'skinsocialspa', followersCount: 4247, mediaCount: 618 },
     ];
 }
 

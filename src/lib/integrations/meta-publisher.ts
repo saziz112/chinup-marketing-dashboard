@@ -475,7 +475,8 @@ export async function publishToMultiplePlatforms(
     caption: string,
     mediaUrl?: string,
     mediaType?: 'photo' | 'video',
-    postType: PostType = 'feed'
+    postType: PostType = 'feed',
+    gbpLocations?: string[],
 ): Promise<PublishResult[]> {
     const results: PublishResult[] = [];
 
@@ -500,6 +501,35 @@ export async function publishToMultiplePlatforms(
                 return publishInstagramStory(caption, mediaUrl, mediaType);
             }
             return publishToInstagram(caption, mediaUrl, mediaType);
+        }
+
+        if (platform === 'google-business') {
+            try {
+                const { publishToGoogleBusiness } = await import('@/lib/integrations/google-business-publisher');
+                const locations = gbpLocations && gbpLocations.length > 0
+                    ? gbpLocations
+                    : ['decatur', 'smyrna', 'kennesaw']; // Default: all locations (cron fallback)
+                const gbpResults = await publishToGoogleBusiness(
+                    caption,
+                    locations,
+                    mediaUrl,
+                );
+                // Return first result as representative
+                const anySuccess = gbpResults.some(r => r.success);
+                const errors = gbpResults.filter(r => !r.success).map(r => `${r.locationName}: ${r.error}`);
+                return {
+                    success: anySuccess,
+                    postId: gbpResults.find(r => r.success)?.postId,
+                    error: errors.length > 0 ? errors.join('; ') : undefined,
+                    platform: 'facebook' as const, // PublishResult type constraint
+                };
+            } catch (err) {
+                return {
+                    success: false,
+                    error: err instanceof Error ? err.message : 'GBP publishing failed',
+                    platform: 'facebook' as const,
+                };
+            }
         }
 
         if (platform === 'youtube') {

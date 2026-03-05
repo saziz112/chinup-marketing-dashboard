@@ -11,7 +11,7 @@ import { sql } from '@vercel/postgres';
 
 export type MediaType = 'photo' | 'video';
 
-export type Platform = 'instagram' | 'facebook' | 'youtube';
+export type Platform = 'instagram' | 'facebook' | 'youtube' | 'google-business';
 export type PostStatus = 'DRAFT' | 'SCHEDULED' | 'PUBLISHING' | 'PUBLISHED' | 'PARTIAL' | 'FAILED';
 
 export interface PublishRequest {
@@ -22,6 +22,7 @@ export interface PublishRequest {
     mediaType?: MediaType; // 'photo' or 'video' — auto-detected if not provided
     postType?: PostType;   // 'feed' | 'reel' | 'story' — defaults to 'feed'
     scheduledFor?: string; // ISO string, if undefined post immediately
+    gbpLocations?: string[]; // GBP location keys: 'decatur', 'smyrna', 'kennesaw'
 }
 
 export interface PostRecord {
@@ -37,6 +38,7 @@ export interface PostRecord {
     publishedAt?: string;
     errors?: Record<string, string>;
     publishResults?: PublishResult[];
+    metadata?: Record<string, unknown>;
 }
 
 // ─── Database Helpers ───────────────────────────────────────────────────────
@@ -55,9 +57,12 @@ async function ensurePostsTable() {
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 published_at TIMESTAMPTZ,
                 errors TEXT DEFAULT '{}',
-                publish_results TEXT DEFAULT '[]'
+                publish_results TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}'
             )
         `;
+        // Add metadata column to existing tables
+        await sql`ALTER TABLE content_posts ADD COLUMN IF NOT EXISTS metadata TEXT DEFAULT '{}'`;
     } catch (e) {
         // Table may already exist — ignore
     }
@@ -76,6 +81,7 @@ function rowToPost(row: any): PostRecord {
         publishedAt: row.published_at?.toISOString(),
         errors: JSON.parse(row.errors || '{}'),
         publishResults: JSON.parse(row.publish_results || '[]'),
+        metadata: JSON.parse(row.metadata || '{}'),
     };
 }
 
@@ -92,11 +98,15 @@ export async function createPost(req: PublishRequest): Promise<PostRecord> {
     let publishedAt: Date | null = null;
     let errors: Record<string, string> = {};
     let publishResults: PublishResult[] = [];
+    const metadata: Record<string, unknown> = {};
+    if (req.gbpLocations && req.gbpLocations.length > 0) {
+        metadata.gbpLocations = req.gbpLocations;
+    }
 
     // If not scheduled, publish immediately
     if (!isScheduled) {
         const mediaUrl = req.mediaUrls?.[0] || undefined;
-        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, mediaUrl, req.mediaType, req.postType || 'feed');
+        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, mediaUrl, req.mediaType, req.postType || 'feed', req.gbpLocations);
 
         const allSucceeded = publishResults.every(r => r.success);
         const someSucceeded = publishResults.some(r => r.success);
@@ -121,7 +131,7 @@ export async function createPost(req: PublishRequest): Promise<PostRecord> {
 
     // Persist to database
     await sql`
-        INSERT INTO content_posts (id, platforms, title, caption, media_urls, status, scheduled_for, created_at, published_at, errors, publish_results)
+        INSERT INTO content_posts (id, platforms, title, caption, media_urls, status, scheduled_for, created_at, published_at, errors, publish_results, metadata)
         VALUES (
             ${id},
             ${JSON.stringify(req.platforms)},
@@ -133,7 +143,8 @@ export async function createPost(req: PublishRequest): Promise<PostRecord> {
             ${now.toISOString()},
             ${publishedAt?.toISOString() || null},
             ${JSON.stringify(errors)},
-            ${JSON.stringify(publishResults)}
+            ${JSON.stringify(publishResults)},
+            ${JSON.stringify(metadata)}
         )
     `;
 
@@ -149,6 +160,7 @@ export async function createPost(req: PublishRequest): Promise<PostRecord> {
         publishedAt: publishedAt?.toISOString(),
         errors: Object.keys(errors).length > 0 ? errors : undefined,
         publishResults,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     };
 }
 

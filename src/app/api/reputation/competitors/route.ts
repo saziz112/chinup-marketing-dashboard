@@ -13,8 +13,8 @@ function getLocationInsights(locationId?: LocationId) {
                     'Highlight your premium experience—patients in Buckhead/Atlanta prioritize quality over price.',
                     'Consider offering valet or validated parking based on recent review friction.'
                 ],
-                comp1: { name: 'Aya Medical Spa', strengths: ['Brand Recognition', 'Multiple Locations'], weaknesses: ['Rushed Consultations', 'Impersonal Feel'] },
-                comp2: { name: 'Peachtree Dermatology', strengths: ['Board Certified Dermatologists', 'Medical Expertise'], weaknesses: ['High Aesthetic Pricing', 'Clinical Atmosphere'] }
+                comp1: { name: 'Pure Bliss Med Spa', strengths: ['Brand Recognition', 'Large Following'], weaknesses: ['Rushed Consultations', 'Impersonal Feel'] },
+                comp2: { name: 'Skin Social Spa', strengths: ['Botox & Filler Focus', 'Modern Branding'], weaknesses: ['High Aesthetic Pricing', 'Limited Services'] }
             };
         case 'decatur':
             return {
@@ -24,8 +24,8 @@ function getLocationInsights(locationId?: LocationId) {
                     'Decatur clients heavily praise your staff. Feature them more in Instagram Stories.',
                     'Mention your cancellation list, as booking lead time is a common pain point.'
                 ],
-                comp1: { name: 'WIFH', strengths: ['Laser Hair Removal', 'Marketing Visibility'], weaknesses: ['Factory Feel', 'Inconsistent Results'] },
-                comp2: { name: 'Slender Spa', strengths: ['Body Contouring focus', 'Affordable Pricing'], weaknesses: ['Outdated Facility', 'Pushy Sales Tactics'] }
+                comp1: { name: 'Seamless Recovery MedSpa', strengths: ['Best of Decatur Award', 'Recovery Focus'], weaknesses: ['Small Following', 'Limited Content'] },
+                comp2: { name: '(R)Evolution Med Spa', strengths: ['Award-Winning', 'Community Engagement'], weaknesses: ['Small Social Presence', 'Niche Services'] }
             };
         case 'kennesaw':
             return {
@@ -35,8 +35,8 @@ function getLocationInsights(locationId?: LocationId) {
                     'Your local competitors struggle with natural looking results—double down on your "undetectable injectables" messaging.',
                     'Improve phone answering rates to capture leads frustrated by competitor unresponsiveness.'
                 ],
-                comp1: { name: 'Colby Skin Clinic', strengths: ['Established Reputation', 'Loyal Patient Base'], weaknesses: ['Long Wait Times', 'Limited New Technologies'] },
-                comp2: { name: 'Dermani Medspa', strengths: ['Membership Model', 'Convenient Hours'], weaknesses: ['High Turnover of Injectors', 'Inconsistent Customer Service'] }
+                comp1: { name: 'Viva Med Spa & Wellness', strengths: ['Morpheus8 Specialist', 'Semaglutide Services'], weaknesses: ['Limited Content Variety', 'Smaller Reach'] },
+                comp2: { name: 'Spa La Paz', strengths: ['Board-Certified MD', 'RF Microneedling'], weaknesses: ['Limited Social Engagement', 'Higher Price Point'] }
             };
         default: // 'all' or undefined
             return {
@@ -46,8 +46,8 @@ function getLocationInsights(locationId?: LocationId) {
                     'Highlight your transparent pricing to win over patients frustrated by competitor billing practices.',
                     'Emphasize your friendly front-desk staff to capitalize on competitor service complaints.'
                 ],
-                comp1: { name: 'Top Regional Competitor', strengths: ['Clinical Expertise', 'Clear Explanations'], weaknesses: ['Poor Billing Practices', 'No Refund Policy'] },
-                comp2: { name: 'Value MedSpa Chain', strengths: ['Aggressive Pricing', 'Clean Environment'], weaknesses: ['Long Wait Times', 'Rude Front Desk'] }
+                comp1: { name: 'Pure Bliss Med Spa', strengths: ['Brand Recognition', 'Large Following'], weaknesses: ['Rushed Consultations', 'Impersonal Feel'] },
+                comp2: { name: 'Seamless Recovery MedSpa', strengths: ['Best of Decatur Award', 'Recovery Focus'], weaknesses: ['Small Following', 'Limited Content'] }
             };
     }
 }
@@ -87,8 +87,8 @@ export async function GET(request: Request) {
             weaknesses: insights.ourWeaknesses,
             feedback: insights.ourFeedback,
             instagramHandle: 'chinupaesthetics',
-            followersCount: 22400, // Hardcoded for us since we only fetch competitor IG in that function
-            mediaCount: 1540
+            followersCount: 8812, // Updated 2026-03-05 — live count from IG API
+            mediaCount: 1314
         };
 
         // 4. Transform IG competitors into full Advanced Profiles

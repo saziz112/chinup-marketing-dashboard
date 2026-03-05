@@ -40,7 +40,6 @@ export default function OverviewPage() {
     const [period, setPeriod] = useState<Period>('30d');
     const [metrics, setMetrics] = useState({
         leads: { val: '--', loading: true },
-        revenue: { val: '$--', loading: true }
     });
     const [platforms, setPlatforms] = useState<Record<string, PlatformData>>({
         Instagram: { followers: '--', engagement: '--%', configured: false },
@@ -59,32 +58,18 @@ export default function OverviewPage() {
 
     useEffect(() => {
         const fetchMetrics = async () => {
-            setMetrics(prev => ({
-                leads: { ...prev.leads, loading: true },
-                revenue: { ...prev.revenue, loading: true }
-            }));
+            setMetrics({ leads: { val: '--', loading: true } });
 
             try {
-                const requests = [fetch('/api/metrics/leads')];
-                if (isAdmin) requests.push(fetch('/api/metrics/revenue'));
-
-                const resolved = await Promise.all(requests);
-                const leadsData = await resolved[0].json();
-                let revData = null;
-
-                if (isAdmin && resolved[1]) {
-                    revData = await resolved[1].json();
-                }
-
+                const res = await fetch('/api/metrics/leads');
+                const leadsData = await res.json();
                 setMetrics({
                     leads: { val: leadsData.count?.toString() || '0', loading: false },
-                    revenue: { val: revData?.formattedAmount || '$0.00', loading: false }
                 });
             } catch (error) {
                 console.error('Failed to fetch metrics:', error);
                 setMetrics({
                     leads: { val: 'Error', loading: false },
-                    revenue: { val: 'Error', loading: false }
                 });
             }
         };
@@ -243,7 +228,7 @@ export default function OverviewPage() {
             </div>
 
             {/* KPI Cards */}
-            <div className="metrics-grid" style={{ gridTemplateColumns: `repeat(${isAdmin ? 5 : 4}, 1fr)` }}>
+            <div className="metrics-grid" style={{ gridTemplateColumns: `repeat(4, 1fr)` }}>
                 <div className="metric-card">
                     <div className="label">Total Followers</div>
                     <div className="value">{socialLoading ? <Skeleton className="h-9 w-24" /> : totalFollowers}</div>
@@ -273,13 +258,6 @@ export default function OverviewPage() {
                     <div className="value">--</div>
                     <div className="change">Reviews</div>
                 </div>
-                {isAdmin && (
-                    <div className="metric-card">
-                        <div className="label">Revenue</div>
-                        <div className="value">{metrics.revenue.loading ? <Skeleton className="h-9 w-28" /> : metrics.revenue.val}</div>
-                        <div className="change">Retail revenue ({period})</div>
-                    </div>
-                )}
             </div>
 
             {/* Platform Summary Cards */}
