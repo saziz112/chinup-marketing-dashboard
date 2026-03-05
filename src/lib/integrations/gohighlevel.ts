@@ -56,6 +56,7 @@ export interface GHLOpportunity {
     contactEmail: string;
     contactPhone: string;
     contactTags: string[];
+    contactDateUpdated?: string; // from nested contact object — reflects last contact activity
     assignedTo: string | null;
     createdAt: string;
     updatedAt: string;
@@ -190,6 +191,7 @@ function parseOpportunity(o: any, locationKey: LocationKey): GHLOpportunity {
         contactEmail: o.contact?.email || '',
         contactPhone: o.contact?.phone || '',
         contactTags: o.contact?.tags || [],
+        contactDateUpdated: o.contact?.dateUpdated || undefined,
         assignedTo: o.assignedTo || null,
         createdAt: o.createdAt,
         updatedAt: o.updatedAt,
@@ -486,44 +488,145 @@ export interface StaleLead {
     opportunity: GHLOpportunity;
     daysSinceActivity: number;
     staleness: 'at-risk' | 'stale' | 'dormant';
+    lastActivitySource: 'opportunity' | 'contact'; // which timestamp determined staleness
     locationKey: LocationKey;
     locationName: string;
     pipelineName: string;
     stageName: string;
 }
 
+// Separate cache for contact dateUpdated values (avoids re-fetching on every call)
+const contactDateCache = new Map<string, { dateUpdated: string | null; timestamp: number }>();
+const CONTACT_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
+/** Batch-fetch with concurrency limit */
+async function batchAsync<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>): Promise<void> {
+    for (let i = 0; i < items.length; i += concurrency) {
+        await Promise.all(items.slice(i, i + concurrency).map(fn));
+    }
+}
+
 export async function getStaleLeads(locationFilter?: LocationKey): Promise<StaleLead[]> {
     const pipelineData = await getFullPipelineData({ locationFilter });
     const now = Date.now();
-    const staleLeads: StaleLead[] = [];
+    const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+    // Build location lookup for contact fetching
+    const locationsByKey = new Map<LocationKey, GHLLocation>();
+    for (const loc of getLocations()) locationsByKey.set(loc.key, loc);
+
+    // Helper: get most recent timestamp from multiple date strings
+    function mostRecentMs(...dates: (string | undefined | null)[]): number {
+        let max = 0;
+        for (const d of dates) {
+            if (d) {
+                const ms = new Date(d).getTime();
+                if (ms > max) max = ms;
+            }
+        }
+        return max;
+    }
+
+    // First pass: find opportunities that look stale by opp data alone
+    interface CandidateLead {
+        opp: GHLOpportunity;
+        oppDaysSince: number;
+        contactDaysSince: number | null;
+        locationKey: LocationKey;
+        locationName: string;
+        pipelineName: string;
+        stageName: string;
+    }
+    const candidates: CandidateLead[] = [];
+    let hasAnyContactDate = false;
 
     for (const locSummary of pipelineData.locations) {
         for (const pipeline of locSummary.pipelines) {
             for (const stage of pipeline.stages) {
                 for (const opp of stage.opportunities) {
-                    const lastDate = opp.lastStatusChangeAt || opp.updatedAt || opp.createdAt;
-                    if (!lastDate) continue;
+                    // Use the MOST RECENT of all opp timestamps (not fallback chain)
+                    const oppMs = mostRecentMs(opp.lastStatusChangeAt, opp.updatedAt, opp.createdAt);
+                    if (!oppMs) continue;
 
-                    const daysSince = Math.floor((now - new Date(lastDate).getTime()) / (1000 * 60 * 60 * 24));
+                    const oppDaysSince = Math.floor((now - oppMs) / MS_PER_DAY);
+                    if (oppDaysSince < 14) continue; // Not stale by any measure
 
-                    let staleness: 'at-risk' | 'stale' | 'dormant' | null = null;
-                    if (daysSince >= 60) staleness = 'dormant';
-                    else if (daysSince >= 30) staleness = 'stale';
-                    else if (daysSince >= 14) staleness = 'at-risk';
-
-                    if (staleness) {
-                        staleLeads.push({
-                            opportunity: opp,
-                            daysSinceActivity: daysSince,
-                            staleness,
-                            locationKey: locSummary.location,
-                            locationName: locSummary.locationName,
-                            pipelineName: pipeline.name,
-                            stageName: stage.name,
-                        });
+                    // Check if contactDateUpdated came from the opportunity response (Layer 1)
+                    let contactDaysSince: number | null = null;
+                    if (opp.contactDateUpdated) {
+                        hasAnyContactDate = true;
+                        contactDaysSince = Math.floor((now - new Date(opp.contactDateUpdated).getTime()) / MS_PER_DAY);
                     }
+
+                    candidates.push({
+                        opp, oppDaysSince, contactDaysSince,
+                        locationKey: locSummary.location,
+                        locationName: locSummary.locationName,
+                        pipelineName: pipeline.name,
+                        stageName: stage.name,
+                    });
                 }
             }
+        }
+    }
+
+    // Layer 2 fallback: fetch contact dateUpdated for stale candidates
+    // Only fires if contactDateUpdated wasn't in the opportunity response
+    if (!hasAnyContactDate && candidates.length > 0) {
+        // Filter to candidates we haven't cached yet
+        const needsFetch = candidates.filter(c => {
+            if (!c.opp.contactId) return false;
+            const cached = contactDateCache.get(c.opp.contactId);
+            if (cached && (now - cached.timestamp) < CONTACT_CACHE_TTL) {
+                // Use cached value
+                if (cached.dateUpdated) {
+                    c.contactDaysSince = Math.floor((now - new Date(cached.dateUpdated).getTime()) / MS_PER_DAY);
+                }
+                return false;
+            }
+            return true;
+        });
+
+        if (needsFetch.length > 0) {
+            console.log(`[ghl-stale] Fetching ${needsFetch.length} contacts for dateUpdated (${candidates.length - needsFetch.length} cached)`);
+            await batchAsync(needsFetch, 20, async (c) => {
+                const location = locationsByKey.get(c.opp.locationKey);
+                if (!location) return;
+                const contact = await getContact(location, c.opp.contactId);
+                const dateUpdated = contact?.dateUpdated || null;
+                contactDateCache.set(c.opp.contactId, { dateUpdated, timestamp: now });
+                if (dateUpdated) {
+                    c.contactDaysSince = Math.floor((now - new Date(dateUpdated).getTime()) / MS_PER_DAY);
+                }
+            });
+        }
+    }
+
+    // Final classification using the most recent activity (opp or contact)
+    const staleLeads: StaleLead[] = [];
+    for (const c of candidates) {
+        const daysSince = c.contactDaysSince !== null
+            ? Math.min(c.oppDaysSince, c.contactDaysSince)
+            : c.oppDaysSince;
+        const activitySource: 'opportunity' | 'contact' =
+            (c.contactDaysSince !== null && c.contactDaysSince < c.oppDaysSince) ? 'contact' : 'opportunity';
+
+        let staleness: 'at-risk' | 'stale' | 'dormant' | null = null;
+        if (daysSince >= 60) staleness = 'dormant';
+        else if (daysSince >= 30) staleness = 'stale';
+        else if (daysSince >= 14) staleness = 'at-risk';
+
+        if (staleness) {
+            staleLeads.push({
+                opportunity: c.opp,
+                daysSinceActivity: daysSince,
+                staleness,
+                lastActivitySource: activitySource,
+                locationKey: c.locationKey,
+                locationName: c.locationName,
+                pipelineName: c.pipelineName,
+                stageName: c.stageName,
+            });
         }
     }
 
