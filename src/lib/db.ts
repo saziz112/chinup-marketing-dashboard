@@ -1,6 +1,6 @@
 /**
  * Database Module — Vercel Postgres
- * Initializes all 11 tables for the Marketing Dashboard.
+ * Initializes all tables for the Marketing Dashboard.
  */
 
 import { sql } from '@vercel/postgres';
@@ -19,6 +19,7 @@ export async function initAllTables() {
         initSearchConsoleDailyTable(),
         initSyncLogTable(),
         initCreativeImagesTable(),
+        initCompetitorNotesTable(),
     ]);
 }
 
@@ -276,4 +277,19 @@ async function initCreativeImagesTable() {
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_creative_images_status ON creative_images(status)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_creative_images_created ON creative_images(created_at)`;
+}
+
+async function initCompetitorNotesTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS competitor_notes (
+            id SERIAL PRIMARY KEY,
+            location_id VARCHAR(20) NOT NULL,
+            competitor_id VARCHAR(100) NOT NULL,
+            strengths TEXT DEFAULT '[]',
+            weaknesses TEXT DEFAULT '[]',
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_by VARCHAR(255),
+            UNIQUE(location_id, competitor_id)
+        )
+    `;
 }
