@@ -770,7 +770,7 @@ export default function LeadsPipelinePage() {
                                     <div className="metric-card">
                                         <div className="label">Match Rate</div>
                                         <div className="value">{revenueAttribution.matchRate ?? 0}%</div>
-                                        <div className="change">{revenueAttribution.matchedLeads} of {revenueAttribution.totalLeadsWithEmail} matched</div>
+                                        <div className="change">{revenueAttribution.matchedLeads} of {revenueAttribution.totalLeadsWithContact ?? revenueAttribution.totalLeadsWithEmail ?? revenueAttribution.totalLeads} matched</div>
                                     </div>
                                     {isAdmin && (
                                         <div className="metric-card">
@@ -780,8 +780,8 @@ export default function LeadsPipelinePage() {
                                         </div>
                                     )}
                                     <div className="metric-card">
-                                        <div className="label">Leads Without Email</div>
-                                        <div className="value">{revenueAttribution.totalLeads - revenueAttribution.totalLeadsWithEmail}</div>
+                                        <div className="label">No Contact Info</div>
+                                        <div className="value">{revenueAttribution.totalLeads - (revenueAttribution.totalLeadsWithContact ?? revenueAttribution.totalLeadsWithEmail ?? revenueAttribution.totalLeads)}</div>
                                         <div className="change">Cannot be matched</div>
                                     </div>
                                 </div>
@@ -856,9 +856,9 @@ export default function LeadsPipelinePage() {
                                                         }} />
                                                         {src.source || 'Unknown'}
                                                     </td>
-                                                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{src.count}</td>
+                                                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{revSource?.totalLeads ?? src.count}</td>
                                                     <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                                                        {totalSourceCount > 0 ? Math.round((src.count / totalSourceCount) * 100) : 0}%
+                                                        {totalSourceCount > 0 ? Math.round(((revSource?.totalLeads ?? src.count) / (revenueAttribution?.totalLeads ?? totalSourceCount)) * 100) : 0}%
                                                     </td>
                                                     {isAdmin && (
                                                         <td style={{ textAlign: 'right' }}>{formatCurrency(src.value)}</td>

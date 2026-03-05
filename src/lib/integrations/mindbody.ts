@@ -48,6 +48,8 @@ export interface Client {
     FirstName: string;
     LastName: string;
     Email?: string;
+    MobilePhone?: string;
+    HomePhone?: string;
     ReferredBy?: string;
     ReferralSource?: string;
     FirstAppointmentDate?: string;
@@ -302,15 +304,22 @@ export async function getNewClients(startDate: string, endDate: string): Promise
     });
 }
 
+/** Normalize phone: strip non-digits, take last 10 digits */
+export function normalizePhone(raw: string): string {
+    const digits = raw.replace(/\D/g, '');
+    return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+type ClientRevenue = { client: Client; revenue: number };
+
 /**
- * Build an email → {client, revenue} map from purchasing clients.
- * Used for email-based attribution matching against Meta Lead Ads form data.
- * Returns a map keyed by normalized lowercase email.
+ * Build email → {client, revenue} and phone → {client, revenue} maps
+ * from purchasing clients. Used for attribution matching against GHL leads.
  */
-export async function getClientEmailMap(
+export async function getClientMatchMaps(
     startDate: string,
     endDate: string
-): Promise<Map<string, { client: Client; revenue: number }>> {
+): Promise<{ emailMap: Map<string, ClientRevenue>; phoneMap: Map<string, ClientRevenue> }> {
     const { clients, sales } = await getPurchasingClients(startDate, endDate);
 
     // Build clientId → revenue map from sales
@@ -320,15 +329,38 @@ export async function getClientEmailMap(
         revenueByClient.set(sale.ClientId, (revenueByClient.get(sale.ClientId) || 0) + total);
     }
 
-    const emailMap = new Map<string, { client: Client; revenue: number }>();
+    const emailMap = new Map<string, ClientRevenue>();
+    const phoneMap = new Map<string, ClientRevenue>();
+
     for (const client of clients) {
-        if (!client.Email) continue;
-        const email = client.Email.toLowerCase().trim();
-        if (!email) continue;
-        emailMap.set(email, {
+        const entry: ClientRevenue = {
             client,
             revenue: revenueByClient.get(client.Id) || 0,
-        });
+        };
+
+        // Email map
+        if (client.Email) {
+            const email = client.Email.toLowerCase().trim();
+            if (email) emailMap.set(email, entry);
+        }
+
+        // Phone map (try MobilePhone first, then HomePhone)
+        for (const raw of [client.MobilePhone, client.HomePhone]) {
+            if (!raw) continue;
+            const phone = normalizePhone(raw);
+            if (phone.length === 10 && !phoneMap.has(phone)) {
+                phoneMap.set(phone, entry);
+            }
+        }
     }
+    return { emailMap, phoneMap };
+}
+
+/** @deprecated Use getClientMatchMaps instead */
+export async function getClientEmailMap(
+    startDate: string,
+    endDate: string
+): Promise<Map<string, ClientRevenue>> {
+    const { emailMap } = await getClientMatchMaps(startDate, endDate);
     return emailMap;
 }

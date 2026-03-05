@@ -1,7 +1,10 @@
 /**
  * /api/attribution/ghl-revenue
- * GET: Cross-references GHL opportunity contact emails with MindBody purchasing
+ * GET: Cross-references GHL opportunity contacts with MindBody purchasing
  * clients to show real revenue generated per lead source.
+ *
+ * Matching: email first, then phone fallback. GHL opportunities are
+ * filtered to only those created within the selected period.
  *
  * Query params:
  *   - period: '7d' | '30d' | '90d' (default '30d')
@@ -12,15 +15,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { isGHLConfigured, getFullPipelineData, type LocationKey, type GHLOpportunity } from '@/lib/integrations/gohighlevel';
-import { getClientEmailMap } from '@/lib/integrations/mindbody';
+import { getClientMatchMaps, normalizePhone } from '@/lib/integrations/mindbody';
 import { format, subDays } from 'date-fns';
 
 interface SourceAccumulator {
     totalLeads: number;
-    leadsWithEmail: number;
+    leadsWithContact: number; // leads with email OR phone
     matchedLeads: number;
     matchedRevenue: number;
     pipelineValue: number;
+    emailMatches: number;
+    phoneMatches: number;
 }
 
 export async function GET(req: NextRequest) {
@@ -47,62 +52,78 @@ export async function GET(req: NextRequest) {
 
     try {
         // Fetch both data sources in parallel (both are cached)
-        const [pipelineData, clientEmailMap] = await Promise.all([
+        const [pipelineData, { emailMap, phoneMap }] = await Promise.all([
             getFullPipelineData({ locationFilter: locationParam || undefined }),
-            getClientEmailMap(mbStart, mbEnd),
+            getClientMatchMaps(mbStart, mbEnd),
         ]);
 
-        // Extract ALL open opportunities from pipeline data
+        // Extract opportunities and filter to selected period
         const allOpps: GHLOpportunity[] = pipelineData.locations
             .flatMap(loc => loc.pipelines
                 .flatMap(p => p.stages
                     .flatMap(s => s.opportunities)));
 
-        // Step 1: Track how many sources each email appears under (for revenue splitting)
-        const emailSourceMap = new Map<string, Set<string>>();
-        for (const opp of allOpps) {
-            const email = opp.contactEmail?.toLowerCase().trim();
-            if (!email) continue;
+        const filteredOpps = allOpps.filter(opp => {
+            const created = new Date(opp.createdAt);
+            return created >= startDate && created <= endDate;
+        });
+
+        // Step 1: Track how many sources each contact appears under (for revenue splitting)
+        // Key by MindBody client ID to avoid double-counting across email/phone
+        const clientSourceMap = new Map<string, Set<string>>();
+
+        for (const opp of filteredOpps) {
             const src = opp.source || 'Unknown';
-            if (!emailSourceMap.has(email)) {
-                emailSourceMap.set(email, new Set());
-            }
-            emailSourceMap.get(email)!.add(src);
+            const mbClient = resolveClient(opp, emailMap, phoneMap);
+            if (!mbClient) continue;
+            const cid = mbClient.client.Id;
+            if (!clientSourceMap.has(cid)) clientSourceMap.set(cid, new Set());
+            clientSourceMap.get(cid)!.add(src);
         }
 
         // Step 2: Match and aggregate by source
         const sourceMap = new Map<string, SourceAccumulator>();
-        const matchedEmails = new Set<string>(); // track unique matched emails
+        const matchedClientIds = new Set<string>(); // track unique matched clients
 
-        for (const opp of allOpps) {
+        for (const opp of filteredOpps) {
             const src = opp.source || 'Unknown';
             if (!sourceMap.has(src)) {
                 sourceMap.set(src, {
                     totalLeads: 0,
-                    leadsWithEmail: 0,
+                    leadsWithContact: 0,
                     matchedLeads: 0,
                     matchedRevenue: 0,
                     pipelineValue: 0,
+                    emailMatches: 0,
+                    phoneMatches: 0,
                 });
             }
             const entry = sourceMap.get(src)!;
             entry.totalLeads++;
             entry.pipelineValue += opp.monetaryValue;
 
-            const email = opp.contactEmail?.toLowerCase().trim();
-            if (!email) continue;
+            const hasEmail = !!opp.contactEmail?.trim();
+            const hasPhone = !!opp.contactPhone?.trim();
+            if (hasEmail || hasPhone) entry.leadsWithContact++;
 
-            entry.leadsWithEmail++;
-
-            const mbClient = clientEmailMap.get(email);
+            // Try email match first, then phone fallback
+            const mbClient = resolveClient(opp, emailMap, phoneMap);
             if (mbClient && mbClient.revenue > 0) {
-                // Split revenue if this email appears under multiple sources
-                const numSources = emailSourceMap.get(email)?.size || 1;
+                const cid = mbClient.client.Id;
+                // Split revenue if this client appears under multiple sources
+                const numSources = clientSourceMap.get(cid)?.size || 1;
                 const splitRevenue = mbClient.revenue / numSources;
 
                 entry.matchedLeads++;
                 entry.matchedRevenue += splitRevenue;
-                matchedEmails.add(email);
+                matchedClientIds.add(cid);
+
+                // Track match method
+                if (hasEmail && emailMap.has(opp.contactEmail!.toLowerCase().trim())) {
+                    entry.emailMatches++;
+                } else {
+                    entry.phoneMatches++;
+                }
             }
         }
 
@@ -110,9 +131,15 @@ export async function GET(req: NextRequest) {
         const sourceBreakdown = Array.from(sourceMap.entries())
             .map(([source, data]) => ({
                 source,
-                ...data,
-                matchRate: data.leadsWithEmail > 0
-                    ? Math.round((data.matchedLeads / data.leadsWithEmail) * 100)
+                totalLeads: data.totalLeads,
+                leadsWithContact: data.leadsWithContact,
+                matchedLeads: data.matchedLeads,
+                matchedRevenue: data.matchedRevenue,
+                pipelineValue: data.pipelineValue,
+                emailMatches: data.emailMatches,
+                phoneMatches: data.phoneMatches,
+                matchRate: data.leadsWithContact > 0
+                    ? Math.round((data.matchedLeads / data.leadsWithContact) * 100)
                     : null,
                 revenuePerLead: data.matchedLeads > 0
                     ? Math.round(data.matchedRevenue / data.matchedLeads)
@@ -121,10 +148,14 @@ export async function GET(req: NextRequest) {
             .sort((a, b) => b.matchedRevenue - a.matchedRevenue || b.totalLeads - a.totalLeads);
 
         // Totals
-        const totalLeads = allOpps.length;
-        const totalLeadsWithEmail = allOpps.filter(o => o.contactEmail?.trim()).length;
-        const matchedLeads = matchedEmails.size;
+        const totalLeads = filteredOpps.length;
+        const totalLeadsWithContact = filteredOpps.filter(o =>
+            o.contactEmail?.trim() || o.contactPhone?.trim()
+        ).length;
+        const matchedLeads = matchedClientIds.size;
         const matchedRevenue = sourceBreakdown.reduce((s, d) => s + d.matchedRevenue, 0);
+        const totalEmailMatches = sourceBreakdown.reduce((s, d) => s + d.emailMatches, 0);
+        const totalPhoneMatches = sourceBreakdown.reduce((s, d) => s + d.phoneMatches, 0);
 
         const response = {
             configured: true,
@@ -132,11 +163,11 @@ export async function GET(req: NextRequest) {
             startDate: format(startDate, 'yyyy-MM-dd'),
             endDate: format(endDate, 'yyyy-MM-dd'),
             totalLeads,
-            totalLeadsWithEmail,
+            totalLeadsWithContact,
             matchedLeads,
             matchedRevenue: isAdmin ? Math.round(matchedRevenue) : 0,
-            matchRate: totalLeadsWithEmail > 0
-                ? Math.round((matchedLeads / totalLeadsWithEmail) * 100)
+            matchRate: totalLeadsWithContact > 0
+                ? Math.round((matchedLeads / totalLeadsWithContact) * 100)
                 : null,
             revenuePerLead: isAdmin && matchedLeads > 0
                 ? Math.round(matchedRevenue / matchedLeads)
@@ -149,9 +180,11 @@ export async function GET(req: NextRequest) {
                     pipelineValue: 0,
                     revenuePerLead: null,
                 })),
-            attributionMethod: 'email_match' as const,
-            attributionNote: `${matchedLeads} of ${totalLeadsWithEmail} GHL leads with emails matched to MindBody purchasing clients (${period} window). ` +
-                `${totalLeads - totalLeadsWithEmail} leads had no email and could not be matched.`,
+            attributionMethod: 'email_and_phone_match' as const,
+            attributionNote: `${matchedLeads} of ${totalLeadsWithContact} GHL leads matched to MindBody purchasing clients (${period} window). ` +
+                `${totalEmailMatches} via email, ${totalPhoneMatches} via phone. ` +
+                `${totalLeads - totalLeadsWithContact} leads had no contact info. ` +
+                `${allOpps.length - filteredOpps.length} older leads outside ${period} window excluded.`,
             fetchedAt: new Date().toISOString(),
         };
 
@@ -161,4 +194,28 @@ export async function GET(req: NextRequest) {
         const message = error instanceof Error ? error.message : 'Failed to compute revenue attribution';
         return NextResponse.json({ error: message }, { status: 500 });
     }
+}
+
+/** Resolve a GHL opportunity to a MindBody client via email (priority) or phone (fallback) */
+function resolveClient(
+    opp: GHLOpportunity,
+    emailMap: Map<string, { client: { Id: string }; revenue: number }>,
+    phoneMap: Map<string, { client: { Id: string }; revenue: number }>,
+) {
+    // Try email first
+    const email = opp.contactEmail?.toLowerCase().trim();
+    if (email) {
+        const match = emailMap.get(email);
+        if (match) return match;
+    }
+    // Phone fallback
+    const rawPhone = opp.contactPhone?.trim();
+    if (rawPhone) {
+        const phone = normalizePhone(rawPhone);
+        if (phone.length === 10) {
+            const match = phoneMap.get(phone);
+            if (match) return match;
+        }
+    }
+    return null;
 }
