@@ -20,6 +20,8 @@ export async function initAllTables() {
         initSyncLogTable(),
         initCreativeImagesTable(),
         initCompetitorNotesTable(),
+        initCreativeImageTagsTable(),
+        initCreativePostUsageTable(),
     ]);
 }
 
@@ -277,6 +279,10 @@ async function initCreativeImagesTable() {
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_creative_images_status ON creative_images(status)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_creative_images_created ON creative_images(created_at)`;
+    // Variation grouping columns
+    await sql`ALTER TABLE creative_images ADD COLUMN IF NOT EXISTS group_id VARCHAR(100)`;
+    await sql`ALTER TABLE creative_images ADD COLUMN IF NOT EXISTS variation_index INT DEFAULT 0`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_creative_images_group ON creative_images(group_id)`;
 }
 
 async function initCompetitorNotesTable() {
@@ -292,4 +298,32 @@ async function initCompetitorNotesTable() {
             UNIQUE(location_id, competitor_id)
         )
     `;
+}
+
+async function initCreativeImageTagsTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS creative_image_tags (
+            id SERIAL PRIMARY KEY,
+            image_id TEXT NOT NULL,
+            tag VARCHAR(100) NOT NULL,
+            UNIQUE(image_id, tag)
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_creative_tags_image ON creative_image_tags(image_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_creative_tags_tag ON creative_image_tags(tag)`;
+}
+
+async function initCreativePostUsageTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS creative_post_usage (
+            id SERIAL PRIMARY KEY,
+            creative_image_id TEXT NOT NULL,
+            content_post_id TEXT NOT NULL,
+            platform VARCHAR(50),
+            published_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(creative_image_id, content_post_id)
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_cpu_creative ON creative_post_usage(creative_image_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_cpu_post ON creative_post_usage(content_post_id)`;
 }

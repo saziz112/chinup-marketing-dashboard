@@ -1,17 +1,19 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { upload } from '@vercel/blob/client';
 import { PostRecord, Platform } from '@/lib/content-publisher';
 import { PostType } from '@/lib/integrations/meta-publisher';
+import { USERS } from '@/lib/config';
 import {
     Calendar, CheckCircle, Clock, History, PenTool, LayoutTemplate,
     Instagram, Facebook, Youtube, Send, Loader2, MapPin,
     Image as ImageIcon, Target, AlertTriangle, XCircle, Zap,
-    Upload, Film, X
+    Upload, Film, X, Edit3, Sparkles, FileText, ChevronDown, ChevronUp,
+    Archive, Eye, User
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -23,6 +25,19 @@ interface GoalsData {
     isOnTrack: boolean;
 }
 
+function resolveDisplayName(email?: string): string {
+    if (!email) return 'Unknown';
+    const user = USERS.find(u => u.email === email);
+    return user?.displayName || email.split('@')[0];
+}
+
+const platformMeta: Record<string, { color: string; icon: any; label: string }> = {
+    instagram: { color: '#E1306C', icon: Instagram, label: 'Instagram' },
+    facebook: { color: '#1877F2', icon: Facebook, label: 'Facebook' },
+    'google-business': { color: '#4285F4', icon: MapPin, label: 'Google Business' },
+    youtube: { color: '#FF0000', icon: Youtube, label: 'YouTube' },
+};
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function PublishDashboardClient() {
@@ -30,12 +45,14 @@ export default function PublishDashboardClient() {
     const [posts, setPosts] = useState<PostRecord[]>([]);
     const [goals, setGoals] = useState<GoalsData | null>(null);
     const [loading, setLoading] = useState(true);
+    const [showArchived, setShowArchived] = useState(false);
+    const [editingPost, setEditingPost] = useState<PostRecord | null>(null);
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         try {
             const [postsRes, goalsRes] = await Promise.all([
-                fetch('/api/content/publish?type=posts'),
+                fetch(`/api/content/publish?type=posts${showArchived ? '&includeArchived=true' : ''}`),
                 fetch('/api/content/publish?type=goals')
             ]);
             const pData = await postsRes.json();
@@ -48,12 +65,17 @@ export default function PublishDashboardClient() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [showArchived]);
 
-    useEffect(() => { fetchData(); }, []);
+    useEffect(() => { fetchData(); }, [fetchData]);
 
     const scheduled = posts.filter(p => p.status === 'SCHEDULED');
     const history = posts.filter(p => p.status !== 'SCHEDULED');
+
+    const handleEditPost = (post: PostRecord) => {
+        setEditingPost(post);
+        setActiveTab('create');
+    };
 
     const tabStyle = (active: boolean): React.CSSProperties => ({
         display: 'flex', alignItems: 'center', gap: '6px',
@@ -68,7 +90,7 @@ export default function PublishDashboardClient() {
         <div style={{ paddingBottom: '80px' }}>
             {/* Nav Tabs */}
             <div style={{ display: 'inline-flex', gap: '2px', background: 'rgba(255,255,255,0.04)', padding: '4px', borderRadius: '12px', marginBottom: '24px' }}>
-                <button onClick={() => setActiveTab('create')} style={tabStyle(activeTab === 'create')}>
+                <button onClick={() => { setActiveTab('create'); setEditingPost(null); }} style={tabStyle(activeTab === 'create')}>
                     <PenTool size={14} /> Craft Post
                 </button>
                 <button onClick={() => setActiveTab('scheduled')} style={tabStyle(activeTab === 'scheduled')}>
@@ -95,9 +117,23 @@ export default function PublishDashboardClient() {
                     </div>
                 )}
 
-                {activeTab === 'create' && <CreatePostForm onPostCreated={fetchData} />}
-                {activeTab === 'scheduled' && <PostList posts={scheduled} emptyMessage="No scheduled posts." onUpdate={fetchData} />}
-                {activeTab === 'history' && <PostList posts={history} emptyMessage="No publishing history yet." />}
+                {activeTab === 'create' && (
+                    <CreatePostForm
+                        onPostCreated={() => { fetchData(); setEditingPost(null); }}
+                        editingPost={editingPost}
+                        onCancelEdit={() => setEditingPost(null)}
+                    />
+                )}
+                {activeTab === 'scheduled' && (
+                    <QueueList posts={scheduled} onUpdate={fetchData} onEdit={handleEditPost} />
+                )}
+                {activeTab === 'history' && (
+                    <HistoryList
+                        posts={history}
+                        showArchived={showArchived}
+                        onToggleArchived={() => setShowArchived(v => !v)}
+                    />
+                )}
                 {activeTab === 'goals' && <GoalsScorecard goals={goals} />}
             </div>
         </div>
@@ -106,7 +142,11 @@ export default function PublishDashboardClient() {
 
 // ─── Create Post Form ───────────────────────────────────────────────────────
 
-function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
+function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
+    onPostCreated: () => void;
+    editingPost: PostRecord | null;
+    onCancelEdit: () => void;
+}) {
     const searchParams = useSearchParams();
     const [caption, setCaption] = useState('');
     const [platforms, setPlatforms] = useState<Platform[]>([]);
@@ -119,23 +159,55 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     const [dragging, setDragging] = useState(false);
     const [scheduleDate, setScheduleDate] = useState('');
     const [scheduleTime, setScheduleTime] = useState('');
+    const [scheduleError, setScheduleError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'partial'; message: string; details?: string[] } | null>(null);
     const [gbpLocations, setGbpLocations] = useState<string[]>(['decatur', 'smyrna', 'kennesaw']);
+    const [bulkMode, setBulkMode] = useState(false);
+    const [csvText, setCsvText] = useState('');
+    const [csvPreview, setCsvPreview] = useState<any>(null);
+    const [csvLoading, setCsvLoading] = useState(false);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const csvFileRef = useRef<HTMLInputElement>(null);
 
-    // Pre-fill media from query param (e.g. from AI Creatives "Send to Publish")
+    // Pre-fill media from query param
     useEffect(() => {
         const prefillUrl = searchParams.get('mediaUrl');
         if (prefillUrl) {
             setMediaUrl(prefillUrl);
             setMediaPreview(prefillUrl);
             setMediaType(prefillUrl.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'photo');
-            // Clear the param so it doesn't persist on refresh
             window.history.replaceState({}, '', '/publish');
         }
     }, [searchParams]);
+
+    // Pre-fill from editing post
+    useEffect(() => {
+        if (editingPost) {
+            setCaption(editingPost.caption || '');
+            setPlatforms(editingPost.platforms || []);
+            setPostType((editingPost.postType as PostType) || 'feed');
+            if (editingPost.mediaUrls?.[0]) {
+                setMediaUrl(editingPost.mediaUrls[0]);
+                setMediaPreview(editingPost.mediaUrls[0]);
+                setMediaType(editingPost.mediaUrls[0].match(/\.(mp4|mov|webm)$/i) ? 'video' : 'photo');
+            }
+            if (editingPost.scheduledFor) {
+                const d = new Date(editingPost.scheduledFor);
+                setScheduleDate(format(d, 'yyyy-MM-dd'));
+                setScheduleTime(format(d, 'HH:mm'));
+            }
+            const meta = editingPost.metadata as any;
+            if (meta?.gbpLocations) {
+                setGbpLocations(meta.gbpLocations);
+            }
+            setBulkMode(false);
+            setFeedback(null);
+        }
+    }, [editingPost]);
 
     const togglePlatform = (p: Platform) => {
         setPlatforms(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
@@ -148,8 +220,6 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
         setMediaType(file.type.startsWith('video/') ? 'video' : 'photo');
 
         try {
-            // Client-side upload: file goes directly from browser → Vercel Blob
-            // Bypasses the 4.5MB serverless function body limit
             const ext = file.name.split('.').pop() || 'jpg';
             const cleanName = file.name
                 .replace(/\.[^/.]+$/, '')
@@ -195,10 +265,24 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
+    const clearForm = () => {
+        setCaption(''); setPlatforms([]); setPostType('feed'); clearMedia();
+        setScheduleDate(''); setScheduleTime(''); setFeedback(null); setScheduleError(null);
+        setAiSuggestions([]);
+        onCancelEdit();
+    };
+
     const handleCreate = async () => {
         if (!caption || platforms.length === 0) return;
 
-        // Validate post type requirements
+        // Schedule validation
+        if ((scheduleDate && !scheduleTime) || (!scheduleDate && scheduleTime)) {
+            setScheduleError('Both date and time are required for scheduling');
+            return;
+        }
+        setScheduleError(null);
+
+        // Post type validation
         if (postType === 'reel' && mediaType !== 'video') {
             setFeedback({ type: 'error', message: 'Reels require a video file (MP4 or MOV).' });
             return;
@@ -221,66 +305,171 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                 scheduledFor = new Date(`${scheduleDate}T${scheduleTime}`).toISOString();
             }
 
-            const res = await fetch('/api/content/publish', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    platforms,
-                    caption,
-                    mediaUrls: mediaUrl ? [mediaUrl] : [],
-                    postType,
-                    scheduledFor,
-                    ...(platforms.includes('google-business') && { gbpLocations }),
-                })
-            });
+            if (editingPost) {
+                // Edit existing scheduled post
+                const res = await fetch('/api/content/publish', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: editingPost.id,
+                        caption,
+                        platforms,
+                        postType,
+                        scheduledFor,
+                        mediaUrls: mediaUrl ? [mediaUrl] : [],
+                        ...(platforms.includes('google-business') && { gbpLocations }),
+                    })
+                });
 
-            const data = await res.json();
-
-            if (res.ok) {
-                const post = data.post;
-                const results = data.results || [];
-
-                if (post.status === 'PUBLISHED') {
-                    setFeedback({
-                        type: 'success',
-                        message: `✅ Published to ${platforms.join(' & ')}!`,
-                        details: results.filter((r: any) => r.success).map((r: any) => `${r.platform}: Post ID ${r.postId}`),
-                    });
-                    setCaption(''); setPlatforms([]); setPostType('feed'); clearMedia(); setScheduleDate(''); setScheduleTime('');
-                } else if (post.status === 'PARTIAL') {
-                    const successes = results.filter((r: any) => r.success);
-                    const failures = results.filter((r: any) => !r.success);
-                    setFeedback({
-                        type: 'partial',
-                        message: `⚠️ Partially published (${successes.length}/${results.length} platforms)`,
-                        details: [
-                            ...successes.map((r: any) => `✅ ${r.platform}: Published`),
-                            ...failures.map((r: any) => `❌ ${r.platform}: ${r.error}`),
-                        ],
-                    });
-                } else if (post.status === 'SCHEDULED') {
-                    setFeedback({
-                        type: 'success',
-                        message: `📅 Scheduled for ${format(new Date(scheduledFor!), 'MMM d, h:mm a')}`,
-                    });
-                    setCaption(''); setPlatforms([]); setPostType('feed'); clearMedia(); setScheduleDate(''); setScheduleTime('');
+                const data = await res.json();
+                if (res.ok) {
+                    setFeedback({ type: 'success', message: 'Scheduled post updated successfully!' });
+                    clearForm();
+                    onPostCreated();
                 } else {
-                    const errors = results.filter((r: any) => !r.success);
-                    setFeedback({
-                        type: 'error',
-                        message: '❌ Publishing failed',
-                        details: errors.map((r: any) => `${r.platform}: ${r.error}`),
-                    });
+                    setFeedback({ type: 'error', message: data.error || 'Failed to update post' });
                 }
-
-                onPostCreated();
             } else {
-                setFeedback({ type: 'error', message: data.error || 'Something went wrong' });
+                // Create new post
+                const res = await fetch('/api/content/publish', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        platforms,
+                        caption,
+                        mediaUrls: mediaUrl ? [mediaUrl] : [],
+                        postType,
+                        scheduledFor,
+                        ...(platforms.includes('google-business') && { gbpLocations }),
+                    })
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    const post = data.post;
+                    const results = data.results || [];
+
+                    if (post.status === 'PUBLISHED') {
+                        setFeedback({
+                            type: 'success',
+                            message: `Published to ${platforms.join(' & ')}!`,
+                            details: results.filter((r: any) => r.success).map((r: any) => `${r.platform}: Post ID ${r.postId}`),
+                        });
+                        clearForm();
+                    } else if (post.status === 'PARTIAL') {
+                        const successes = results.filter((r: any) => r.success);
+                        const failures = results.filter((r: any) => !r.success);
+                        setFeedback({
+                            type: 'partial',
+                            message: `Partially published (${successes.length}/${results.length} platforms)`,
+                            details: [
+                                ...successes.map((r: any) => `${r.platform}: Published`),
+                                ...failures.map((r: any) => `${r.platform}: ${r.error}`),
+                            ],
+                        });
+                    } else if (post.status === 'SCHEDULED') {
+                        setFeedback({
+                            type: 'success',
+                            message: `Scheduled for ${format(new Date(scheduledFor!), 'MMM d, h:mm a')}`,
+                        });
+                        clearForm();
+                    } else {
+                        const errors = results.filter((r: any) => !r.success);
+                        setFeedback({
+                            type: 'error',
+                            message: 'Publishing failed',
+                            details: errors.map((r: any) => `${r.platform}: ${r.error}`),
+                        });
+                    }
+
+                    onPostCreated();
+                } else {
+                    setFeedback({ type: 'error', message: data.error || 'Something went wrong' });
+                }
             }
         } catch (e: any) {
             setFeedback({ type: 'error', message: e.message || 'Network error' });
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    // AI Caption Assist
+    const handleAiSuggest = async () => {
+        setAiLoading(true);
+        setAiSuggestions([]);
+        try {
+            const res = await fetch('/api/content/suggest-caption', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    platforms,
+                    postType,
+                    captionFragment: caption,
+                }),
+            });
+            const data = await res.json();
+            if (data.suggestions) {
+                setAiSuggestions(data.suggestions);
+            } else {
+                setFeedback({ type: 'error', message: data.error || 'AI suggestion failed' });
+            }
+        } catch {
+            setFeedback({ type: 'error', message: 'Failed to get AI suggestions' });
+        } finally {
+            setAiLoading(false);
+        }
+    };
+
+    // Bulk CSV handlers
+    const handleCsvFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => setCsvText(reader.result as string);
+        reader.readAsText(file);
+    };
+
+    const handleCsvPreview = async () => {
+        if (!csvText.trim()) return;
+        setCsvLoading(true);
+        try {
+            const res = await fetch('/api/content/bulk-upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ csv: csvText, action: 'preview' }),
+            });
+            const data = await res.json();
+            setCsvPreview(data);
+        } catch {
+            setFeedback({ type: 'error', message: 'Failed to parse CSV' });
+        } finally {
+            setCsvLoading(false);
+        }
+    };
+
+    const handleCsvConfirm = async () => {
+        setCsvLoading(true);
+        try {
+            const res = await fetch('/api/content/bulk-upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ csv: csvText, action: 'confirm' }),
+            });
+            const data = await res.json();
+            if (data.created > 0) {
+                setFeedback({ type: 'success', message: `Scheduled ${data.created} post(s)!${data.skippedInvalid > 0 ? ` (${data.skippedInvalid} invalid rows skipped)` : ''}` });
+                setCsvText('');
+                setCsvPreview(null);
+                onPostCreated();
+            } else {
+                setFeedback({ type: 'error', message: 'No posts were created' });
+            }
+        } catch {
+            setFeedback({ type: 'error', message: 'Bulk upload failed' });
+        } finally {
+            setCsvLoading(false);
         }
     };
 
@@ -296,8 +485,161 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
         partial: { bg: 'rgba(234,179,8,0.08)', border: 'rgba(234,179,8,0.2)', color: '#eab308', icon: AlertTriangle },
     };
 
+    // ── Bulk Mode ──
+    if (bulkMode) {
+        return (
+            <div className="section-card" style={{ padding: '32px', maxWidth: '900px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+                    <h3 style={{ margin: 0, fontSize: '1rem' }}>Bulk CSV Upload</h3>
+                    <button onClick={() => { setBulkMode(false); setCsvPreview(null); setCsvText(''); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8125rem' }}>
+                        Switch to Single Post
+                    </button>
+                </div>
+
+                {/* Feedback Banner */}
+                {feedback && (() => {
+                    const fb = feedbackColors[feedback.type];
+                    const Icon = fb.icon;
+                    return (
+                        <div style={{ background: fb.bg, border: `1px solid ${fb.border}`, borderRadius: '12px', padding: '16px 20px', display: 'flex', gap: '12px', alignItems: 'flex-start', marginBottom: '20px' }}>
+                            <Icon size={20} style={{ color: fb.color, flexShrink: 0, marginTop: '2px' }} />
+                            <div style={{ flex: 1 }}>
+                                <p style={{ color: fb.color, fontWeight: 600, fontSize: '0.9375rem', margin: 0 }}>{feedback.message}</p>
+                            </div>
+                            <button onClick={() => setFeedback(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}>
+                                <X size={14} />
+                            </button>
+                        </div>
+                    );
+                })()}
+
+                <div style={{ marginBottom: '16px', padding: '12px 16px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p style={{ margin: '0 0 6px', fontSize: '0.8125rem', fontWeight: 500, color: '#ccc' }}>CSV Format</p>
+                    <code style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.8 }}>
+                        date,time,platforms,post_type,caption,media_url,gbp_locations<br />
+                        2026-03-10,09:00,instagram|facebook,feed,&quot;Your caption here&quot;,,<br />
+                        2026-03-11,10:00,google-business,feed,&quot;GBP post&quot;,,decatur|smyrna
+                    </code>
+                    <p style={{ margin: '8px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        Max {21} rows (3/day x 7 days). Platforms and GBP locations are pipe-separated.
+                    </p>
+                </div>
+
+                <p style={{ fontSize: '0.75rem', color: '#eab308', margin: '0 0 16px' }}>
+                    Note: Scheduled posts are published daily at ~7 AM UTC (3 AM ET) on the Hobby plan.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div>
+                        <input type="file" ref={csvFileRef} accept=".csv,text/csv" onChange={handleCsvFile} style={{ display: 'none' }} />
+                        <button onClick={() => csvFileRef.current?.click()} style={{
+                            padding: '10px 20px', borderRadius: '10px', border: '1px dashed rgba(255,255,255,0.15)',
+                            background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer',
+                            fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '8px',
+                        }}>
+                            <FileText size={16} /> Upload CSV File
+                        </button>
+                    </div>
+
+                    {csvText && (
+                        <textarea
+                            value={csvText}
+                            onChange={e => { setCsvText(e.target.value); setCsvPreview(null); }}
+                            style={{ ...inputStyle, height: '150px', resize: 'vertical', fontFamily: 'monospace', fontSize: '0.8125rem', lineHeight: 1.6 }}
+                        />
+                    )}
+
+                    {csvText && !csvPreview && (
+                        <button onClick={handleCsvPreview} disabled={csvLoading} style={{
+                            padding: '10px 24px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                            fontSize: '0.875rem', fontWeight: 600, background: 'rgba(255,255,255,0.1)',
+                            color: '#fff', display: 'flex', alignItems: 'center', gap: '8px', width: 'fit-content',
+                        }}>
+                            {csvLoading ? <Loader2 size={16} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Eye size={16} />}
+                            Preview
+                        </button>
+                    )}
+
+                    {/* CSV Preview Table */}
+                    {csvPreview && (
+                        <div>
+                            <div style={{ display: 'flex', gap: '16px', marginBottom: '12px' }}>
+                                <span style={{ fontSize: '0.8125rem', color: '#22c55e' }}>Valid: {csvPreview.validCount}</span>
+                                {csvPreview.invalidCount > 0 && <span style={{ fontSize: '0.8125rem', color: '#ef4444' }}>Invalid: {csvPreview.invalidCount}</span>}
+                            </div>
+
+                            <div style={{ borderRadius: '10px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                {csvPreview.rows?.map((row: any, i: number) => (
+                                    <div key={i} style={{
+                                        padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px',
+                                        background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                                        borderBottom: '1px solid rgba(255,255,255,0.04)',
+                                    }}>
+                                        {row.valid ? (
+                                            <CheckCircle size={14} style={{ color: '#22c55e', flexShrink: 0 }} />
+                                        ) : (
+                                            <XCircle size={14} style={{ color: '#ef4444', flexShrink: 0 }} />
+                                        )}
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', width: '80px', flexShrink: 0 }}>{row.date} {row.time}</span>
+                                        <div style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
+                                            {row.platforms?.map((p: string) => {
+                                                const meta = platformMeta[p];
+                                                if (!meta) return null;
+                                                const Icon = meta.icon;
+                                                return <Icon key={p} size={12} style={{ color: meta.color }} />;
+                                            })}
+                                        </div>
+                                        <span style={{ fontSize: '0.8125rem', color: '#ccc', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {row.caption}
+                                        </span>
+                                        {!row.valid && (
+                                            <span style={{ fontSize: '0.6875rem', color: '#ef4444', flexShrink: 0 }}>
+                                                {row.errors?.[0]}
+                                            </span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+
+                            {csvPreview.validCount > 0 && (
+                                <button onClick={handleCsvConfirm} disabled={csvLoading} style={{
+                                    marginTop: '16px', padding: '12px 28px', borderRadius: '10px', border: 'none',
+                                    cursor: 'pointer', fontSize: '0.9375rem', fontWeight: 600,
+                                    background: 'var(--accent)', color: '#000',
+                                    display: 'flex', alignItems: 'center', gap: '8px',
+                                }}>
+                                    {csvLoading ? <Loader2 size={18} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Calendar size={18} />}
+                                    Schedule {csvPreview.validCount} Post{csvPreview.validCount > 1 ? 's' : ''}
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // ── Single Post Mode ──
     return (
         <div className="section-card" style={{ padding: '32px', maxWidth: '900px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem' }}>
+                    {editingPost ? 'Edit Scheduled Post' : 'Craft Post'}
+                </h3>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                    {editingPost && (
+                        <button onClick={clearForm} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.8125rem' }}>
+                            Cancel Edit
+                        </button>
+                    )}
+                    {!editingPost && (
+                        <button onClick={() => setBulkMode(true)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <FileText size={12} /> Bulk Upload
+                        </button>
+                    )}
+                </div>
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
                 {/* Feedback Banner */}
@@ -320,7 +662,9 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                                     </ul>
                                 )}
                             </div>
-                            <button onClick={() => setFeedback(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}>✕</button>
+                            <button onClick={() => setFeedback(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}>
+                                <X size={14} />
+                            </button>
                         </div>
                     );
                 })()}
@@ -331,10 +675,7 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                         {(['instagram', 'facebook', 'google-business', 'youtube'] as Platform[]).map((p) => {
                             const isSelected = platforms.includes(p);
-                            const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', 'google-business': '#4285F4', youtube: '#FF0000' };
-                            const icons: Record<string, any> = { instagram: Instagram, facebook: Facebook, 'google-business': MapPin, youtube: Youtube };
-                            const labels: Record<string, string> = { instagram: 'Instagram', facebook: 'Facebook', 'google-business': 'Google Business', youtube: 'YouTube' };
-                            const Icon = icons[p];
+                            const meta = platformMeta[p];
                             const isYT = p === 'youtube';
                             return (
                                 <button
@@ -344,15 +685,15 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                                         padding: '10px 20px', borderRadius: '10px', border: 'none', cursor: isYT ? 'not-allowed' : 'pointer',
                                         fontSize: '0.875rem', fontWeight: isSelected ? 600 : 400,
                                         display: 'flex', alignItems: 'center', gap: '8px',
-                                        background: isSelected ? `${colors[p]}20` : 'rgba(255,255,255,0.05)',
-                                        color: isYT ? 'rgba(255,255,255,0.2)' : (isSelected ? colors[p] : 'var(--text-muted)'),
+                                        background: isSelected ? `${meta.color}20` : 'rgba(255,255,255,0.05)',
+                                        color: isYT ? 'rgba(255,255,255,0.2)' : (isSelected ? meta.color : 'var(--text-muted)'),
                                         transition: 'all 0.2s',
                                         opacity: isYT ? 0.5 : 1,
                                     }}
                                     title={isYT ? 'YouTube publishing requires YouTube Studio' : undefined}
                                 >
-                                    <Icon size={16} />
-                                    {labels[p]}
+                                    <meta.icon size={16} />
+                                    {meta.label}
                                     {isYT && <span style={{ fontSize: '0.6875rem', opacity: 0.6 }}>(Soon)</span>}
                                 </button>
                             );
@@ -431,9 +772,28 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                     )}
                 </div>
 
-                {/* Caption */}
+                {/* Caption + AI Assist */}
                 <div>
-                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Caption</label>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                        <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)' }}>Caption</label>
+                        <button
+                            onClick={handleAiSuggest}
+                            disabled={aiLoading || platforms.length === 0}
+                            style={{
+                                background: 'none', border: '1px solid rgba(168,85,247,0.3)', borderRadius: '8px',
+                                padding: '5px 12px', cursor: platforms.length === 0 ? 'not-allowed' : 'pointer',
+                                fontSize: '0.75rem', fontWeight: 500,
+                                color: platforms.length === 0 ? 'var(--text-muted)' : '#a855f7',
+                                display: 'flex', alignItems: 'center', gap: '5px',
+                                opacity: platforms.length === 0 ? 0.4 : 1,
+                                transition: 'all 0.2s',
+                            }}
+                            title={platforms.length === 0 ? 'Select platforms first' : 'Get AI caption suggestions'}
+                        >
+                            {aiLoading ? <Loader2 size={12} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Sparkles size={12} />}
+                            AI Suggest
+                        </button>
+                    </div>
                     <textarea
                         value={caption}
                         onChange={e => setCaption(e.target.value)}
@@ -443,6 +803,27 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
                         <span style={{ fontSize: '0.75rem', color: caption.length > 2200 ? '#ef4444' : 'var(--text-muted)' }}>{caption.length}/2,200</span>
                     </div>
+
+                    {/* AI Suggestions */}
+                    {aiSuggestions.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
+                            <p style={{ fontSize: '0.75rem', color: '#a855f7', margin: 0, fontWeight: 500 }}>Click to use a suggestion:</p>
+                            {aiSuggestions.map((suggestion, i) => (
+                                <button
+                                    key={i}
+                                    onClick={() => { setCaption(suggestion); setAiSuggestions([]); }}
+                                    style={{
+                                        padding: '12px 16px', borderRadius: '10px', textAlign: 'left',
+                                        border: '1px solid rgba(168,85,247,0.15)', cursor: 'pointer',
+                                        background: 'rgba(168,85,247,0.04)', color: '#ddd',
+                                        fontSize: '0.8125rem', lineHeight: 1.6, transition: 'all 0.2s',
+                                    }}
+                                >
+                                    {suggestion.length > 200 ? suggestion.substring(0, 200) + '...' : suggestion}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Media Upload */}
@@ -454,7 +835,6 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
 
                     <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} accept="image/*,video/*" />
 
-                    {/* Uploaded preview */}
                     {mediaPreview && (
                         <div style={{ position: 'relative', marginBottom: '12px', display: 'inline-block' }}>
                             {mediaType === 'video' ? (
@@ -462,7 +842,6 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                             ) : (
                                 <img src={mediaPreview} alt="Preview" style={{ maxHeight: '200px', maxWidth: '100%', borderRadius: '12px', border: '1px solid var(--border-color)', objectFit: 'cover' }} />
                             )}
-                            {/* Upload status overlay */}
                             {uploading && (
                                 <div style={{
                                     position: 'absolute', inset: 0, borderRadius: '12px',
@@ -473,7 +852,6 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                                     <span style={{ color: '#fff', fontSize: '0.8125rem', fontWeight: 500 }}>Uploading...</span>
                                 </div>
                             )}
-                            {/* Checkmark overlay when upload done */}
                             {!uploading && mediaUrl && (
                                 <div style={{
                                     position: 'absolute', top: '8px', left: '8px',
@@ -484,7 +862,6 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                                     <CheckCircle size={16} style={{ color: '#fff' }} />
                                 </div>
                             )}
-                            {/* Remove button */}
                             {!uploading && (
                                 <button onClick={clearMedia} style={{
                                     position: 'absolute', top: '-8px', right: '-8px',
@@ -498,7 +875,6 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                         </div>
                     )}
 
-                    {/* Upload error */}
                     {uploadError && (
                         <div style={{
                             background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
@@ -510,7 +886,6 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                         </div>
                     )}
 
-                    {/* Drop zone (shown when no media selected) */}
                     {!mediaPreview && (
                         <div
                             onClick={() => fileInputRef.current?.click()}
@@ -539,16 +914,39 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                 <div>
                     <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Schedule (optional)</label>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                        <input type="date" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} style={{ ...inputStyle, width: 'auto', colorScheme: 'dark' }} />
-                        <input type="time" value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} style={{ ...inputStyle, width: 'auto', colorScheme: 'dark' }} />
+                        <input
+                            type="date"
+                            value={scheduleDate}
+                            onChange={e => { setScheduleDate(e.target.value); setScheduleError(null); }}
+                            style={{
+                                ...inputStyle, width: 'auto', colorScheme: 'dark',
+                                ...(scheduleError && !scheduleDate ? { outline: '1px solid #ef4444' } : {}),
+                            }}
+                        />
+                        <input
+                            type="time"
+                            value={scheduleTime}
+                            onChange={e => { setScheduleTime(e.target.value); setScheduleError(null); }}
+                            style={{
+                                ...inputStyle, width: 'auto', colorScheme: 'dark',
+                                ...(scheduleError && !scheduleTime ? { outline: '1px solid #ef4444' } : {}),
+                            }}
+                        />
                     </div>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px' }}>Leave blank to publish immediately.</p>
+                    {scheduleError ? (
+                        <p style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '6px' }}>{scheduleError}</p>
+                    ) : (
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                            Leave blank to publish immediately.
+                            {(scheduleDate || scheduleTime) && ' Note: Posts publish daily at ~7 AM UTC (3 AM ET).'}
+                        </p>
+                    )}
                 </div>
 
                 {/* Submit */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                     <button
-                        onClick={() => { setCaption(''); setPlatforms([]); setPostType('feed'); clearMedia(); setScheduleDate(''); setScheduleTime(''); setFeedback(null); }}
+                        onClick={clearForm}
                         style={{ padding: '10px 24px', borderRadius: '10px', border: 'none', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 500, background: 'transparent', color: 'var(--text-muted)' }}
                     >
                         Clear
@@ -566,9 +964,12 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
                         }}
                     >
                         {submitting ? (
-                            <><Loader2 size={18} style={{ animation: 'spin 0.8s linear infinite' }} /> Publishing...</>
+                            <><Loader2 size={18} style={{ animation: 'spin 0.8s linear infinite' }} /> {editingPost ? 'Saving...' : 'Publishing...'}</>
                         ) : (
-                            <>{scheduleDate ? <Calendar size={18} /> : <Send size={18} />} {scheduleDate ? 'Schedule' : 'Publish Now'}</>
+                            <>
+                                {editingPost ? <Edit3 size={18} /> : (scheduleDate ? <Calendar size={18} /> : <Send size={18} />)}
+                                {editingPost ? 'Save Changes' : (scheduleDate ? 'Schedule' : 'Publish Now')}
+                            </>
                         )}
                     </button>
                 </div>
@@ -577,15 +978,13 @@ function CreatePostForm({ onPostCreated }: { onPostCreated: () => void }) {
     );
 }
 
-// ─── Post List ──────────────────────────────────────────────────────────────
+// ─── Queue List (Rich Cards) ────────────────────────────────────────────────
 
-function PostList({ posts, emptyMessage, onUpdate }: { posts: PostRecord[], emptyMessage: string, onUpdate?: () => void }) {
-    const isScheduled = posts.length > 0 && posts[0]?.status === 'SCHEDULED';
-
-    const handleDelete = async (id: string) => {
+function QueueList({ posts, onUpdate, onEdit }: { posts: PostRecord[], onUpdate: () => void, onEdit: (post: PostRecord) => void }) {
+    const handleCancel = async (id: string) => {
         try {
             await fetch(`/api/content/publish?id=${id}`, { method: 'DELETE' });
-            onUpdate?.();
+            onUpdate();
         } catch (e) {
             console.error(e);
         }
@@ -594,71 +993,240 @@ function PostList({ posts, emptyMessage, onUpdate }: { posts: PostRecord[], empt
     if (posts.length === 0) {
         return (
             <div className="section-card" style={{ padding: '60px 32px', textAlign: 'center' }}>
-                <LayoutTemplate size={40} style={{ color: 'var(--text-muted)', margin: '0 auto 12px', opacity: 0.4 }} />
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9375rem' }}>{emptyMessage}</p>
+                <Clock size={40} style={{ color: 'var(--text-muted)', margin: '0 auto 12px', opacity: 0.4 }} />
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9375rem' }}>No scheduled posts.</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '4px' }}>
+                    Note: Posts publish daily at ~7 AM UTC (3 AM ET).
+                </p>
             </div>
         );
     }
 
-    const statusStyles: Record<string, { bg: string; color: string; label: string }> = {
-        PUBLISHED: { bg: 'rgba(34,197,94,0.1)', color: '#22c55e', label: '● Live' },
-        SCHEDULED: { bg: 'rgba(234,179,8,0.1)', color: '#eab308', label: '◷ Queued' },
-        FAILED: { bg: 'rgba(239,68,68,0.1)', color: '#ef4444', label: '✕ Failed' },
-        PARTIAL: { bg: 'rgba(234,179,8,0.1)', color: '#eab308', label: '⚠ Partial' },
-        PUBLISHING: { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6', label: '↻ Sending' },
-        DRAFT: { bg: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', label: '○ Draft' },
-    };
-
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <p style={{ fontSize: '0.75rem', color: '#eab308', margin: '0 0 4px' }}>
+                Scheduled posts publish daily at ~7 AM UTC (3 AM ET).
+            </p>
             {posts.map(post => {
-                const st = statusStyles[post.status] || statusStyles.DRAFT;
+                const meta = post.metadata as any;
+                const gbpLocs: string[] = meta?.gbpLocations || [];
+                const timeLabel = post.scheduledFor
+                    ? formatDistanceToNow(new Date(post.scheduledFor), { addSuffix: true })
+                    : '';
+
                 return (
-                    <div key={post.id} className="section-card" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        {/* Status Dot */}
-                        <span style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600, background: st.bg, color: st.color, whiteSpace: 'nowrap' }}>
-                            {st.label}
-                        </span>
+                    <div key={post.id} className="section-card" style={{ padding: '20px 24px' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
+                            {/* Media thumbnail */}
+                            {post.mediaUrls?.[0] && (
+                                <img
+                                    src={post.mediaUrls[0]}
+                                    alt=""
+                                    style={{ width: '60px', height: '60px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }}
+                                />
+                            )}
 
-                        {/* Platforms */}
-                        <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                            {post.platforms.map(p => {
-                                const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', 'google-business': '#4285F4', youtube: '#FF0000' };
-                                const Icon = p === 'instagram' ? Instagram : p === 'facebook' ? Facebook : p === 'google-business' ? MapPin : Youtube;
-                                return <Icon key={p} size={14} style={{ color: colors[p] }} />;
-                            })}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                {/* Top row: platforms + type + time */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                                    {/* Status */}
+                                    <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.6875rem', fontWeight: 600, background: 'rgba(234,179,8,0.1)', color: '#eab308' }}>
+                                        Queued
+                                    </span>
+                                    {/* Post type */}
+                                    <span style={{ fontSize: '0.6875rem', fontWeight: 500, padding: '3px 8px', borderRadius: '6px', background: 'rgba(255,255,255,0.06)', color: '#ccc', textTransform: 'capitalize' }}>
+                                        {post.postType || 'feed'}
+                                    </span>
+                                    {/* Platforms with labels */}
+                                    {post.platforms.map(p => {
+                                        const pm = platformMeta[p];
+                                        if (!pm) return null;
+                                        return (
+                                            <span key={p} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: pm.color }}>
+                                                <pm.icon size={12} /> {pm.label}
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Caption */}
+                                <p style={{ margin: '0 0 8px', fontSize: '0.875rem', color: '#ddd', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                    {post.caption}
+                                </p>
+
+                                {/* Bottom row: who + when + locations */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                                    {post.createdBy && (
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                            <User size={11} /> {resolveDisplayName(post.createdBy)}
+                                        </span>
+                                    )}
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                        {post.scheduledFor ? format(new Date(post.scheduledFor), 'MMM d, h:mm a') : ''}
+                                        {timeLabel && ` (${timeLabel})`}
+                                    </span>
+                                    {gbpLocs.length > 0 && (
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: '#4285F4' }}>
+                                            <MapPin size={11} /> {gbpLocs.join(', ')}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div style={{ display: 'flex', gap: '8px', flexShrink: 0, alignSelf: 'center' }}>
+                                <button
+                                    onClick={() => onEdit(post)}
+                                    style={{ background: 'rgba(255,255,255,0.06)', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 500, padding: '6px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                    <Edit3 size={12} /> Edit
+                                </button>
+                                <button
+                                    onClick={() => handleCancel(post.id)}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(239,68,68,0.7)', fontSize: '0.75rem', fontWeight: 600 }}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
                         </div>
-
-                        {/* Caption */}
-                        <p style={{ flex: 1, margin: 0, fontSize: '0.875rem', color: '#ddd', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {post.caption}
-                        </p>
-
-                        {/* Date */}
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                            {post.publishedAt
-                                ? format(new Date(post.publishedAt), 'MMM d, h:mm a')
-                                : post.scheduledFor
-                                    ? format(new Date(post.scheduledFor), 'MMM d, h:mm a')
-                                    : format(new Date(post.createdAt), 'MMM d')}
-                        </span>
-
-                        {/* Errors */}
-                        {post.errors && Object.keys(post.errors).length > 0 && (
-                            <span title={Object.entries(post.errors).map(([k, v]) => `${k}: ${v}`).join('\n')} style={{ cursor: 'help' }}>
-                                <AlertTriangle size={14} style={{ color: '#ef4444' }} />
-                            </span>
-                        )}
-
-                        {/* Delete for scheduled */}
-                        {isScheduled && onUpdate && (
-                            <button onClick={() => handleDelete(post.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(239,68,68,0.7)', fontSize: '0.75rem', fontWeight: 600 }}>
-                                Cancel
-                            </button>
-                        )}
                     </div>
                 );
             })}
+        </div>
+    );
+}
+
+// ─── History List (Rich Cards + Archive) ────────────────────────────────────
+
+function HistoryList({ posts, showArchived, onToggleArchived }: {
+    posts: PostRecord[];
+    showArchived: boolean;
+    onToggleArchived: () => void;
+}) {
+    const statusStyles: Record<string, { bg: string; color: string; label: string }> = {
+        PUBLISHED: { bg: 'rgba(34,197,94,0.1)', color: '#22c55e', label: 'Live' },
+        FAILED: { bg: 'rgba(239,68,68,0.1)', color: '#ef4444', label: 'Failed' },
+        PARTIAL: { bg: 'rgba(234,179,8,0.1)', color: '#eab308', label: 'Partial' },
+        PUBLISHING: { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6', label: 'Sending' },
+        DRAFT: { bg: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', label: 'Draft' },
+    };
+
+    if (posts.length === 0) {
+        return (
+            <div>
+                <div className="section-card" style={{ padding: '60px 32px', textAlign: 'center' }}>
+                    <LayoutTemplate size={40} style={{ color: 'var(--text-muted)', margin: '0 auto 12px', opacity: 0.4 }} />
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9375rem' }}>No publishing history yet.</p>
+                </div>
+                <div style={{ textAlign: 'center', marginTop: '16px' }}>
+                    <button onClick={onToggleArchived} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', margin: '0 auto' }}>
+                        <Archive size={12} /> {showArchived ? 'Hide Archived' : 'Show Archived'}
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {posts.map(post => {
+                    const st = statusStyles[post.status] || statusStyles.DRAFT;
+                    const meta = post.metadata as any;
+                    const gbpLocs: string[] = meta?.gbpLocations || [];
+                    const isArchived = !!post.archivedAt;
+                    const errors = post.errors || {};
+                    const hasErrors = Object.keys(errors).length > 0;
+
+                    return (
+                        <div key={post.id} className="section-card" style={{
+                            padding: '20px 24px',
+                            opacity: isArchived ? 0.5 : 1,
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
+                                {/* Media thumbnail */}
+                                {post.mediaUrls?.[0] && (
+                                    <img
+                                        src={post.mediaUrls[0]}
+                                        alt=""
+                                        style={{ width: '50px', height: '50px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }}
+                                    />
+                                )}
+
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    {/* Top row: status + type + platforms */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                                        <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.6875rem', fontWeight: 600, background: st.bg, color: st.color }}>
+                                            {st.label}
+                                        </span>
+                                        {isArchived && (
+                                            <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.6875rem', fontWeight: 500, background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
+                                                Archived
+                                            </span>
+                                        )}
+                                        {post.postType && post.postType !== 'feed' && (
+                                            <span style={{ fontSize: '0.6875rem', fontWeight: 500, padding: '3px 8px', borderRadius: '6px', background: 'rgba(255,255,255,0.06)', color: '#ccc', textTransform: 'capitalize' }}>
+                                                {post.postType}
+                                            </span>
+                                        )}
+                                        {post.platforms.map(p => {
+                                            const pm = platformMeta[p];
+                                            if (!pm) return null;
+                                            return (
+                                                <span key={p} style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.75rem', color: pm.color }}>
+                                                    <pm.icon size={12} /> {pm.label}
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+
+                                    {/* Caption */}
+                                    <p style={{ margin: '0 0 6px', fontSize: '0.8125rem', color: '#ccc', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {post.caption}
+                                    </p>
+
+                                    {/* Bottom row: who + when + locations */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                                        {post.createdBy && (
+                                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                <User size={11} /> {resolveDisplayName(post.createdBy)}
+                                            </span>
+                                        )}
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                            {post.publishedAt
+                                                ? format(new Date(post.publishedAt), 'MMM d, h:mm a')
+                                                : format(new Date(post.createdAt), 'MMM d')}
+                                        </span>
+                                        {gbpLocs.length > 0 && (
+                                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: '#4285F4' }}>
+                                                <MapPin size={11} /> {gbpLocs.join(', ')}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {/* Inline errors */}
+                                    {hasErrors && (
+                                        <div style={{ marginTop: '8px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.12)' }}>
+                                            {Object.entries(errors).map(([platform, error]) => (
+                                                <p key={platform} style={{ margin: '2px 0', fontSize: '0.75rem', color: '#ef4444' }}>
+                                                    {platform}: {error}
+                                                </p>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {/* Show Archived Toggle */}
+            <div style={{ textAlign: 'center', marginTop: '16px' }}>
+                <button onClick={onToggleArchived} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', margin: '0 auto' }}>
+                    <Archive size={12} /> {showArchived ? 'Hide Archived' : 'Show Archived'}
+                </button>
+            </div>
         </div>
     );
 }
@@ -680,7 +1248,6 @@ function GoalsScorecard({ goals }: { goals: GoalsData | null }) {
     const totalTarget = targets.total?.target || 7;
     const progress = Math.min((totalDone / totalTarget) * 100, 100);
 
-    // Determine "What to do today" actions
     const actions: string[] = [];
     for (const [key, val] of Object.entries(targets)) {
         if (key === 'total') continue;
@@ -692,7 +1259,7 @@ function GoalsScorecard({ goals }: { goals: GoalsData | null }) {
 
     const isComplete = actions.length === 0;
     const statusColor = isComplete ? '#22c55e' : progress >= 50 ? '#eab308' : '#ef4444';
-    const statusLabel = isComplete ? 'All Done! 🎉' : progress >= 50 ? 'On Track' : 'Behind';
+    const statusLabel = isComplete ? 'All Done!' : progress >= 50 ? 'On Track' : 'Behind';
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '700px' }}>
@@ -702,7 +1269,7 @@ function GoalsScorecard({ goals }: { goals: GoalsData | null }) {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
                     <div>
                         <h3 style={{ margin: '0 0 4px 0', fontSize: '1.125rem' }}>
-                            This Week's Content Goals
+                            This Week&apos;s Content Goals
                         </h3>
                         <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
                             {goals.weekStarting && `Week of ${format(new Date(goals.weekStarting + 'T00:00:00'), 'MMM d')} — ${format(new Date(goals.weekEnding + 'T00:00:00'), 'MMM d')}`}
@@ -735,16 +1302,15 @@ function GoalsScorecard({ goals }: { goals: GoalsData | null }) {
             {/* Per-Platform Breakdown */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
                 {Object.entries(targets).filter(([k]) => k !== 'total').map(([key, val]) => {
-                    const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', youtube: '#FF0000' };
-                    const icons: Record<string, any> = { instagram: Instagram, facebook: Facebook, youtube: Youtube };
-                    const Icon = icons[key] || Target;
+                    const pm = platformMeta[key];
+                    const Icon = pm?.icon || Target;
                     const pct = val.target > 0 ? Math.min((val.current / val.target) * 100, 100) : 0;
                     const done = val.current >= val.target;
 
                     return (
                         <div key={key} className="section-card" style={{ padding: '20px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                                <Icon size={16} style={{ color: colors[key] || 'var(--text-muted)' }} />
+                                <Icon size={16} style={{ color: pm?.color || 'var(--text-muted)' }} />
                                 <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: '#ccc', textTransform: 'capitalize' }}>{val.label}</span>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginBottom: '10px' }}>
@@ -752,7 +1318,7 @@ function GoalsScorecard({ goals }: { goals: GoalsData | null }) {
                                 <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>/ {val.target}</span>
                             </div>
                             <div style={{ height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
-                                <div style={{ width: `${pct}%`, height: '100%', borderRadius: '2px', background: done ? '#22c55e' : (colors[key] || 'var(--accent)'), transition: 'width 0.5s ease' }} />
+                                <div style={{ width: `${pct}%`, height: '100%', borderRadius: '2px', background: done ? '#22c55e' : (pm?.color || 'var(--accent)'), transition: 'width 0.5s ease' }} />
                             </div>
                         </div>
                     );
@@ -793,7 +1359,7 @@ function GoalsScorecard({ goals }: { goals: GoalsData | null }) {
                     <CheckCircle size={32} style={{ color: '#22c55e', margin: '0 auto 12px' }} />
                     <h4 style={{ margin: '0 0 4px', color: '#22c55e' }}>All Goals Met!</h4>
                     <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                        Great work this week! Keep the momentum going. 🚀
+                        Great work this week! Keep the momentum going.
                     </p>
                 </div>
             )}

@@ -1,11 +1,13 @@
 // Vercel Cron: Publish Scheduled Posts
-// Runs every 5 minutes. Finds posts with status='SCHEDULED' and scheduled_for <= NOW(),
+// Runs daily at 7 AM UTC (Hobby plan limitation).
+// Finds posts with status='SCHEDULED' and scheduled_for <= NOW(),
 // then publishes them via the normal publishing pipeline.
-// Cron config in vercel.json: schedule "every 5 minutes"
+// Also archives old posts (>7 days) after publishing.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { publishToMultiplePlatforms } from '@/lib/integrations/meta-publisher';
+import { archiveOldPosts } from '@/lib/content-publisher';
 
 export async function GET(req: NextRequest) {
     // Verify cron secret (Vercel sets this header for cron jobs)
@@ -28,7 +30,9 @@ export async function GET(req: NextRequest) {
         `;
 
         if (result.rows.length === 0) {
-            return NextResponse.json({ message: 'No scheduled posts due', processed: 0 });
+            // Still run archive even if no posts to publish
+            const archived = await archiveOldPosts(7);
+            return NextResponse.json({ message: 'No scheduled posts due', processed: 0, archived });
         }
 
         const processed: { id: string; status: string; platforms: string[] }[] = [];
@@ -45,8 +49,9 @@ export async function GET(req: NextRequest) {
                 // Mark as publishing
                 await sql`UPDATE content_posts SET status = 'PUBLISHING' WHERE id = ${row.id}`;
 
-                // Publish to all platforms
-                const results = await publishToMultiplePlatforms(platforms, caption, mediaUrl, undefined, 'feed', gbpLocations);
+                // Publish to all platforms — use actual post_type from DB
+                const postType = row.post_type || 'feed';
+                const results = await publishToMultiplePlatforms(platforms, caption, mediaUrl, undefined, postType, gbpLocations);
 
                 const allSucceeded = results.every(r => r.success);
                 const someSucceeded = results.some(r => r.success);
@@ -84,9 +89,13 @@ export async function GET(req: NextRequest) {
             }
         }
 
+        // Archive old posts (>7 days)
+        const archived = await archiveOldPosts(7);
+
         return NextResponse.json({
             message: `Processed ${processed.length} scheduled post(s)`,
             processed,
+            archived,
         });
     } catch (error) {
         console.error('[cron] Error:', error);

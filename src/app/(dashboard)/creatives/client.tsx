@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { upload } from '@vercel/blob/client';
-import { Loader2, Download, Send, Image as ImageIcon, Upload, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Loader2, Download, Send, Image as ImageIcon, Upload, X, ChevronDown, ChevronUp, Trash2, CheckSquare, Square, RefreshCw, Search, Instagram, Facebook, MapPin } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,29 @@ interface GalleryImage {
     costTimeMs: number;
     createdBy: string;
     createdAt: string;
+    tags: string[];
+    publishedPlatforms: string[];
+    groupId: string | null;
+    variationIndex: number;
 }
+
+interface PrefillData {
+    prompt: string;
+    style: CreativeStyle;
+    aspectRatio: AspectRatio;
+    resolution: Resolution;
+    tags: string[];
+}
+
+interface UsageData {
+    currentMonth: {
+        total: number;
+        cost: number;
+        byResolution: Record<string, { count: number; cost: number }>;
+    };
+}
+
+const SUGGESTED_TAGS = ['microneedling', 'midface', 'hydrafacial', 'promo', 'before-after', 'skincare', 'lips', 'botox', 'dermal-filler', 'chemical-peel'];
 
 const STYLES: { value: CreativeStyle; label: string; desc: string }[] = [
     { value: 'photorealistic', label: 'Photorealistic', desc: 'Before/after, facility photos' },
@@ -101,10 +124,53 @@ const tabStyle = (active: boolean): React.CSSProperties => ({
     transition: 'all 0.2s',
 });
 
+const badgeStyle: React.CSSProperties = {
+    fontSize: '0.625rem',
+    padding: '2px 6px',
+    borderRadius: '4px',
+    background: 'rgba(255,255,255,0.06)',
+    color: 'var(--text-muted)',
+    textTransform: 'capitalize',
+};
+
+const tagBadgeStyle: React.CSSProperties = {
+    fontSize: '0.625rem',
+    padding: '2px 6px',
+    borderRadius: '4px',
+    background: 'rgba(56,189,248,0.1)',
+    color: 'rgba(56,189,248,0.8)',
+};
+
+const smallBtnStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+    padding: '6px 8px', borderRadius: '6px',
+    border: '1px solid rgba(255,255,255,0.1)',
+    background: 'rgba(0,0,0,0.2)',
+    color: 'var(--text-muted)',
+    fontSize: '0.6875rem',
+    cursor: 'pointer',
+};
+
+// ─── Platform icon helper ───────────────────────────────────────────────────
+
+function PlatformIcon({ platform, size = 10 }: { platform: string; size?: number }) {
+    const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', 'google-business': '#4285F4' };
+    if (platform === 'instagram') return <Instagram size={size} style={{ color: colors[platform] }} />;
+    if (platform === 'facebook') return <Facebook size={size} style={{ color: colors[platform] }} />;
+    if (platform === 'google-business') return <MapPin size={size} style={{ color: colors[platform] }} />;
+    return null;
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export default function CreativesClient() {
     const [activeTab, setActiveTab] = useState<'generate' | 'gallery'>('generate');
+    const [prefillData, setPrefillData] = useState<PrefillData | null>(null);
+
+    const handleRegenerate = (data: PrefillData) => {
+        setPrefillData(data);
+        setActiveTab('generate');
+    };
 
     return (
         <div style={{ paddingBottom: '80px' }}>
@@ -124,35 +190,49 @@ export default function CreativesClient() {
                 </button>
             </div>
 
-            {activeTab === 'generate' && <GenerateTab />}
-            {activeTab === 'gallery' && <GalleryTab />}
+            {activeTab === 'generate' && <GenerateTab prefill={prefillData} onPrefillConsumed={() => setPrefillData(null)} />}
+            {activeTab === 'gallery' && <GalleryTab onRegenerate={handleRegenerate} />}
         </div>
     );
 }
 
 // ─── Generate Tab ───────────────────────────────────────────────────────────
 
-function GenerateTab() {
+function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | null; onPrefillConsumed: () => void }) {
     const router = useRouter();
     const [prompt, setPrompt] = useState('');
     const [style, setStyle] = useState<CreativeStyle>('photorealistic');
     const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
     const [resolution, setResolution] = useState<Resolution>('2048');
+    const [variations, setVariations] = useState<number>(1);
+    const [tags, setTags] = useState<string[]>([]);
+    const [tagInput, setTagInput] = useState('');
     const [referenceUrl, setReferenceUrl] = useState('');
     const [refPreview, setRefPreview] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
     const refInputRef = useRef<HTMLInputElement>(null);
 
     const [generating, setGenerating] = useState(false);
-    const [taskId, setTaskId] = useState<string | null>(null);
-    const [recordId, setRecordId] = useState<string | null>(null);
     const [enhancedPrompt, setEnhancedPrompt] = useState<string | null>(null);
     const [showEnhanced, setShowEnhanced] = useState(false);
-    const [resultUrl, setResultUrl] = useState<string | null>(null);
+    const [resultUrls, setResultUrls] = useState<string[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [pollCount, setPollCount] = useState(0);
+    const [completedCount, setCompletedCount] = useState(0);
 
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // Apply prefill from regenerate
+    useEffect(() => {
+        if (prefill) {
+            setPrompt(prefill.prompt);
+            setStyle(prefill.style);
+            setAspectRatio(prefill.aspectRatio);
+            setResolution(prefill.resolution);
+            setTags(prefill.tags);
+            onPrefillConsumed();
+        }
+    }, [prefill, onPrefillConsumed]);
 
     // Cleanup polling on unmount
     useEffect(() => {
@@ -168,46 +248,69 @@ function GenerateTab() {
         }
     }, []);
 
-    // Start polling
-    const startPolling = useCallback((tId: string, rId: string) => {
+    // Start polling for multiple tasks
+    const startPolling = useCallback((tasks: { taskId: string; id: string }[]) => {
         stopPolling();
         let count = 0;
+        const completed = new Set<string>();
+        const urls: string[] = new Array(tasks.length).fill('');
+
         pollRef.current = setInterval(async () => {
             count++;
             setPollCount(count);
-            if (count > 36) { // 36 * 5s = 180s max
+            if (count > 60) { // 60 * 5s = 300s max for variations
                 stopPolling();
                 setGenerating(false);
-                setError('Generation timed out. Please try again.');
+                if (urls.filter(u => u).length > 0) {
+                    setResultUrls(urls.filter(u => u));
+                } else {
+                    setError('Generation timed out. Please try again.');
+                }
                 return;
             }
 
-            try {
-                const res = await fetch(`/api/creatives/generate?taskId=${tId}&id=${rId}`);
-                const data = await res.json();
-
-                if (data.status === 'success' && data.blobUrl) {
-                    stopPolling();
-                    setResultUrl(data.blobUrl);
-                    setGenerating(false);
-                } else if (data.status === 'failed') {
-                    stopPolling();
-                    setGenerating(false);
-                    setError(data.error || 'Generation failed');
+            for (let i = 0; i < tasks.length; i++) {
+                if (completed.has(tasks[i].id)) continue;
+                try {
+                    const res = await fetch(`/api/creatives/generate?taskId=${tasks[i].taskId}&id=${tasks[i].id}`);
+                    const data = await res.json();
+                    if (data.status === 'success' && data.blobUrl) {
+                        completed.add(tasks[i].id);
+                        urls[i] = data.blobUrl;
+                        setCompletedCount(completed.size);
+                    } else if (data.status === 'failed') {
+                        completed.add(tasks[i].id);
+                        setCompletedCount(completed.size);
+                    }
+                } catch {
+                    // Network error — keep polling
                 }
-            } catch {
-                // Network error — keep polling
+            }
+
+            if (completed.size === tasks.length) {
+                stopPolling();
+                setResultUrls(urls.filter(u => u));
+                setGenerating(false);
             }
         }, 5000);
     }, [stopPolling]);
+
+    const addTag = (t: string) => {
+        const cleaned = t.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+        if (cleaned && !tags.includes(cleaned)) {
+            setTags([...tags, cleaned]);
+        }
+        setTagInput('');
+    };
 
     const handleGenerate = async () => {
         if (!prompt.trim()) return;
         setGenerating(true);
         setError(null);
-        setResultUrl(null);
+        setResultUrls([]);
         setEnhancedPrompt(null);
         setPollCount(0);
+        setCompletedCount(0);
 
         try {
             const res = await fetch('/api/creatives/generate', {
@@ -218,6 +321,8 @@ function GenerateTab() {
                     style,
                     aspectRatio,
                     resolution,
+                    variations,
+                    tags,
                     referenceImageUrl: referenceUrl || undefined,
                 }),
             });
@@ -225,10 +330,11 @@ function GenerateTab() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed to start generation');
 
-            setTaskId(data.taskId);
-            setRecordId(data.id);
-            setEnhancedPrompt(data.enhancedPrompt);
-            startPolling(data.taskId, data.id);
+            setEnhancedPrompt(data.enhancedPrompt || data.tasks?.[0]?.enhancedPrompt);
+
+            // Handle single or multiple tasks
+            const tasks = data.tasks || [{ taskId: data.taskId, id: data.id }];
+            startPolling(tasks);
         } catch (err: unknown) {
             setGenerating(false);
             setError(err instanceof Error ? err.message : 'Failed to generate');
@@ -260,36 +366,34 @@ function GenerateTab() {
         if (refInputRef.current) refInputRef.current.value = '';
     };
 
-    const handleSendToPublish = () => {
-        if (resultUrl) {
-            router.push(`/publish?mediaUrl=${encodeURIComponent(resultUrl)}`);
-        }
+    const handleSendToPublish = (url: string) => {
+        router.push(`/publish?mediaUrl=${encodeURIComponent(url)}`);
     };
 
-    const handleDownload = async () => {
-        if (!resultUrl) return;
+    const handleDownload = async (url: string) => {
         try {
-            const res = await fetch(resultUrl);
+            const res = await fetch(url);
             const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
+            const blobUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
+            a.href = blobUrl;
             a.download = `chinup_creative_${Date.now()}.png`;
             a.click();
-            URL.revokeObjectURL(url);
+            URL.revokeObjectURL(blobUrl);
         } catch {
-            window.open(resultUrl, '_blank');
+            window.open(url, '_blank');
         }
     };
 
     const handleReset = () => {
-        setResultUrl(null);
-        setTaskId(null);
-        setRecordId(null);
+        setResultUrls([]);
         setEnhancedPrompt(null);
         setError(null);
         setPrompt('');
         setPollCount(0);
+        setCompletedCount(0);
+        setTags([]);
+        setVariations(1);
     };
 
     return (
@@ -305,6 +409,64 @@ function GenerateTab() {
                     style={inputStyle}
                     disabled={generating}
                 />
+            </div>
+
+            {/* Tags */}
+            <div style={cardStyle}>
+                <label style={labelStyle}>Tags (for gallery organization)</label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                    <input
+                        value={tagInput}
+                        onChange={e => setTagInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(tagInput); } }}
+                        placeholder="Add a tag..."
+                        style={{ ...inputStyle, flex: 1, padding: '8px 12px', fontSize: '0.8125rem' }}
+                        disabled={generating}
+                    />
+                    <button
+                        onClick={() => addTag(tagInput)}
+                        disabled={!tagInput.trim() || generating}
+                        style={{ ...pillStyle(false), padding: '8px 16px', opacity: tagInput.trim() ? 1 : 0.5 }}
+                    >
+                        Add
+                    </button>
+                </div>
+                {/* Active tags */}
+                {tags.length > 0 && (
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                        {tags.map(t => (
+                            <span key={t} style={{
+                                ...tagBadgeStyle,
+                                display: 'flex', alignItems: 'center', gap: '4px',
+                                padding: '4px 8px', fontSize: '0.75rem',
+                            }}>
+                                {t}
+                                <button onClick={() => setTags(tags.filter(x => x !== t))} style={{
+                                    background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, lineHeight: 1,
+                                }}>
+                                    <X size={10} />
+                                </button>
+                            </span>
+                        ))}
+                    </div>
+                )}
+                {/* Suggested tags */}
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                    {SUGGESTED_TAGS.filter(t => !tags.includes(t)).slice(0, 8).map(t => (
+                        <button
+                            key={t}
+                            onClick={() => addTag(t)}
+                            disabled={generating}
+                            style={{
+                                background: 'none', border: '1px dashed rgba(255,255,255,0.1)',
+                                borderRadius: '4px', padding: '2px 6px', fontSize: '0.625rem',
+                                color: 'var(--text-muted)', cursor: 'pointer', opacity: 0.7,
+                            }}
+                        >
+                            + {t}
+                        </button>
+                    ))}
+                </div>
             </div>
 
             {/* Style Selector */}
@@ -404,6 +566,31 @@ function GenerateTab() {
                 </div>
             </div>
 
+            {/* Variations Selector */}
+            <div style={cardStyle}>
+                <label style={labelStyle}>Number of Variations</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                    {[1, 2, 3].map(n => (
+                        <button
+                            key={n}
+                            onClick={() => setVariations(n)}
+                            disabled={generating}
+                            style={{
+                                ...pillStyle(variations === n),
+                                flex: 1,
+                            }}
+                        >
+                            {n === 1 ? '1 Image' : `${n} Variations`}
+                        </button>
+                    ))}
+                </div>
+                {variations > 1 && (
+                    <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '6px', opacity: 0.7 }}>
+                        Each variation uses a slightly different composition. Cost: {variations}x per generation.
+                    </p>
+                )}
+            </div>
+
             {/* Enhanced Prompt Preview */}
             {enhancedPrompt && (
                 <div style={cardStyle}>
@@ -426,7 +613,7 @@ function GenerateTab() {
             )}
 
             {/* Generate Button / Progress / Result */}
-            {!resultUrl && !generating && (
+            {resultUrls.length === 0 && !generating && (
                 <button
                     onClick={handleGenerate}
                     disabled={!prompt.trim() || generating}
@@ -445,7 +632,7 @@ function GenerateTab() {
                     }}
                 >
                     <ImageIcon size={18} />
-                    Generate Image
+                    Generate {variations === 1 ? 'Image' : `${variations} Variations`}
                 </button>
             )}
 
@@ -458,7 +645,7 @@ function GenerateTab() {
                     <Loader2 size={36} style={{ color: 'var(--accent)', animation: 'spin 1s linear infinite' }} />
                     <div style={{ textAlign: 'center' }}>
                         <p style={{ color: '#fff', fontSize: '0.9375rem', fontWeight: 500, marginBottom: '4px' }}>
-                            Generating your image...
+                            Generating {variations > 1 ? `${completedCount}/${variations} variations` : 'your image'}...
                         </p>
                         <p style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>
                             This usually takes 15-45 seconds ({pollCount * 5}s elapsed)
@@ -483,48 +670,41 @@ function GenerateTab() {
                 </div>
             )}
 
-            {resultUrl && (
+            {resultUrls.length > 0 && (
                 <div style={cardStyle}>
                     <div style={{
-                        borderRadius: '12px', overflow: 'hidden', marginBottom: '16px',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        display: 'grid',
+                        gridTemplateColumns: resultUrls.length > 1 ? `repeat(${Math.min(resultUrls.length, 3)}, 1fr)` : '1fr',
+                        gap: '12px', marginBottom: '16px',
                     }}>
-                        <img
-                            src={resultUrl}
-                            alt="Generated creative"
-                            style={{ width: '100%', display: 'block' }}
-                        />
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                        <button
-                            onClick={handleDownload}
-                            style={{
-                                ...pillStyle(false),
-                                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                                padding: '12px',
-                            }}
-                        >
-                            <Download size={16} /> Download
-                        </button>
-                        <button
-                            onClick={handleSendToPublish}
-                            style={{
-                                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                                padding: '12px', borderRadius: '10px', border: 'none',
-                                background: 'var(--accent)', color: '#000',
-                                fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer',
-                            }}
-                        >
-                            <Send size={16} /> Send to Publish
-                        </button>
+                        {resultUrls.map((url, i) => (
+                            <div key={i}>
+                                <div style={{
+                                    borderRadius: '12px', overflow: 'hidden', marginBottom: '8px',
+                                    border: '1px solid rgba(255,255,255,0.08)',
+                                }}>
+                                    <img src={url} alt={`Generated creative ${i + 1}`} style={{ width: '100%', display: 'block' }} />
+                                </div>
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                    <button onClick={() => handleDownload(url)} style={{ ...smallBtnStyle, flex: 1 }}>
+                                        <Download size={12} /> Save
+                                    </button>
+                                    <button
+                                        onClick={() => handleSendToPublish(url)}
+                                        style={{ ...smallBtnStyle, flex: 1, background: 'rgba(216,180,29,0.15)', color: 'var(--accent)', borderColor: 'rgba(216,180,29,0.3)' }}
+                                    >
+                                        <Send size={12} /> Publish
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
                     </div>
 
                     <button
                         onClick={handleReset}
                         style={{
                             ...pillStyle(false),
-                            width: '100%', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
                         }}
                     >
                         <ImageIcon size={14} /> Generate Another
@@ -537,24 +717,109 @@ function GenerateTab() {
 
 // ─── Gallery Tab ────────────────────────────────────────────────────────────
 
-function GalleryTab() {
+function GalleryTab({ onRegenerate }: { onRegenerate: (data: PrefillData) => void }) {
     const router = useRouter();
+    const { data: session } = useSession();
+    const isAdmin = (session?.user as Record<string, unknown>)?.isAdmin === true;
+
     const [images, setImages] = useState<GalleryImage[]>([]);
     const [loading, setLoading] = useState(true);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [activeTag, setActiveTag] = useState<string | null>(null);
+    const [availableTags, setAvailableTags] = useState<{ tag: string; count: number }[]>([]);
+    const [selectMode, setSelectMode] = useState(false);
+    const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [deleting, setDeleting] = useState(false);
+    const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+    const [usage, setUsage] = useState<UsageData | null>(null);
+
+    const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const fetchImages = useCallback(async (search?: string, tag?: string) => {
+        try {
+            const params = new URLSearchParams();
+            if (search) params.set('search', search);
+            if (tag) params.set('tag', tag);
+            const res = await fetch(`/api/creatives/history?${params}`);
+            const data = await res.json();
+            if (data.images) setImages(data.images);
+        } catch {
+            // Empty gallery
+        }
+    }, []);
 
     useEffect(() => {
         (async () => {
+            await fetchImages();
+            // Fetch tags
             try {
-                const res = await fetch('/api/creatives/history');
+                const res = await fetch('/api/creatives/tags');
                 const data = await res.json();
-                if (data.images) setImages(data.images);
-            } catch {
-                // Empty gallery
-            } finally {
-                setLoading(false);
+                if (data.tags) setAvailableTags(data.tags);
+            } catch { /* no tags */ }
+            // Fetch usage (admin only)
+            if (isAdmin) {
+                try {
+                    const res = await fetch('/api/creatives/usage');
+                    const data = await res.json();
+                    setUsage(data);
+                } catch { /* no usage data */ }
             }
+            setLoading(false);
         })();
-    }, []);
+    }, [fetchImages, isAdmin]);
+
+    const handleSearch = (q: string) => {
+        setSearchQuery(q);
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = setTimeout(() => {
+            fetchImages(q, activeTag || undefined);
+        }, 300);
+    };
+
+    const handleTagFilter = (tag: string) => {
+        const newTag = activeTag === tag ? null : tag;
+        setActiveTag(newTag);
+        fetchImages(searchQuery || undefined, newTag || undefined);
+    };
+
+    const toggleSelect = (id: string) => {
+        const next = new Set(selected);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setSelected(next);
+    };
+
+    const handleDelete = async (ids: string[]) => {
+        if (!confirm(`Delete ${ids.length} creative${ids.length > 1 ? 's' : ''} permanently?`)) return;
+        setDeleting(true);
+        try {
+            const res = await fetch('/api/creatives/history', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids }),
+            });
+            if (res.ok) {
+                setImages(prev => prev.filter(img => !ids.includes(img.id)));
+                setSelected(new Set());
+                setSelectMode(false);
+            }
+        } catch {
+            // Delete failed
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    const handleRegenerate = (img: GalleryImage) => {
+        onRegenerate({
+            prompt: img.prompt,
+            style: img.style as CreativeStyle,
+            aspectRatio: img.aspectRatio as AspectRatio,
+            resolution: img.resolution as Resolution,
+            tags: img.tags || [],
+        });
+    };
 
     if (loading) {
         return (
@@ -564,7 +829,7 @@ function GalleryTab() {
         );
     }
 
-    if (images.length === 0) {
+    if (images.length === 0 && !searchQuery && !activeTag) {
         return (
             <div style={{
                 ...cardStyle,
@@ -580,81 +845,317 @@ function GalleryTab() {
         );
     }
 
-    return (
-        <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-            gap: '16px',
+    // Group images by group_id for variation stacking
+    type GroupOrSingle = { type: 'group'; groupId: string; images: GalleryImage[] } | { type: 'single'; image: GalleryImage };
+    const items: GroupOrSingle[] = [];
+    const grouped = new Map<string, GalleryImage[]>();
+    for (const img of images) {
+        if (img.groupId) {
+            if (!grouped.has(img.groupId)) grouped.set(img.groupId, []);
+            grouped.get(img.groupId)!.push(img);
+        } else {
+            items.push({ type: 'single', image: img });
+        }
+    }
+    for (const [groupId, imgs] of grouped) {
+        // Insert group at the position of the first image
+        const sortedImgs = imgs.sort((a, b) => a.variationIndex - b.variationIndex);
+        items.push({ type: 'group', groupId, images: sortedImgs });
+    }
+    // Sort by most recent first
+    items.sort((a, b) => {
+        const aDate = a.type === 'single' ? a.image.createdAt : a.images[0].createdAt;
+        const bDate = b.type === 'single' ? b.image.createdAt : b.images[0].createdAt;
+        return new Date(bDate).getTime() - new Date(aDate).getTime();
+    });
+
+    const renderCard = (img: GalleryImage, isInGroup = false) => (
+        <div key={img.id} style={{
+            ...cardStyle,
+            padding: 0,
+            overflow: 'hidden',
+            transition: 'border-color 0.2s',
+            borderColor: selected.has(img.id) ? 'var(--accent)' : undefined,
+            position: 'relative',
+            minWidth: isInGroup ? '200px' : undefined,
         }}>
-            {images.map(img => (
-                <div key={img.id} style={{
-                    ...cardStyle,
-                    padding: 0,
-                    overflow: 'hidden',
-                    transition: 'border-color 0.2s',
+            {/* Select checkbox overlay */}
+            {selectMode && (
+                <button
+                    onClick={() => toggleSelect(img.id)}
+                    style={{
+                        position: 'absolute', top: 8, left: 8, zIndex: 2,
+                        background: selected.has(img.id) ? 'var(--accent)' : 'rgba(0,0,0,0.6)',
+                        border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px',
+                        width: 24, height: 24, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff',
+                    }}
+                >
+                    {selected.has(img.id) ? <CheckSquare size={14} /> : <Square size={14} />}
+                </button>
+            )}
+            {/* Published platforms overlay */}
+            {img.publishedPlatforms && img.publishedPlatforms.length > 0 && (
+                <div style={{
+                    position: 'absolute', top: 8, right: 8, zIndex: 2,
+                    display: 'flex', gap: '3px', background: 'rgba(0,0,0,0.7)',
+                    padding: '3px 6px', borderRadius: '6px',
                 }}>
-                    <div style={{ position: 'relative', aspectRatio: '1', overflow: 'hidden' }}>
-                        <img
-                            src={img.blobUrl}
-                            alt={img.prompt}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    {img.publishedPlatforms.map(p => (
+                        <PlatformIcon key={p} platform={p} size={11} />
+                    ))}
+                </div>
+            )}
+            <div style={{ position: 'relative', aspectRatio: '1', overflow: 'hidden' }}>
+                <img
+                    src={img.blobUrl}
+                    alt={img.prompt}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    onClick={() => selectMode ? toggleSelect(img.id) : undefined}
+                />
+            </div>
+            <div style={{ padding: '12px' }}>
+                <p style={{
+                    fontSize: '0.8125rem', color: 'var(--text-secondary)', lineHeight: '1.4',
+                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const,
+                    overflow: 'hidden', margin: '0 0 8px 0',
+                }}>
+                    {img.prompt}
+                </p>
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                    <span style={badgeStyle}>{img.style}</span>
+                    <span style={badgeStyle}>{img.aspectRatio}</span>
+                    <span style={badgeStyle}>{img.resolution}px</span>
+                </div>
+                {/* Tags */}
+                {img.tags && img.tags.length > 0 && (
+                    <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                        {img.tags.map(t => (
+                            <span key={t} style={tagBadgeStyle}>{t}</span>
+                        ))}
+                    </div>
+                )}
+                <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                        onClick={() => {
+                            const a = document.createElement('a');
+                            a.href = img.blobUrl;
+                            a.download = `chinup_creative_${img.id}.png`;
+                            a.target = '_blank';
+                            a.click();
+                        }}
+                        style={{ ...smallBtnStyle, flex: 1 }}
+                    >
+                        <Download size={11} /> Save
+                    </button>
+                    <button
+                        onClick={() => router.push(`/publish?mediaUrl=${encodeURIComponent(img.blobUrl)}&creativeId=${img.id}`)}
+                        style={{ ...smallBtnStyle, flex: 1, background: 'rgba(216,180,29,0.15)', color: 'var(--accent)', borderColor: 'rgba(216,180,29,0.3)' }}
+                    >
+                        <Send size={11} /> Publish
+                    </button>
+                    <button
+                        onClick={() => handleRegenerate(img)}
+                        style={{ ...smallBtnStyle }}
+                        title="Regenerate with same settings"
+                    >
+                        <RefreshCw size={11} />
+                    </button>
+                    {!selectMode && (
+                        <button
+                            onClick={() => handleDelete([img.id])}
+                            style={{ ...smallBtnStyle, color: 'rgba(239,68,68,0.7)' }}
+                            title="Delete"
+                        >
+                            <Trash2 size={11} />
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+
+    return (
+        <div>
+            {/* Admin Usage Banner */}
+            {isAdmin && usage && (
+                <div style={{
+                    ...cardStyle,
+                    padding: '14px 20px',
+                    marginBottom: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: usage.currentMonth.cost > 20 ? 'rgba(239,68,68,0.06)' : 'rgba(255,255,255,0.03)',
+                    borderColor: usage.currentMonth.cost > 20 ? 'rgba(239,68,68,0.2)' : undefined,
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                            This month: <strong style={{ color: '#fff' }}>{usage.currentMonth.total}</strong> generations
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>|</span>
+                        <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                            Est. cost: <strong style={{ color: usage.currentMonth.cost > 20 ? '#ef4444' : '#22c55e' }}>${usage.currentMonth.cost.toFixed(2)}</strong>
+                        </span>
+                    </div>
+                    {usage.currentMonth.cost > 20 && (
+                        <span style={{
+                            fontSize: '0.6875rem', padding: '2px 8px', borderRadius: '4px',
+                            background: 'rgba(239,68,68,0.15)', color: '#ef4444',
+                        }}>
+                            High usage
+                        </span>
+                    )}
+                </div>
+            )}
+
+            {/* Search & Filter Bar */}
+            <div style={{ marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div style={{ flex: 1, position: 'relative' }}>
+                        <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                        <input
+                            value={searchQuery}
+                            onChange={e => handleSearch(e.target.value)}
+                            placeholder="Search prompts..."
+                            style={{ ...inputStyle, paddingLeft: '34px', padding: '10px 12px 10px 34px', fontSize: '0.8125rem' }}
                         />
                     </div>
-                    <div style={{ padding: '12px' }}>
-                        <p style={{
-                            fontSize: '0.8125rem', color: 'var(--text-secondary)', lineHeight: '1.4',
-                            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const,
-                            overflow: 'hidden', margin: '0 0 8px 0',
-                        }}>
-                            {img.prompt}
-                        </p>
-                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '10px' }}>
-                            <span style={badgeStyle}>{img.style}</span>
-                            <span style={badgeStyle}>{img.aspectRatio}</span>
-                            <span style={badgeStyle}>{img.resolution}px</span>
-                        </div>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                            <button
-                                onClick={() => {
-                                    const a = document.createElement('a');
-                                    a.href = img.blobUrl;
-                                    a.download = `chinup_creative_${img.id}.png`;
-                                    a.target = '_blank';
-                                    a.click();
-                                }}
-                                style={{ ...smallBtnStyle, flex: 1 }}
-                            >
-                                <Download size={12} /> Save
-                            </button>
-                            <button
-                                onClick={() => router.push(`/publish?mediaUrl=${encodeURIComponent(img.blobUrl)}`)}
-                                style={{ ...smallBtnStyle, flex: 1, background: 'rgba(216,180,29,0.15)', color: 'var(--accent)', borderColor: 'rgba(216,180,29,0.3)' }}
-                            >
-                                <Send size={12} /> Publish
-                            </button>
-                        </div>
-                    </div>
+                    <button
+                        onClick={() => { setSelectMode(!selectMode); setSelected(new Set()); }}
+                        style={{
+                            ...pillStyle(selectMode),
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            padding: '10px 16px',
+                        }}
+                    >
+                        <CheckSquare size={14} />
+                        {selectMode ? 'Cancel' : 'Select'}
+                    </button>
                 </div>
-            ))}
+                {/* Tag filter pills */}
+                {availableTags.length > 0 && (
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {availableTags.map(t => (
+                            <button
+                                key={t.tag}
+                                onClick={() => handleTagFilter(t.tag)}
+                                style={{
+                                    padding: '4px 10px', borderRadius: '6px', fontSize: '0.6875rem',
+                                    border: activeTag === t.tag ? '1.5px solid rgba(56,189,248,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                                    background: activeTag === t.tag ? 'rgba(56,189,248,0.1)' : 'transparent',
+                                    color: activeTag === t.tag ? 'rgba(56,189,248,0.9)' : 'var(--text-muted)',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                {t.tag} ({t.count})
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Gallery Grid */}
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+                gap: '16px',
+            }}>
+                {items.map(item => {
+                    if (item.type === 'single') {
+                        return renderCard(item.image);
+                    }
+                    // Variation group
+                    const isExpanded = expandedGroup === item.groupId;
+                    const first = item.images[0];
+                    if (isExpanded) {
+                        return (
+                            <div key={item.groupId} style={{
+                                gridColumn: `span ${Math.min(item.images.length, 3)}`,
+                                ...cardStyle, padding: '12px',
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                        {item.images.length} variations
+                                    </span>
+                                    <button
+                                        onClick={() => setExpandedGroup(null)}
+                                        style={{ ...smallBtnStyle, fontSize: '0.625rem' }}
+                                    >
+                                        Collapse
+                                    </button>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(item.images.length, 3)}, 1fr)`, gap: '10px' }}>
+                                    {item.images.map(img => renderCard(img, true))}
+                                </div>
+                            </div>
+                        );
+                    }
+                    // Collapsed group — show first image with indicator
+                    return (
+                        <div key={item.groupId} style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setExpandedGroup(item.groupId)}>
+                            {renderCard(first)}
+                            <div style={{
+                                position: 'absolute', bottom: 56, left: '50%', transform: 'translateX(-50%)',
+                                background: 'rgba(0,0,0,0.8)', borderRadius: '12px',
+                                padding: '4px 12px', fontSize: '0.6875rem', color: '#fff',
+                                display: 'flex', alignItems: 'center', gap: '4px',
+                            }}>
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                                1/{item.images.length}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {/* No results */}
+            {images.length === 0 && (searchQuery || activeTag) && (
+                <div style={{
+                    ...cardStyle,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '48px 24px', gap: '8px',
+                }}>
+                    <Search size={32} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>No results found</p>
+                    <button onClick={() => { setSearchQuery(''); setActiveTag(null); fetchImages(); }} style={{ ...pillStyle(false), marginTop: '8px' }}>
+                        Clear filters
+                    </button>
+                </div>
+            )}
+
+            {/* Floating selection action bar */}
+            {selectMode && selected.size > 0 && (
+                <div style={{
+                    position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+                    background: 'rgba(15,15,30,0.95)', border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '14px', padding: '12px 24px',
+                    display: 'flex', alignItems: 'center', gap: '16px',
+                    backdropFilter: 'blur(12px)', zIndex: 100,
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                }}>
+                    <span style={{ fontSize: '0.875rem', color: '#fff' }}>
+                        {selected.size} selected
+                    </span>
+                    <button
+                        onClick={() => handleDelete(Array.from(selected))}
+                        disabled={deleting}
+                        style={{
+                            padding: '8px 20px', borderRadius: '8px', border: 'none',
+                            background: '#ef4444', color: '#fff', fontSize: '0.8125rem',
+                            fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                        }}
+                    >
+                        {deleting ? <Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Trash2 size={14} />}
+                        Delete All
+                    </button>
+                    <button
+                        onClick={() => { setSelectMode(false); setSelected(new Set()); }}
+                        style={{ ...smallBtnStyle, padding: '8px 16px', fontSize: '0.8125rem' }}
+                    >
+                        Cancel
+                    </button>
+                </div>
+            )}
         </div>
     );
 }
-
-const badgeStyle: React.CSSProperties = {
-    fontSize: '0.625rem',
-    padding: '2px 6px',
-    borderRadius: '4px',
-    background: 'rgba(255,255,255,0.06)',
-    color: 'var(--text-muted)',
-    textTransform: 'capitalize',
-};
-
-const smallBtnStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
-    padding: '6px 8px', borderRadius: '6px',
-    border: '1px solid rgba(255,255,255,0.1)',
-    background: 'rgba(0,0,0,0.2)',
-    color: 'var(--text-muted)',
-    fontSize: '0.6875rem',
-    cursor: 'pointer',
-};

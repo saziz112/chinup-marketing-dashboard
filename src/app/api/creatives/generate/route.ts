@@ -1,6 +1,6 @@
 /**
  * /api/creatives/generate
- * POST: Create a new image generation task
+ * POST: Create image generation task(s) — supports 1-3 variations
  * GET:  Poll task status (returns image URL when done)
  */
 
@@ -33,12 +33,20 @@ async function ensureCreativeImagesTable() {
                 completed_at TIMESTAMPTZ
             )
         `;
+        await sql`ALTER TABLE creative_images ADD COLUMN IF NOT EXISTS group_id VARCHAR(100)`;
+        await sql`ALTER TABLE creative_images ADD COLUMN IF NOT EXISTS variation_index INT DEFAULT 0`;
     } catch {
         // Table may already exist
     }
 }
 
-// POST: Start image generation
+const VARIATION_SUFFIXES = [
+    '',
+    ', alternative composition and angle',
+    ', different perspective and framing',
+];
+
+// POST: Start image generation (1-3 variations)
 export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.email) {
@@ -50,26 +58,67 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { prompt, style, aspectRatio, resolution, referenceImageUrl } = body;
+    const { prompt, style, aspectRatio, resolution, referenceImageUrl, variations = 1, tags = [] } = body;
 
     if (!prompt || !style || !aspectRatio || !resolution) {
         return NextResponse.json({ error: 'Missing required fields: prompt, style, aspectRatio, resolution' }, { status: 400 });
     }
 
+    const numVariations = Math.min(Math.max(1, Number(variations)), 3);
+
     try {
         await ensureCreativeImagesTable();
 
-        const generateReq: GenerateRequest = { prompt, style, aspectRatio, resolution, referenceImageUrl };
-        const { taskId, enhancedPrompt } = await createImageTask(generateReq);
+        const groupId = numVariations > 1 ? `group_${Date.now()}_${Math.random().toString(36).substr(2, 6)}` : null;
+        const tasks: { id: string; taskId: string; enhancedPrompt: string }[] = [];
 
-        const id = `creative_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        for (let i = 0; i < numVariations; i++) {
+            const varPrompt = i === 0 ? prompt : prompt + VARIATION_SUFFIXES[i];
+            const generateReq: GenerateRequest = { prompt: varPrompt, style, aspectRatio, resolution, referenceImageUrl };
 
-        await sql`
-            INSERT INTO creative_images (id, prompt, enhanced_prompt, style, aspect_ratio, resolution, reference_image_url, task_id, status, created_by)
-            VALUES (${id}, ${prompt}, ${enhancedPrompt}, ${style}, ${aspectRatio}, ${resolution}, ${referenceImageUrl || null}, ${taskId}, 'pending', ${session.user.email})
-        `;
+            const { taskId, enhancedPrompt } = await createImageTask(generateReq);
+            const id = `creative_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
 
-        return NextResponse.json({ id, taskId, enhancedPrompt, status: 'pending' });
+            await sql`
+                INSERT INTO creative_images (id, prompt, enhanced_prompt, style, aspect_ratio, resolution, reference_image_url, task_id, status, created_by, group_id, variation_index)
+                VALUES (${id}, ${prompt}, ${enhancedPrompt}, ${style}, ${aspectRatio}, ${resolution}, ${referenceImageUrl || null}, ${taskId}, 'pending', ${session.user.email}, ${groupId}, ${i})
+            `;
+
+            // Insert tags
+            const tagArr: string[] = Array.isArray(tags) ? tags : [];
+            for (const tag of tagArr) {
+                const cleaned = String(tag).trim().toLowerCase();
+                if (cleaned) {
+                    try {
+                        await sql`INSERT INTO creative_image_tags (image_id, tag) VALUES (${id}, ${cleaned}) ON CONFLICT DO NOTHING`;
+                    } catch { /* ignore duplicate */ }
+                }
+            }
+
+            tasks.push({ id, taskId, enhancedPrompt });
+
+            // Small delay between API calls to avoid rate limiting
+            if (i < numVariations - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+
+        if (numVariations === 1) {
+            // Single image — backward compatible response
+            return NextResponse.json({
+                id: tasks[0].id,
+                taskId: tasks[0].taskId,
+                enhancedPrompt: tasks[0].enhancedPrompt,
+                status: 'pending',
+            });
+        }
+
+        // Multiple variations
+        return NextResponse.json({
+            tasks: tasks.map(t => ({ id: t.id, taskId: t.taskId, enhancedPrompt: t.enhancedPrompt })),
+            groupId,
+            status: 'pending',
+        });
     } catch (error: unknown) {
         console.error('Creatives generate error:', error);
         const message = error instanceof Error ? error.message : 'Generation failed';
@@ -97,7 +146,6 @@ export async function GET(req: NextRequest) {
 
         if (taskStatus.status === 'success') {
             if (!taskStatus.imageUrl) {
-                // Success but no image URL extracted — log and return error
                 console.error('[creatives/generate GET] Success but no imageUrl! Full status:', JSON.stringify(taskStatus));
                 return NextResponse.json({
                     status: 'failed',
