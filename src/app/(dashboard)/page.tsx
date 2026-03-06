@@ -50,6 +50,7 @@ export default function OverviewPage() {
     const [igDataRaw, setIgDataRaw] = useState<any>(null);
     const [fbDataRaw, setFbDataRaw] = useState<any>(null);
     const [socialLoading, setSocialLoading] = useState(true);
+    const [googleRating, setGoogleRating] = useState<{ rating: string; reviews: string; loading: boolean }>({ rating: '--', reviews: '--', loading: true });
 
     const user = session?.user as Record<string, unknown> | undefined;
     const isAdmin = user?.isAdmin === true;
@@ -67,51 +68,88 @@ export default function OverviewPage() {
                     leads: { val: leadsData.count?.toString() || '0', loading: false },
                 });
             } catch (error) {
-                console.error('Failed to fetch metrics:', error);
+                console.error('[Overview] Failed to fetch leads:', error);
                 setMetrics({
                     leads: { val: 'Error', loading: false },
                 });
             }
         };
 
+        const fetchGoogleRating = async () => {
+            try {
+                const res = await fetch('/api/reputation/reviews?location=all');
+                const data = await res.json();
+                if (data.metrics) {
+                    setGoogleRating({
+                        rating: data.metrics.averageRating?.toFixed(1) || '--',
+                        reviews: formatNumber(data.metrics.totalReviews || 0),
+                        loading: false,
+                    });
+                } else {
+                    setGoogleRating(prev => ({ ...prev, loading: false }));
+                }
+            } catch (error) {
+                console.error('[Overview] Failed to fetch Google rating:', error);
+                setGoogleRating(prev => ({ ...prev, loading: false }));
+            }
+        };
+
+        const safeFetch = async (url: string, label: string) => {
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (!res.ok) {
+                    console.warn(`[Overview] ${label} returned ${res.status}:`, data.error || 'Unknown error');
+                }
+                return data;
+            } catch (err) {
+                console.error(`[Overview] ${label} fetch failed:`, err);
+                return null;
+            }
+        };
+
         const fetchSocial = async () => {
             setSocialLoading(true);
-            const [igRes, fbRes, ytRes] = await Promise.allSettled([
-                fetch(`/api/organic/instagram?period=${period}`).then(r => r.json()),
-                fetch(`/api/organic/facebook?period=${period}`).then(r => r.json()),
-                fetch(`/api/organic/youtube?period=${period}`).then(r => r.json()),
+
+            const [igData, fbData, ytData] = await Promise.all([
+                safeFetch(`/api/organic/instagram?period=${period}`, 'Instagram'),
+                safeFetch(`/api/organic/facebook?period=${period}`, 'Facebook'),
+                safeFetch(`/api/organic/youtube?period=${period}`, 'YouTube'),
             ]);
 
             setPlatforms(prev => {
                 const updated = { ...prev };
 
-                if (igRes.status === 'fulfilled' && igRes.value.configured && !igRes.value.error) {
-                    const s = igRes.value.summary;
-                    setIgDataRaw(igRes.value);
+                if (igData?.configured && igData?.summary) {
+                    setIgDataRaw(igData);
                     updated.Instagram = {
-                        followers: formatNumber(s.followers),
-                        engagement: `${s.engagementRate}%`,
+                        followers: formatNumber(igData.summary.followers),
+                        engagement: `${igData.summary.engagementRate}%`,
                         configured: true,
                     };
+                } else if (igData) {
+                    console.warn('[Overview] Instagram not usable:', igData.error || 'No summary data');
                 }
 
-                if (fbRes.status === 'fulfilled' && fbRes.value.configured && !fbRes.value.error) {
-                    const s = fbRes.value.summary;
-                    setFbDataRaw(fbRes.value);
+                if (fbData?.configured && fbData?.summary) {
+                    setFbDataRaw(fbData);
                     updated.Facebook = {
-                        followers: formatNumber(s.followers),
-                        engagement: `${s.engagementRate}%`,
+                        followers: formatNumber(fbData.summary.followers),
+                        engagement: `${fbData.summary.engagementRate}%`,
                         configured: true,
                     };
+                } else if (fbData) {
+                    console.warn('[Overview] Facebook not usable:', fbData.error || 'No summary data');
                 }
 
-                if (ytRes.status === 'fulfilled' && ytRes.value.configured && !ytRes.value.error) {
-                    const s = ytRes.value.summary;
+                if (ytData?.configured && ytData?.summary) {
                     updated.YouTube = {
-                        followers: formatNumber(s.subscribers),
-                        engagement: `${s.engagementRate}%`,
+                        followers: formatNumber(ytData.summary.subscribers),
+                        engagement: `${ytData.summary.engagementRate}%`,
                         configured: true,
                     };
+                } else if (ytData) {
+                    console.warn('[Overview] YouTube not usable:', ytData.error || 'No summary data');
                 }
 
                 return updated;
@@ -120,6 +158,7 @@ export default function OverviewPage() {
         };
 
         fetchMetrics();
+        fetchGoogleRating();
         fetchSocial();
     }, [period]);
 
@@ -255,8 +294,8 @@ export default function OverviewPage() {
                 </div>
                 <div className="metric-card">
                     <div className="label">Google Rating</div>
-                    <div className="value">--</div>
-                    <div className="change">Reviews</div>
+                    <div className="value">{googleRating.loading ? <Skeleton className="h-9 w-16" /> : <>{googleRating.rating} <span style={{ fontSize: '0.75em', color: '#eab308' }}>&#9733;</span></>}</div>
+                    <div className="change">{googleRating.loading ? '' : `${googleRating.reviews} reviews`}</div>
                 </div>
             </div>
 
