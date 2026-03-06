@@ -1,56 +1,60 @@
 /**
  * Google Business Profile Publisher
- * Posts to GBP for all 3 Chin Up locations.
- * Reuses the same Google Cloud project as Google Ads (same client ID/secret).
+ * Posts to GBP for all 3 Chin Up locations via GoHighLevel v2 Social Planner API.
+ * GHL acts as intermediary — it has approved Google API access for GBP posting.
  */
 
-const GBP_LOCATIONS: Record<string, { name: string; envKey: string }> = {
-    decatur: { name: 'Decatur', envKey: 'GOOGLE_BUSINESS_LOCATION_DECATUR' },
-    smyrna: { name: 'Smyrna/Vinings', envKey: 'GOOGLE_BUSINESS_LOCATION_SMYRNA' },
-    kennesaw: { name: 'Kennesaw', envKey: 'GOOGLE_BUSINESS_LOCATION_KENNESAW' },
+const GHL_V2_BASE = 'https://services.leadconnectorhq.com';
+const GHL_API_VERSION = '2021-07-28';
+
+const GBP_LOCATIONS: Record<string, {
+    name: string;
+    pitEnvKey: string;
+    ghlLocationEnvKey: string;
+    gbpAccountEnvKey: string;
+}> = {
+    decatur: {
+        name: 'Decatur',
+        pitEnvKey: 'GHL_PIT_DECATUR',
+        ghlLocationEnvKey: 'GHL_LOCATION_ID_DECATUR',
+        gbpAccountEnvKey: 'GHL_GBP_ACCOUNT_DECATUR',
+    },
+    smyrna: {
+        name: 'Smyrna/Vinings',
+        pitEnvKey: 'GHL_PIT_SMYRNA',
+        ghlLocationEnvKey: 'GHL_LOCATION_ID_SMYRNA',
+        gbpAccountEnvKey: 'GHL_GBP_ACCOUNT_SMYRNA',
+    },
+    kennesaw: {
+        name: 'Kennesaw',
+        pitEnvKey: 'GHL_PIT_KENNESAW',
+        ghlLocationEnvKey: 'GHL_LOCATION_ID_KENNESAW',
+        gbpAccountEnvKey: 'GHL_GBP_ACCOUNT_KENNESAW',
+    },
 };
 
 export function isGBPConfigured(): boolean {
-    return Boolean(
-        process.env.GOOGLE_ADS_CLIENT_ID &&
-        process.env.GOOGLE_ADS_CLIENT_SECRET &&
-        process.env.GOOGLE_BUSINESS_REFRESH_TOKEN &&
-        process.env.GOOGLE_BUSINESS_ACCOUNT_ID
+    // Need at least one location with PIT + GBP account ID
+    return Object.values(GBP_LOCATIONS).some(config =>
+        process.env[config.pitEnvKey] &&
+        process.env[config.ghlLocationEnvKey] &&
+        process.env[config.gbpAccountEnvKey] &&
+        process.env.GHL_USER_ID
     );
 }
 
 export function getConfiguredLocations(): { key: string; name: string; locationId: string }[] {
     return Object.entries(GBP_LOCATIONS)
-        .filter(([, config]) => process.env[config.envKey])
+        .filter(([, config]) =>
+            process.env[config.pitEnvKey] &&
+            process.env[config.ghlLocationEnvKey] &&
+            process.env[config.gbpAccountEnvKey]
+        )
         .map(([key, config]) => ({
             key,
             name: config.name,
-            locationId: process.env[config.envKey]!,
+            locationId: process.env[config.ghlLocationEnvKey]!,
         }));
-}
-
-async function getAccessToken(): Promise<string> {
-    const params = new URLSearchParams({
-        client_id: process.env.GOOGLE_ADS_CLIENT_ID!,
-        client_secret: process.env.GOOGLE_ADS_CLIENT_SECRET!,
-        refresh_token: process.env.GOOGLE_BUSINESS_REFRESH_TOKEN!,
-        grant_type: 'refresh_token',
-    });
-
-    const res = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString(),
-        cache: 'no-store',
-    });
-
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`GBP token refresh failed: ${text}`);
-    }
-
-    const data = await res.json();
-    return data.access_token;
 }
 
 export interface GBPPublishResult {
@@ -69,14 +73,13 @@ export async function publishToGoogleBusiness(
     if (!isGBPConfigured()) {
         return locationKeys.map(key => ({
             success: false,
-            error: 'Google Business Profile not configured',
+            error: 'Google Business Profile not configured — add GHL v2 PIT tokens',
             locationKey: key,
             locationName: GBP_LOCATIONS[key]?.name || key,
         }));
     }
 
-    const accountId = process.env.GOOGLE_BUSINESS_ACCOUNT_ID!;
-    const accessToken = await getAccessToken();
+    const userId = process.env.GHL_USER_ID!;
 
     const tasks = locationKeys.map(async (key): Promise<GBPPublishResult> => {
         const config = GBP_LOCATIONS[key];
@@ -84,30 +87,39 @@ export async function publishToGoogleBusiness(
             return { success: false, error: `Unknown location: ${key}`, locationKey: key, locationName: key };
         }
 
-        const locationId = process.env[config.envKey];
-        if (!locationId) {
-            return { success: false, error: `Location ${config.name} not configured`, locationKey: key, locationName: config.name };
+        const pit = process.env[config.pitEnvKey];
+        const ghlLocationId = process.env[config.ghlLocationEnvKey];
+        const gbpAccountId = process.env[config.gbpAccountEnvKey];
+
+        if (!pit || !ghlLocationId || !gbpAccountId) {
+            return { success: false, error: `Location ${config.name} not fully configured`, locationKey: key, locationName: config.name };
         }
 
         try {
-            const body: Record<string, unknown> = {
-                languageCode: 'en-US',
-                summary,
-                topicType: 'STANDARD',
-            };
-
+            const media: { url: string; type: string }[] = [];
             if (mediaUrl) {
-                body.media = [{
-                    mediaFormat: 'PHOTO',
-                    sourceUrl: mediaUrl,
-                }];
+                media.push({ url: mediaUrl, type: 'image/jpeg' });
             }
 
-            const url = `https://mybusiness.googleapis.com/v4/accounts/${accountId}/locations/${locationId}/localPosts`;
+            const body: Record<string, unknown> = {
+                accountIds: [gbpAccountId],
+                userId,
+                type: 'post',
+                summary,
+                media,
+                gmbPostDetails: {
+                    gmbEventType: 'STANDARD',
+                    actionType: 'learn_more',
+                    url: 'https://chinupaesthetics.com',
+                },
+            };
+
+            const url = `${GHL_V2_BASE}/social-media-posting/${ghlLocationId}/posts`;
             const res = await fetch(url, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${accessToken}`,
+                    'Authorization': `Bearer ${pit}`,
+                    'Version': GHL_API_VERSION,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
@@ -116,11 +128,12 @@ export async function publishToGoogleBusiness(
             if (!res.ok) {
                 const errText = await res.text();
                 console.error(`[GBP] Failed to post to ${config.name}:`, errText);
-                return { success: false, error: `API error: ${res.status} ${errText.slice(0, 200)}`, locationKey: key, locationName: config.name };
+                return { success: false, error: `GHL API error: ${res.status} ${errText.slice(0, 200)}`, locationKey: key, locationName: config.name };
             }
 
             const data = await res.json();
-            const postId = data.name?.split('/').pop() || data.name;
+            const postId = data.postId || data.id || data.results?.id;
+            console.log(`[GBP] Posted to ${config.name}:`, postId);
             return { success: true, postId, locationKey: key, locationName: config.name };
         } catch (err) {
             const msg = err instanceof Error ? err.message : 'Unknown error';

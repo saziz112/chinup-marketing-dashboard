@@ -22,8 +22,8 @@ export async function GET(req: NextRequest) {
         });
     }
 
-    const clientId = process.env.GOOGLE_ADS_CLIENT_ID!;
-    const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET!;
+    const clientId = process.env.GBP_CLIENT_ID || process.env.GOOGLE_ADS_CLIENT_ID!;
+    const clientSecret = process.env.GBP_CLIENT_SECRET || process.env.GOOGLE_ADS_CLIENT_SECRET!;
     const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3001';
     const redirectUri = `${baseUrl}/api/auth/google-business/callback`;
 

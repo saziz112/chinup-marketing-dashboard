@@ -7,9 +7,9 @@
 import { NextResponse } from 'next/server';
 
 export async function GET() {
-    const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
+    const clientId = process.env.GBP_CLIENT_ID || process.env.GOOGLE_ADS_CLIENT_ID;
     if (!clientId) {
-        return NextResponse.json({ error: 'GOOGLE_ADS_CLIENT_ID not configured' }, { status: 503 });
+        return NextResponse.json({ error: 'GBP_CLIENT_ID not configured' }, { status: 503 });
     }
 
     // Construct callback URL — must match what's registered in Google Cloud Console
