@@ -10,6 +10,18 @@ import { authOptions } from '@/lib/auth';
 import { sql } from '@vercel/postgres';
 import { del } from '@vercel/blob';
 
+async function ensureDependentTables() {
+    try {
+        await sql`CREATE TABLE IF NOT EXISTS creative_image_tags (
+            id SERIAL PRIMARY KEY, image_id TEXT NOT NULL, tag VARCHAR(100) NOT NULL, UNIQUE(image_id, tag))`;
+        await sql`CREATE TABLE IF NOT EXISTS creative_post_usage (
+            id SERIAL PRIMARY KEY, creative_image_id TEXT NOT NULL, content_post_id TEXT NOT NULL,
+            platform VARCHAR(50), published_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(creative_image_id, content_post_id))`;
+        await sql`ALTER TABLE creative_images ADD COLUMN IF NOT EXISTS group_id VARCHAR(100)`;
+        await sql`ALTER TABLE creative_images ADD COLUMN IF NOT EXISTS variation_index INT DEFAULT 0`;
+    } catch { /* tables may already exist */ }
+}
+
 /* ------------------------------------------------------------------ */
 /*  GET - gallery with optional ?tag= and ?search= filters            */
 /* ------------------------------------------------------------------ */
@@ -18,6 +30,8 @@ export async function GET(request: NextRequest) {
     if (!session?.user?.email) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    await ensureDependentTables();
 
     const { searchParams } = new URL(request.url);
     const tag = searchParams.get('tag');
