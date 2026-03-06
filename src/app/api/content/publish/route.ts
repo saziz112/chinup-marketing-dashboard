@@ -1,11 +1,23 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import {
     createPost, getPosts, updatePostStatus, deletePost,
     PublishRequest, PostStatus, getPostCountByPlatform
 } from '@/lib/content-publisher';
 import { startOfWeek, endOfWeek, format } from 'date-fns';
 
+async function requireAuth() {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return null;
+    return session;
+}
+
 export async function GET(req: Request) {
+    if (!await requireAuth()) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const type = searchParams.get('type') || 'posts'; // 'posts' | 'goals'
     const status = searchParams.get('status') as PostStatus | undefined;
@@ -49,6 +61,10 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+    if (!await requireAuth()) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     try {
         const body = await req.json() as PublishRequest;
 
@@ -81,6 +97,10 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+    if (!await requireAuth()) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     try {
         const body = await req.json();
         const { id, status } = body;
@@ -101,6 +121,10 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+    if (!await requireAuth()) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
 

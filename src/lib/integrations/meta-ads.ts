@@ -79,7 +79,7 @@ export interface MetaAdsData {
 
 // --- Constants ---
 
-const AD_ACCOUNT_ID = 'act_489484611603727';
+const AD_ACCOUNT_ID = process.env.META_AD_ACCOUNT_ID || 'act_489484611603727';
 const GRAPH_BASE = 'https://graph.facebook.com/v22.0';
 
 // --- Helpers ---

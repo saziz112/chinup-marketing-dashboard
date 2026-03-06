@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { getGoogleBusinessReviews, LocationId } from '@/lib/integrations/google-business';
 
 // Unified review object for the frontend
@@ -27,6 +29,11 @@ export interface ReviewsResponse {
 }
 
 export async function GET(request: Request) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     try {
         const { searchParams } = new URL(request.url);
         const locParam = searchParams.get('location');

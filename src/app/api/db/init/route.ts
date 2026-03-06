@@ -45,10 +45,10 @@ export async function POST() {
 
         return NextResponse.json({
             success: true,
-            message: 'Database initialized successfully',
+            message: 'Database initialized successfully. Default passwords set — change immediately via Settings.',
             users: [
-                { email: 'sam.aziz@chinupaesthetics.com', role: 'admin', password: 'admin2026' },
-                { email: 'sharia@chinupaesthetics.com', role: 'marketing_manager', password: 'marketing2026' },
+                { email: 'sam.aziz@chinupaesthetics.com', role: 'admin' },
+                { email: 'sharia@chinupaesthetics.com', role: 'marketing_manager' },
             ],
         });
 
