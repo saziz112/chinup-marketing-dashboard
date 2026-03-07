@@ -81,8 +81,8 @@ export async function GET(req: NextRequest) {
         // ── Campaign 1: Cancelled / No-Show Appointments ──
         if (segment === 'cancelled') {
             const cancelled = await getCancelledAppointments(locationParam || undefined);
-            const sendable = cancelled.filter(c => c.ghlContactId);
-            // DND filter via phone map (already checked in buildPhoneMap)
+            const withPhone = cancelled.filter(c => c.phone);
+            const sendable = withPhone.filter(c => c.ghlContactId);
             const phoneMap = await buildPhoneMap(locationParam || undefined);
             const contacts = sendable.filter(c => {
                 const entry = phoneMap.get(c.phone.replace(/\D/g, '').slice(-10));
@@ -107,13 +107,20 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({
                 contacts,
                 totalEligible: contacts.length,
-                totalFound: cancelled.length,
-                totalMatchedToGHL: sendable.length,
                 segment,
                 forecast: buildForecast(contacts, 0.30),
                 templates: SMS_TEMPLATES,
                 dndFiltered: sendable.length - contacts.length,
                 source: 'mindbody-appointments',
+                debug: {
+                    totalCancelledFromMB: cancelled.length,
+                    withPhone: withPhone.length,
+                    matchedToGHL: sendable.length,
+                    phoneMapSize: phoneMap.size,
+                    afterDND: contacts.length,
+                    sampleNoPhone: cancelled.filter(c => !c.phone).slice(0, 3).map(c => `${c.firstName} ${c.lastName}`),
+                    sampleNoGHL: withPhone.filter(c => !c.ghlContactId).slice(0, 3).map(c => `${c.firstName} (${c.phone.slice(-4)})`),
+                },
             });
         }
 
@@ -235,44 +242,54 @@ export async function GET(req: NextRequest) {
             const staleLeads = await getStaleLeads(locationParam || undefined);
             const phoneMap = await buildPhoneMap(locationParam || undefined);
 
-            const contacts = staleLeads
-                .filter(sl => {
-                    if (!sl.opportunity.contactPhone) return false;
-                    // DND check
-                    const entry = phoneMap.get(sl.opportunity.contactPhone.replace(/\D/g, '').slice(-10));
-                    if (entry?.dnd) return false;
-                    // Also check tags directly
-                    if ((sl.opportunity.contactTags || []).some(t => /dnd|do.not.disturb|opted.out|unsubscribe/i.test(t))) return false;
-                    if (sl.opportunity.contactDND) return false;
-                    return true;
-                })
-                .map(sl => ({
-                    contactId: sl.opportunity.contactId,
-                    contactName: sl.opportunity.contactName,
-                    firstName: sl.opportunity.contactName?.split(' ')[0] || '',
-                    phone: sl.opportunity.contactPhone,
-                    maskedPhone: maskPhone(sl.opportunity.contactPhone),
-                    locationKey: sl.locationKey,
-                    locationName: sl.locationName,
-                    stageName: `${sl.pipelineName} — ${sl.stageName}`,
-                    monetaryValue: sl.opportunity.monetaryValue,
-                    daysSinceOutreach: sl.daysSinceActivity,
-                    achievabilityScore: sl.staleness === 'at-risk' ? 70 : sl.staleness === 'stale' ? 45 : 25,
-                    riskLevel: sl.staleness === 'at-risk' ? 'needs-outreach' as const
-                        : sl.staleness === 'stale' ? 'going-cold' as const
-                        : 'abandoned' as const,
-                    tags: sl.opportunity.contactTags || [],
-                }));
+            const withPhone = staleLeads.filter(sl => sl.opportunity.contactPhone);
+            const noDND = withPhone.filter(sl => {
+                const entry = phoneMap.get(sl.opportunity.contactPhone.replace(/\D/g, '').slice(-10));
+                if (entry?.dnd) return false;
+                if ((sl.opportunity.contactTags || []).some(t => /dnd|do.not.disturb|opted.out|unsubscribe/i.test(t))) return false;
+                if (sl.opportunity.contactDND) return false;
+                return true;
+            });
+
+            const contacts = noDND.map(sl => ({
+                contactId: sl.opportunity.contactId,
+                contactName: sl.opportunity.contactName,
+                firstName: sl.opportunity.contactName?.split(' ')[0] || '',
+                phone: sl.opportunity.contactPhone,
+                maskedPhone: maskPhone(sl.opportunity.contactPhone),
+                locationKey: sl.locationKey,
+                locationName: sl.locationName,
+                stageName: `${sl.pipelineName} — ${sl.stageName}`,
+                monetaryValue: sl.opportunity.monetaryValue,
+                daysSinceOutreach: sl.daysSinceActivity,
+                achievabilityScore: sl.staleness === 'at-risk' ? 70 : sl.staleness === 'stale' ? 45 : 25,
+                riskLevel: sl.staleness === 'at-risk' ? 'needs-outreach' as const
+                    : sl.staleness === 'stale' ? 'going-cold' as const
+                    : 'abandoned' as const,
+                tags: sl.opportunity.contactTags || [],
+            }));
 
             return NextResponse.json({
                 contacts,
                 totalEligible: contacts.length,
-                totalStaleLeads: staleLeads.length,
                 segment,
                 forecast: buildForecast(contacts, 0.12),
                 templates: SMS_TEMPLATES,
-                dndFiltered: staleLeads.length - contacts.length,
+                dndFiltered: withPhone.length - noDND.length,
                 source: 'ghl-pipeline',
+                debug: {
+                    totalStaleLeads: staleLeads.length,
+                    withPhone: withPhone.length,
+                    noPhone: staleLeads.length - withPhone.length,
+                    afterDND: noDND.length,
+                    phoneMapSize: phoneMap.size,
+                    sampleLeads: staleLeads.slice(0, 3).map(sl => ({
+                        name: sl.opportunity.contactName,
+                        phone: sl.opportunity.contactPhone ? `...${sl.opportunity.contactPhone.slice(-4)}` : 'EMPTY',
+                        days: sl.daysSinceActivity,
+                        staleness: sl.staleness,
+                    })),
+                },
             });
         }
 
@@ -429,13 +446,20 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({
                 contacts,
                 totalEligible: contacts.length,
-                totalFound: lapsedPatients.length,
-                totalMatchedToGHL: filtered.filter(p => p.ghlContactId).length,
                 segment,
                 forecast: buildForecast(contacts, responseRate),
                 templates: SMS_TEMPLATES,
                 dndFiltered: filtered.filter(p => p.ghlContactId).length - sendable.length,
                 source: 'mindbody',
+                debug: {
+                    totalLapsedFromMB: lapsedPatients.length,
+                    afterSegmentFilter: filtered.length,
+                    withPhone: filtered.filter(p => p.phone).length,
+                    matchedToGHL: filtered.filter(p => p.ghlContactId).length,
+                    afterDND: sendable.length,
+                    phoneMapSize: phoneMap.size,
+                    sampleNoGHL: filtered.filter(p => !p.ghlContactId).slice(0, 3).map(p => `${p.firstName} (${p.phone?.slice(-4) || 'no phone'})`),
+                },
             });
         }
 

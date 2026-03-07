@@ -1673,6 +1673,22 @@ export default function LeadsPipelinePage() {
                                                             {smsData?.dndFiltered > 0 && <span>{smsData.dndFiltered} contacts excluded (DND/opted-out). </span>}
                                                             {smsData?.totalEligible === 0 && 'All contacts in this segment are either active patients, on DND, or have no phone number.'}
                                                         </div>
+                                                        {/* Debug funnel — shows where contacts were lost */}
+                                                        {smsData?.debug && (
+                                                            <div style={{
+                                                                marginTop: '16px', padding: '12px', textAlign: 'left',
+                                                                background: 'rgba(255,255,255,0.03)', borderRadius: '8px',
+                                                                fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.6,
+                                                            }}>
+                                                                <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Diagnostic Funnel:</div>
+                                                                {Object.entries(smsData.debug).map(([key, val]) => (
+                                                                    <div key={key}>
+                                                                        <span style={{ color: 'var(--text-secondary)' }}>{key}:</span>{' '}
+                                                                        {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
                                                         <button onClick={() => setSmsStep(1)} style={{
                                                             marginTop: '12px', padding: '8px 16px', background: 'transparent',
                                                             border: '1px solid var(--border-subtle)', borderRadius: '6px',
