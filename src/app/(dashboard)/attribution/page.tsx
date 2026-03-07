@@ -1381,9 +1381,10 @@ export default function LeadsPipelinePage() {
                                     zIndex: 1000, padding: '20px',
                                 }} onClick={() => setSmsOpen(false)}>
                                     <div style={{
-                                        background: 'var(--surface-card)', borderRadius: '12px',
+                                        background: '#0F1729', borderRadius: '12px',
                                         width: '100%', maxWidth: '800px', maxHeight: '85vh', overflow: 'auto',
-                                        padding: '24px', border: '1px solid var(--border-subtle)',
+                                        padding: '24px', border: '1px solid rgba(255,255,255,0.15)',
+                                        boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
                                     }} onClick={e => e.stopPropagation()}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                                             <h3 style={{ margin: 0 }}>SMS Re-activation Campaign</h3>
@@ -1531,7 +1532,7 @@ export default function LeadsPipelinePage() {
                                                         )}
 
                                                         {/* Contact count + actions */}
-                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                                                             <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
                                                                 {smsSelected.size} of {smsData.contacts?.length || 0} contacts selected
                                                                 {smsData.dndFiltered > 0 && <span style={{ color: 'var(--text-muted)' }}> ({smsData.dndFiltered} DND excluded)</span>}
@@ -1546,6 +1547,47 @@ export default function LeadsPipelinePage() {
                                                                     style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
                                                                 >None</button>
                                                             </div>
+                                                        </div>
+
+                                                        {/* Contact list with checkboxes */}
+                                                        <div style={{
+                                                            maxHeight: '200px', overflowY: 'auto', marginBottom: '16px',
+                                                            border: '1px solid var(--border-subtle)', borderRadius: '8px',
+                                                        }}>
+                                                            {(smsData.contacts || []).map((c: any) => {
+                                                                const isSelected = smsSelected.has(c.contactId);
+                                                                return (
+                                                                    <div
+                                                                        key={c.contactId}
+                                                                        onClick={() => {
+                                                                            const next = new Set(smsSelected);
+                                                                            if (isSelected) next.delete(c.contactId);
+                                                                            else next.add(c.contactId);
+                                                                            setSmsSelected(next);
+                                                                        }}
+                                                                        style={{
+                                                                            display: 'flex', alignItems: 'center', gap: '10px',
+                                                                            padding: '8px 12px', cursor: 'pointer',
+                                                                            background: isSelected ? 'rgba(52,211,153,0.08)' : 'transparent',
+                                                                            borderBottom: '1px solid rgba(255,255,255,0.04)',
+                                                                            fontSize: '0.8125rem',
+                                                                        }}
+                                                                    >
+                                                                        <span style={{
+                                                                            width: '16px', height: '16px', borderRadius: '3px', flexShrink: 0,
+                                                                            border: isSelected ? '2px solid #34D399' : '2px solid var(--border-subtle)',
+                                                                            background: isSelected ? '#34D399' : 'transparent',
+                                                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                                            color: '#0A225C', fontSize: '0.625rem', fontWeight: 700,
+                                                                        }}>
+                                                                            {isSelected && '✓'}
+                                                                        </span>
+                                                                        <span style={{ fontWeight: 500, color: 'var(--text-primary)', minWidth: '140px' }}>{c.contactName}</span>
+                                                                        <span style={{ color: 'var(--text-muted)' }}>{c.maskedPhone}</span>
+                                                                        <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>{c.locationName}</span>
+                                                                    </div>
+                                                                );
+                                                            })}
                                                         </div>
 
                                                         <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
