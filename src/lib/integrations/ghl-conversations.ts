@@ -13,7 +13,7 @@ import { trackCall } from '@/lib/api-usage-tracker';
 import {
     LocationKey, GHLOpportunity, getLocations, getStaleLeads, getFullPipelineData,
 } from '@/lib/integrations/gohighlevel';
-import { getClientMatchMaps, normalizePhone, type Client, getPurchasingClients, getAppointments, type StaffAppointment } from '@/lib/integrations/mindbody';
+import { getClientMatchMaps, normalizePhone, type Client, getPurchasingClients, getAppointments, getClients, type StaffAppointment } from '@/lib/integrations/mindbody';
 
 const GHL_V2_BASE = 'https://services.leadconnectorhq.com';
 const GHL_API_VERSION = '2021-07-28';
@@ -1404,7 +1404,7 @@ export async function getCancelledAppointments(
         });
     }
 
-    // Get client phone numbers from purchasing clients cache
+    // Get client phone numbers — try purchasing clients cache first, then fetch remaining
     try {
         const lookbackStart = new Date(now - 548 * 86400000).toISOString().split('T')[0];
         const { clients } = await getPurchasingClients(lookbackStart, endDate);
@@ -1420,7 +1420,28 @@ export async function getCancelledAppointments(
             }
         }
     } catch {
-        // Purchasing clients might not be cached yet; phone will be empty for some
+        // Purchasing clients might not be cached yet
+    }
+
+    // Fallback: fetch clients who still have no phone (cancelled-only clients who never purchased)
+    const missingPhone = result.filter(r => !r.phone).map(r => r.mbClientId);
+    if (missingPhone.length > 0) {
+        try {
+            const fetched = await getClients(missingPhone);
+            const fetchedMap = new Map<string, Client>();
+            for (const c of fetched) fetchedMap.set(c.Id, c);
+            for (const r of result) {
+                if (r.phone) continue;
+                const client = fetchedMap.get(r.mbClientId);
+                if (client) {
+                    r.phone = client.MobilePhone || client.HomePhone || '';
+                    if (!r.firstName) r.firstName = client.FirstName || '';
+                    if (!r.lastName) r.lastName = client.LastName || '';
+                }
+            }
+        } catch {
+            // Client fetch failed — some will still have no phone
+        }
     }
 
     // Filter: must have phone
@@ -1518,6 +1539,26 @@ export async function getConsultOnlyPatients(
     const result: ConsultOnlyPatient[] = [];
     const clientMap = new Map<string, Client>();
     for (const c of purchasingData.clients) clientMap.set(c.Id, c);
+
+    // Collect client IDs we need to fetch (not in purchasing clients)
+    const needsFetch: string[] = [];
+    for (const [clientId, appt] of consultByClient) {
+        const clientSales = salesByClient.get(clientId) || [];
+        const consultDate = appt.StartDateTime;
+        const hasPurchaseAfter = clientSales.some(sd => sd > consultDate);
+        if (hasPurchaseAfter) continue;
+        if (!clientMap.has(clientId)) needsFetch.push(clientId);
+    }
+
+    // Fetch missing client records for phone numbers
+    if (needsFetch.length > 0) {
+        try {
+            const fetched = await getClients(needsFetch);
+            for (const c of fetched) clientMap.set(c.Id, c);
+        } catch {
+            // Some clients will be missing phone
+        }
+    }
 
     for (const [clientId, appt] of consultByClient) {
         const clientSales = salesByClient.get(clientId) || [];
