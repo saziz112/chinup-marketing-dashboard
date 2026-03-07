@@ -7,7 +7,7 @@ import {
     PieChart, Pie, Cell, Legend,
 } from 'recharts';
 
-type Tab = 'pipeline' | 'strategy' | 'attribution' | 'legacy';
+type Tab = 'pipeline' | 'strategy' | 'engagement' | 'attribution' | 'legacy';
 type LocationFilter = 'all' | 'decatur' | 'smyrna' | 'kennesaw';
 
 interface StageData {
@@ -82,6 +82,7 @@ const TOOLTIP_STYLE = {
 const TAB_CONFIG = [
     { id: 'pipeline' as Tab, label: 'Pipeline Overview' },
     { id: 'strategy' as Tab, label: 'Strategy & Reactivation' },
+    { id: 'engagement' as Tab, label: 'Engagement Intelligence', adminOnly: true },
     { id: 'attribution' as Tab, label: 'Attribution' },
     { id: 'legacy' as Tab, label: 'MindBody Legacy' },
 ];
@@ -135,6 +136,35 @@ export default function LeadsPipelinePage() {
     const [revenueAttribution, setRevenueAttribution] = useState<any>(null);
     const [revenueLoading, setRevenueLoading] = useState(false);
     const [attrPeriod, setAttrPeriod] = useState<'7d' | '30d' | '90d'>('30d');
+
+    // Engagement intelligence data (admin-only, Phase 27)
+    const [engagementData, setEngagementData] = useState<any>(null);
+    const [engagementLoading, setEngagementLoading] = useState(false);
+
+    // Pipeline reorganization state
+    const [reorgData, setReorgData] = useState<any>(null);
+    const [reorgLoading, setReorgLoading] = useState(false);
+    const [reorgOpen, setReorgOpen] = useState(false);
+    const [reorgSelected, setReorgSelected] = useState<Set<string>>(new Set());
+    const [reorgApplying, setReorgApplying] = useState(false);
+    const [reorgResults, setReorgResults] = useState<any>(null);
+
+    // Transcript viewer state
+    const [transcriptOpen, setTranscriptOpen] = useState(false);
+    const [transcriptData, setTranscriptData] = useState<any>(null);
+    const [transcriptLoading, setTranscriptLoading] = useState(false);
+    const [transcriptContactName, setTranscriptContactName] = useState('');
+
+    // SMS Re-activation state
+    const [smsOpen, setSmsOpen] = useState(false);
+    const [smsStep, setSmsStep] = useState<1 | 2 | 3>(1); // 1: select segment, 2: compose, 3: results
+    const [smsSegment, setSmsSegment] = useState<string>('stale');
+    const [smsData, setSmsData] = useState<any>(null);
+    const [smsLoading, setSmsLoading] = useState(false);
+    const [smsMessage, setSmsMessage] = useState('');
+    const [smsSelected, setSmsSelected] = useState<Set<string>>(new Set());
+    const [smsSending, setSmsSending] = useState(false);
+    const [smsResults, setSmsResults] = useState<any>(null);
 
     // Fetch pipeline data
     const fetchPipeline = useCallback(async () => {
@@ -224,6 +254,160 @@ export default function LeadsPipelinePage() {
         }
     }, [attrPeriod, location]);
 
+    // Fetch engagement intelligence
+    const fetchEngagement = useCallback(async () => {
+        setEngagementLoading(true);
+        try {
+            const params = new URLSearchParams({ mode: 'full' });
+            if (location !== 'all') params.set('location', location);
+            const res = await fetch(`/api/attribution/ghl-conversations?${params}`);
+            if (res.ok) {
+                setEngagementData(await res.json());
+            }
+        } catch {
+            // Supplementary — don't block UI
+        } finally {
+            setEngagementLoading(false);
+        }
+    }, [location]);
+
+    // Fetch pipeline reorg recommendations
+    const fetchReorgRecommendations = useCallback(async () => {
+        setReorgLoading(true);
+        setReorgResults(null);
+        try {
+            const params = location !== 'all' ? `?location=${location}` : '';
+            const res = await fetch(`/api/attribution/ghl-pipeline-reorg${params}`);
+            if (res.ok) {
+                const data = await res.json();
+                setReorgData(data);
+                // Pre-select high-confidence recommendations
+                const selected = new Set<string>();
+                (data.recommendations || []).forEach((r: any) => {
+                    if (r.confidence === 'high') selected.add(r.opportunityId);
+                });
+                setReorgSelected(selected);
+            }
+        } catch {
+            // Supplementary
+        } finally {
+            setReorgLoading(false);
+        }
+    }, [location]);
+
+    // Fetch call transcript
+    const fetchTranscript = useCallback(async (messageId: string, locationKey: string, contactName: string) => {
+        setTranscriptOpen(true);
+        setTranscriptLoading(true);
+        setTranscriptContactName(contactName);
+        setTranscriptData(null);
+        try {
+            const res = await fetch(`/api/attribution/ghl-transcript?messageId=${messageId}&location=${locationKey}`);
+            if (res.ok) {
+                setTranscriptData(await res.json());
+            }
+        } catch {
+            // Error
+        } finally {
+            setTranscriptLoading(false);
+        }
+    }, []);
+
+    // Fetch SMS eligible contacts
+    const fetchSmsContacts = useCallback(async (segment: string) => {
+        setSmsLoading(true);
+        try {
+            const params = new URLSearchParams({ segment });
+            if (location !== 'all') params.set('location', location);
+            const res = await fetch(`/api/attribution/ghl-reactivation?${params}`);
+            if (res.ok) {
+                const data = await res.json();
+                setSmsData(data);
+                // Pre-select all
+                setSmsSelected(new Set((data.contacts || []).map((c: any) => c.contactId)));
+                // Set default template based on segment
+                const templateKey = segment === 'at-risk' ? 'followup' : segment === 'dormant' ? 'winback' : 'reactivation';
+                setSmsMessage(data.templates?.[templateKey]?.template || '');
+            }
+        } catch {
+            // Supplementary
+        } finally {
+            setSmsLoading(false);
+        }
+    }, [location]);
+
+    // Send SMS campaign
+    const sendSmsCampaign = useCallback(async () => {
+        if (!smsData?.contacts || smsSelected.size === 0 || !smsMessage) return;
+        setSmsSending(true);
+        try {
+            // Group by location
+            const contactsByLocation = new Map<string, any[]>();
+            for (const c of smsData.contacts) {
+                if (!smsSelected.has(c.contactId)) continue;
+                const list = contactsByLocation.get(c.locationKey) || [];
+                list.push(c);
+                contactsByLocation.set(c.locationKey, list);
+            }
+
+            const allResults: any[] = [];
+            for (const [locKey, contacts] of contactsByLocation) {
+                const res = await fetch('/api/attribution/ghl-reactivation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contactIds: contacts.map((c: any) => c.contactId),
+                        contacts,
+                        message: smsMessage,
+                        locationKey: locKey,
+                    }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    allResults.push(data);
+                }
+            }
+
+            const totalSent = allResults.reduce((s, r) => s + (r.sent || 0), 0);
+            const totalFailed = allResults.reduce((s, r) => s + (r.failed || 0), 0);
+            const totalSkipped = allResults.reduce((s, r) => s + (r.skipped || 0), 0);
+            setSmsResults({ sent: totalSent, failed: totalFailed, skipped: totalSkipped });
+            setSmsStep(3);
+        } catch {
+            // Error
+        } finally {
+            setSmsSending(false);
+        }
+    }, [smsData, smsSelected, smsMessage]);
+
+    // Apply selected stage moves
+    const applyReorgMoves = useCallback(async () => {
+        if (!reorgData?.recommendations || reorgSelected.size === 0) return;
+        setReorgApplying(true);
+        try {
+            const moves = reorgData.recommendations
+                .filter((r: any) => reorgSelected.has(r.opportunityId))
+                .map((r: any) => ({
+                    opportunityId: r.opportunityId,
+                    newStageId: r.recommendedStageId,
+                    pipelineId: r.pipelineId,
+                    locationKey: r.locationKey,
+                }));
+            const res = await fetch('/api/attribution/ghl-pipeline-reorg', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ moves }),
+            });
+            if (res.ok) {
+                setReorgResults(await res.json());
+            }
+        } catch {
+            // Error handling
+        } finally {
+            setReorgApplying(false);
+        }
+    }, [reorgData, reorgSelected]);
+
     useEffect(() => {
         if (session) {
             fetchPipeline();
@@ -247,6 +431,12 @@ export default function LeadsPipelinePage() {
             fetchRevenueAttribution();
         }
     }, [session, tab, fetchRevenueAttribution]);
+
+    useEffect(() => {
+        if (session && tab === 'engagement' && isAdmin) {
+            fetchEngagement();
+        }
+    }, [session, tab, isAdmin, fetchEngagement]);
 
     // Computed values
     const allPipelines = pipelineData?.locations.flatMap(l => l.pipelines) || [];
@@ -287,7 +477,7 @@ export default function LeadsPipelinePage() {
 
             {/* Tabs */}
             <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0' }}>
-                {TAB_CONFIG.map(t => (
+                {TAB_CONFIG.filter(t => !t.adminOnly || isAdmin).map(t => (
                     <button
                         key={t.id}
                         onClick={() => setTab(t.id)}
@@ -721,6 +911,780 @@ export default function LeadsPipelinePage() {
                             <div className="empty-state">
                                 <h3>No strategy data</h3>
                                 <p>Strategy analysis requires pipeline data. Check your GHL connection.</p>
+                            </div>
+                        </div>
+                    )}
+                </>
+            )}
+
+            {/* Tab: Engagement Intelligence (Admin-only) */}
+            {tab === 'engagement' && isAdmin && (
+                <>
+                    {engagementLoading ? (
+                        <div className="section-card">
+                            <div className="empty-state">
+                                <h3>Analyzing conversations...</h3>
+                                <p>Fetching engagement data from GHL Conversations API across all locations. This may take 30-60 seconds on first load.</p>
+                            </div>
+                        </div>
+                    ) : engagementData ? (
+                        <>
+                            {/* KPI Cards */}
+                            <div className="metrics-grid" style={{ gridTemplateColumns: `repeat(${(engagementData.summary?.mindbodyActiveFiltered || 0) > 0 ? 6 : 5}, 1fr)` }}>
+                                <div className="metric-card">
+                                    <div className="label">Total Analyzed</div>
+                                    <div className="value">{engagementData.summary?.totalAnalyzed || 0}</div>
+                                    <div className="change">{engagementData.summary?.withConversations || 0} with conversations</div>
+                                </div>
+                                <div className="metric-card">
+                                    <div className="label">Needs Outreach</div>
+                                    <div className="value" style={{ color: '#FBBF24' }}>{engagementData.summary?.needsOutreach || 0}</div>
+                                    <div className="change">7-14 day gap</div>
+                                </div>
+                                <div className="metric-card">
+                                    <div className="label">Going Cold</div>
+                                    <div className="value" style={{ color: '#F87171' }}>{engagementData.summary?.goingCold || 0}</div>
+                                    <div className="change">14-30 day gap</div>
+                                </div>
+                                <div className="metric-card">
+                                    <div className="label">False Positives</div>
+                                    <div className="value" style={{ color: '#34D399' }}>{engagementData.summary?.falsePositives || 0}</div>
+                                    <div className="change">Stale by timestamp, active by comms</div>
+                                </div>
+                                <div className="metric-card">
+                                    <div className="label">Lost Revenue</div>
+                                    <div className="value" style={{ color: '#F87171' }}>
+                                        {formatCurrency(engagementData.summary?.lostRevenuePotential || 0)}
+                                    </div>
+                                    <div className="change">{engagementData.lostRevenueCandidates?.length || 0} candidates</div>
+                                </div>
+                                {(engagementData.summary?.mindbodyActiveFiltered || 0) > 0 && (
+                                    <div className="metric-card">
+                                        <div className="label">MB Active</div>
+                                        <div className="value" style={{ color: '#60A5FA' }}>{engagementData.summary.mindbodyActiveFiltered}</div>
+                                        <div className="change">Already spending — no outreach needed</div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Lifecycle Breakdown + Speed-to-Lead Row */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                                {/* Lifecycle Stages */}
+                                {engagementData.lifecycleCounts && (
+                                    <div className="section-card">
+                                        <h3 style={{ marginBottom: '16px' }}>Lifecycle Breakdown</h3>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                            {([
+                                                { key: 'untouched', label: 'Untouched', color: '#94A3B8', desc: 'Never contacted' },
+                                                { key: 'attempted', label: 'Attempted', color: '#FBBF24', desc: 'Outbound sent, no reply' },
+                                                { key: 'engaged', label: 'Engaged', color: '#60A5FA', desc: 'Two-way conversation' },
+                                                { key: 'quoted', label: 'Quoted', color: '#A78BFA', desc: 'Discussed pricing/services' },
+                                                { key: 'ghost', label: 'Ghost', color: '#F87171', desc: 'Was engaged, went silent' },
+                                                { key: 'converted', label: 'Converted', color: '#34D399', desc: 'Opportunity won' },
+                                            ] as const).map(stage => {
+                                                const count = engagementData.lifecycleCounts[stage.key] || 0;
+                                                const total = engagementData.summary?.totalAnalyzed || 1;
+                                                const pct = Math.round((count / total) * 100);
+                                                return (
+                                                    <div key={stage.key} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                        <span style={{ width: '100px', fontSize: '0.8125rem', color: stage.color, fontWeight: 600, flexShrink: 0 }}>
+                                                            {stage.label}
+                                                        </span>
+                                                        <div style={{ flex: 1, height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                                                            <div style={{ width: `${pct}%`, height: '100%', background: stage.color, borderRadius: '4px' }} />
+                                                        </div>
+                                                        <span style={{ width: '80px', textAlign: 'right', fontSize: '0.8125rem', fontWeight: 600 }}>
+                                                            {count} ({pct}%)
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Speed-to-Lead */}
+                                {engagementData.speedToLead && (
+                                    <div className="section-card">
+                                        <h3 style={{ marginBottom: '16px' }}>Speed-to-Lead</h3>
+                                        <div style={{ marginBottom: '16px', padding: '12px', background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)', borderRadius: '8px', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                                            Industry benchmark: Leads contacted within 5 minutes have a 21x higher conversion rate.
+                                        </div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                            {(['decatur', 'smyrna', 'kennesaw'] as const).map(loc => {
+                                                const avg = engagementData.speedToLead.avgMinutes?.[loc];
+                                                if (avg === null || avg === undefined) return null;
+                                                const label = loc === 'decatur' ? 'Decatur' : loc === 'smyrna' ? 'Smyrna/Vinings' : 'Kennesaw';
+                                                const formatted = avg >= 60 ? `${(avg / 60).toFixed(1)} hr` : `${avg} min`;
+                                                const color = avg <= 5 ? '#34D399' : avg <= 30 ? '#FBBF24' : '#F87171';
+                                                return (
+                                                    <div key={loc} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                                                        <span style={{ fontSize: '0.875rem' }}>{label}</span>
+                                                        <span style={{ fontWeight: 700, color, fontSize: '1rem' }}>{formatted}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                            {engagementData.speedToLead.neverResponded > 0 && (
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', borderRadius: '6px' }}>
+                                                    <span style={{ fontSize: '0.875rem', color: '#F87171' }}>Never Responded</span>
+                                                    <span style={{ fontWeight: 700, color: '#F87171', fontSize: '1rem' }}>{engagementData.speedToLead.neverResponded}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Engagement Gaps Table */}
+                            {engagementData.engagementGaps?.length > 0 && (
+                                <div className="section-card" style={{ marginTop: '24px' }}>
+                                    <div className="chart-header" style={{ marginBottom: '16px' }}>
+                                        <h3>Engagement Gaps — Needs Outreach</h3>
+                                        <span className="badge warning">{engagementData.engagementGaps.length} leads</span>
+                                    </div>
+                                    <div className="data-table-wrapper"><table className="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Location</th>
+                                                <th>Stage</th>
+                                                <th style={{ textAlign: 'right' }}>Value</th>
+                                                <th style={{ textAlign: 'right' }}>Last Outreach</th>
+                                                <th style={{ textAlign: 'right' }}>Gap</th>
+                                                <th style={{ textAlign: 'center' }}>Score</th>
+                                                <th style={{ textAlign: 'center' }}>Calls</th>
+                                                <th style={{ textAlign: 'center' }}>MB</th>
+                                                <th>Risk</th>
+                                                <th>Suggested Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {engagementData.engagementGaps.map((gap: any, idx: number) => {
+                                                const riskColors: Record<string, string> = {
+                                                    'needs-outreach': '#FBBF24',
+                                                    'going-cold': '#FB923C',
+                                                    'abandoned': '#F87171',
+                                                };
+                                                const riskLabels: Record<string, string> = {
+                                                    'needs-outreach': 'Needs Outreach',
+                                                    'going-cold': 'Going Cold',
+                                                    'abandoned': 'Abandoned',
+                                                };
+                                                return (
+                                                    <tr key={idx}>
+                                                        <td style={{ fontWeight: 600 }}>{gap.opportunity?.contactName || gap.contactName || 'Unknown'}</td>
+                                                        <td style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>{gap.locationName}</td>
+                                                        <td style={{ fontSize: '0.8125rem' }}>{gap.stageName}</td>
+                                                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCurrency(gap.monetaryValue)}</td>
+                                                        <td style={{ textAlign: 'right', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                                                            {gap.engagement?.lastOutboundDate
+                                                                ? new Date(gap.engagement.lastOutboundDate).toLocaleDateString()
+                                                                : 'Never'}
+                                                        </td>
+                                                        <td style={{ textAlign: 'right', fontWeight: 600, color: gap.daysSinceOutreach > 30 ? '#F87171' : gap.daysSinceOutreach > 14 ? '#FB923C' : '#FBBF24' }}>
+                                                            {gap.daysSinceOutreach}d
+                                                        </td>
+                                                        <td style={{ textAlign: 'center' }}>
+                                                            <span style={{
+                                                                display: 'inline-block',
+                                                                padding: '2px 8px',
+                                                                borderRadius: '12px',
+                                                                fontSize: '0.75rem',
+                                                                fontWeight: 700,
+                                                                background: gap.achievabilityScore >= 60 ? 'rgba(52,211,153,0.15)' :
+                                                                    gap.achievabilityScore >= 30 ? 'rgba(251,191,36,0.15)' : 'rgba(248,113,113,0.15)',
+                                                                color: gap.achievabilityScore >= 60 ? '#34D399' :
+                                                                    gap.achievabilityScore >= 30 ? '#FBBF24' : '#F87171',
+                                                            }}>
+                                                                {gap.achievabilityScore}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ textAlign: 'center' }}>
+                                                            {(gap.engagement?.messageBreakdown?.call?.inbound || 0) + (gap.engagement?.messageBreakdown?.call?.outbound || 0) > 0 ? (
+                                                                <span style={{ color: '#A78BFA', fontWeight: 600, fontSize: '0.8125rem' }}>
+                                                                    {(gap.engagement?.messageBreakdown?.call?.inbound || 0) + (gap.engagement?.messageBreakdown?.call?.outbound || 0)}
+                                                                </span>
+                                                            ) : (
+                                                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                                            )}
+                                                        </td>
+                                                        <td style={{ textAlign: 'center' }}>
+                                                            {gap.mindbodyMatch ? (
+                                                                <span title={`MB Revenue: $${gap.mindbodyMatch.totalRevenue?.toLocaleString() || 0} | Last visit: ${gap.mindbodyMatch.daysSinceLastVisit ?? '?'}d ago`} style={{
+                                                                    display: 'inline-block',
+                                                                    padding: '2px 6px',
+                                                                    borderRadius: '4px',
+                                                                    fontSize: '0.6875rem',
+                                                                    fontWeight: 700,
+                                                                    background: gap.mindbodyMatch.isActive ? 'rgba(96,165,250,0.15)' : 'rgba(251,191,36,0.15)',
+                                                                    color: gap.mindbodyMatch.isActive ? '#60A5FA' : '#FBBF24',
+                                                                }}>
+                                                                    {gap.mindbodyMatch.isActive ? 'Active' : `${gap.mindbodyMatch.daysSinceLastVisit}d`}
+                                                                </span>
+                                                            ) : (
+                                                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                                            )}
+                                                        </td>
+                                                        <td>
+                                                            <span style={{
+                                                                padding: '3px 8px',
+                                                                borderRadius: '4px',
+                                                                fontSize: '0.75rem',
+                                                                fontWeight: 600,
+                                                                background: `${riskColors[gap.riskLevel]}20`,
+                                                                color: riskColors[gap.riskLevel],
+                                                            }}>
+                                                                {riskLabels[gap.riskLevel]}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', maxWidth: '250px' }}>
+                                                            {gap.suggestedAction}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table></div>
+                                </div>
+                            )}
+
+                            {/* Lost Revenue Candidates */}
+                            {engagementData.lostRevenueCandidates?.length > 0 && (
+                                <div style={{ marginTop: '24px' }}>
+                                    <h3 style={{ marginBottom: '16px' }}>Lost Revenue Candidates</h3>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                                        {engagementData.lostRevenueCandidates.slice(0, 12).map((candidate: any, idx: number) => (
+                                            <div key={idx} className="section-card" style={{ borderLeft: '3px solid #F87171' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                                                    <div>
+                                                        <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>
+                                                            {candidate.opportunity?.contactName || 'Unknown'}
+                                                        </div>
+                                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                            {candidate.locationName} — {candidate.stageName}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ fontWeight: 700, fontSize: '1.125rem', color: '#F87171' }}>
+                                                        {formatCurrency(candidate.monetaryValue)}
+                                                    </div>
+                                                </div>
+                                                <div style={{ display: 'flex', gap: '16px', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                                                    <span>{candidate.conversationCount} conversation{candidate.conversationCount !== 1 ? 's' : ''}</span>
+                                                    <span>{candidate.daysSilent}d silent</span>
+                                                </div>
+                                                <div style={{ marginTop: '8px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                    Last contact: {candidate.lastContactDate ? new Date(candidate.lastContactDate).toLocaleDateString() : 'Unknown'}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Staff Performance */}
+                            {engagementData.staffMetrics?.length > 0 && (
+                                <div className="section-card" style={{ marginTop: '24px' }}>
+                                    <h3 style={{ marginBottom: '16px' }}>Staff Activity</h3>
+                                    <div className="data-table-wrapper"><table className="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Staff ID</th>
+                                                <th>Location</th>
+                                                <th style={{ textAlign: 'right' }}>Conversations</th>
+                                                <th style={{ textAlign: 'right' }}>Messages</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {engagementData.staffMetrics.map((staff: any, idx: number) => (
+                                                <tr key={idx}>
+                                                    <td style={{ fontWeight: 600, fontFamily: 'monospace', fontSize: '0.8125rem' }}>{staff.userId}</td>
+                                                    <td style={{ fontSize: '0.8125rem' }}>
+                                                        {staff.locationKey === 'decatur' ? 'Decatur' : staff.locationKey === 'smyrna' ? 'Smyrna/Vinings' : 'Kennesaw'}
+                                                    </td>
+                                                    <td style={{ textAlign: 'right' }}>{staff.conversationsHandled}</td>
+                                                    <td style={{ textAlign: 'right' }}>{staff.totalMessages}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table></div>
+                                </div>
+                            )}
+
+                            {/* Action Buttons Row */}
+                            <div style={{ marginTop: '24px', display: 'flex', gap: '12px' }}>
+                                <button
+                                    onClick={() => { setReorgOpen(true); fetchReorgRecommendations(); }}
+                                    style={{
+                                        padding: '10px 20px', background: 'rgba(96,165,250,0.15)',
+                                        border: '1px solid rgba(96,165,250,0.3)', borderRadius: '8px',
+                                        color: '#60A5FA', fontWeight: 600, cursor: 'pointer', fontSize: '0.875rem',
+                                    }}
+                                >
+                                    Reorganize Pipeline
+                                </button>
+                                <button
+                                    onClick={() => { setSmsOpen(true); setSmsStep(1); setSmsResults(null); }}
+                                    style={{
+                                        padding: '10px 20px', background: 'rgba(52,211,153,0.15)',
+                                        border: '1px solid rgba(52,211,153,0.3)', borderRadius: '8px',
+                                        color: '#34D399', fontWeight: 600, cursor: 'pointer', fontSize: '0.875rem',
+                                    }}
+                                >
+                                    Re-activate Leads (SMS)
+                                </button>
+                            </div>
+
+                            {/* Pipeline Reorganization Modal */}
+                            {reorgOpen && (
+                                <div style={{
+                                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    zIndex: 1000, padding: '20px',
+                                }} onClick={() => setReorgOpen(false)}>
+                                    <div style={{
+                                        background: 'var(--surface-card)', borderRadius: '12px',
+                                        width: '100%', maxWidth: '900px', maxHeight: '85vh', overflow: 'auto',
+                                        padding: '24px', border: '1px solid var(--border-subtle)',
+                                    }} onClick={e => e.stopPropagation()}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                            <h3 style={{ margin: 0 }}>Pipeline Reorganization</h3>
+                                            <button onClick={() => setReorgOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.25rem' }}>X</button>
+                                        </div>
+
+                                        {/* Warning banner */}
+                                        <div style={{
+                                            padding: '12px 16px', marginBottom: '16px',
+                                            background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)',
+                                            borderRadius: '8px', fontSize: '0.8125rem', color: '#FBBF24', lineHeight: 1.5,
+                                        }}>
+                                            Moving leads between stages may trigger GHL automations (emails, texts, workflows). Review each move before applying.
+                                        </div>
+
+                                        {reorgLoading ? (
+                                            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                                                Analyzing conversation data for stage recommendations...
+                                            </div>
+                                        ) : reorgResults ? (
+                                            <div>
+                                                <div style={{
+                                                    padding: '16px', marginBottom: '16px',
+                                                    background: reorgResults.summary?.failed === 0 ? 'rgba(52,211,153,0.1)' : 'rgba(251,191,36,0.1)',
+                                                    border: `1px solid ${reorgResults.summary?.failed === 0 ? 'rgba(52,211,153,0.3)' : 'rgba(251,191,36,0.3)'}`,
+                                                    borderRadius: '8px', fontSize: '0.9375rem', fontWeight: 600,
+                                                    color: reorgResults.summary?.failed === 0 ? '#34D399' : '#FBBF24',
+                                                }}>
+                                                    {reorgResults.message}
+                                                </div>
+                                                <button onClick={() => { setReorgOpen(false); setReorgResults(null); fetchEngagement(); }} style={{
+                                                    padding: '10px 20px', background: 'var(--accent-primary)', border: 'none',
+                                                    borderRadius: '8px', color: '#0A225C', fontWeight: 600, cursor: 'pointer',
+                                                }}>
+                                                    Close & Refresh
+                                                </button>
+                                            </div>
+                                        ) : reorgData?.recommendations?.length > 0 ? (
+                                            <>
+                                                <div style={{ marginBottom: '12px', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                                                    {reorgData.recommendations.length} recommended moves ({reorgSelected.size} selected)
+                                                </div>
+                                                <div className="data-table-wrapper"><table className="data-table" style={{ fontSize: '0.8125rem' }}>
+                                                    <thead>
+                                                        <tr>
+                                                            <th style={{ width: '30px' }}>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={reorgSelected.size === reorgData.recommendations.length}
+                                                                    onChange={e => {
+                                                                        if (e.target.checked) {
+                                                                            setReorgSelected(new Set(reorgData.recommendations.map((r: any) => r.opportunityId)));
+                                                                        } else {
+                                                                            setReorgSelected(new Set());
+                                                                        }
+                                                                    }}
+                                                                />
+                                                            </th>
+                                                            <th>Name</th>
+                                                            <th>Current Stage</th>
+                                                            <th style={{ textAlign: 'center' }}>→</th>
+                                                            <th>Recommended Stage</th>
+                                                            <th>Reason</th>
+                                                            <th style={{ textAlign: 'center' }}>Confidence</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {reorgData.recommendations.map((rec: any) => (
+                                                            <tr key={rec.opportunityId}>
+                                                                <td>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={reorgSelected.has(rec.opportunityId)}
+                                                                        onChange={e => {
+                                                                            const next = new Set(reorgSelected);
+                                                                            if (e.target.checked) next.add(rec.opportunityId);
+                                                                            else next.delete(rec.opportunityId);
+                                                                            setReorgSelected(next);
+                                                                        }}
+                                                                    />
+                                                                </td>
+                                                                <td style={{ fontWeight: 600 }}>{rec.contactName}</td>
+                                                                <td>{rec.currentStageName}</td>
+                                                                <td style={{ textAlign: 'center', color: 'var(--text-muted)' }}>→</td>
+                                                                <td style={{ fontWeight: 600, color: '#60A5FA' }}>{rec.recommendedStageName}</td>
+                                                                <td style={{ color: 'var(--text-secondary)' }}>{rec.reason}</td>
+                                                                <td style={{ textAlign: 'center' }}>
+                                                                    <span style={{
+                                                                        padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600,
+                                                                        background: rec.confidence === 'high' ? 'rgba(52,211,153,0.15)' : 'rgba(251,191,36,0.15)',
+                                                                        color: rec.confidence === 'high' ? '#34D399' : '#FBBF24',
+                                                                    }}>
+                                                                        {rec.confidence}
+                                                                    </span>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table></div>
+                                                <div style={{ marginTop: '16px', display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                                                    <button onClick={() => setReorgOpen(false)} style={{
+                                                        padding: '10px 20px', background: 'transparent', border: '1px solid var(--border-subtle)',
+                                                        borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer',
+                                                    }}>
+                                                        Cancel
+                                                    </button>
+                                                    <button
+                                                        onClick={() => { if (confirm(`This will move ${reorgSelected.size} leads and may trigger GHL automations. Proceed?`)) applyReorgMoves(); }}
+                                                        disabled={reorgSelected.size === 0 || reorgApplying}
+                                                        style={{
+                                                            padding: '10px 20px', background: reorgSelected.size > 0 ? 'var(--accent-primary)' : 'rgba(255,255,255,0.1)',
+                                                            border: 'none', borderRadius: '8px', color: '#0A225C', fontWeight: 600,
+                                                            cursor: reorgSelected.size > 0 ? 'pointer' : 'not-allowed', opacity: reorgApplying ? 0.5 : 1,
+                                                        }}
+                                                    >
+                                                        {reorgApplying ? 'Applying...' : `Apply ${reorgSelected.size} Move${reorgSelected.size !== 1 ? 's' : ''}`}
+                                                    </button>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                                                No stage moves recommended. Your pipeline stages look accurate based on conversation data.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* SMS Re-activation Modal */}
+                            {smsOpen && (
+                                <div style={{
+                                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    zIndex: 1000, padding: '20px',
+                                }} onClick={() => setSmsOpen(false)}>
+                                    <div style={{
+                                        background: 'var(--surface-card)', borderRadius: '12px',
+                                        width: '100%', maxWidth: '800px', maxHeight: '85vh', overflow: 'auto',
+                                        padding: '24px', border: '1px solid var(--border-subtle)',
+                                    }} onClick={e => e.stopPropagation()}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                            <h3 style={{ margin: 0 }}>SMS Re-activation Campaign</h3>
+                                            <button onClick={() => setSmsOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.25rem' }}>X</button>
+                                        </div>
+
+                                        {/* Step 1: Select Segment */}
+                                        {smsStep === 1 && (
+                                            <div>
+                                                <p style={{ color: 'var(--text-secondary)', marginBottom: '12px', fontSize: '0.875rem' }}>Who do you want to reach?</p>
+
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Pipeline Leads</div>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '16px' }}>
+                                                    {[
+                                                        { id: 'at-risk', label: 'At-Risk', sub: '7-14 days', color: '#FBBF24' },
+                                                        { id: 'stale', label: 'Stale', sub: '14-30 days', color: '#FB923C' },
+                                                        { id: 'dormant', label: 'Dormant', sub: '30+ days', color: '#F87171' },
+                                                    ].map(seg => (
+                                                        <button
+                                                            key={seg.id}
+                                                            onClick={() => setSmsSegment(seg.id)}
+                                                            style={{
+                                                                padding: '12px', textAlign: 'center',
+                                                                background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
+                                                                border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
+                                                                borderRadius: '8px', cursor: 'pointer',
+                                                            }}
+                                                        >
+                                                            <div style={{ fontWeight: 600, color: seg.color, fontSize: '0.875rem' }}>{seg.label}</div>
+                                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{seg.sub}</div>
+                                                        </button>
+                                                    ))}
+                                                </div>
+
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Lapsed Patients</div>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '20px' }}>
+                                                    {[
+                                                        { id: 'lapsed-recent', label: 'Recent', sub: '60-89 days', color: '#60A5FA' },
+                                                        { id: 'lapsed', label: 'Lapsed', sub: '90-179 days', color: '#818CF8' },
+                                                        { id: 'lapsed-long', label: 'Long-Lapsed', sub: '180+ days', color: '#A78BFA' },
+                                                    ].map(seg => (
+                                                        <button
+                                                            key={seg.id}
+                                                            onClick={() => setSmsSegment(seg.id)}
+                                                            style={{
+                                                                padding: '12px', textAlign: 'center',
+                                                                background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
+                                                                border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
+                                                                borderRadius: '8px', cursor: 'pointer',
+                                                            }}
+                                                        >
+                                                            <div style={{ fontWeight: 600, color: seg.color, fontSize: '0.875rem' }}>{seg.label}</div>
+                                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{seg.sub}</div>
+                                                        </button>
+                                                    ))}
+                                                </div>
+
+                                                <button
+                                                    onClick={() => { setSmsStep(2); fetchSmsContacts(smsSegment); }}
+                                                    style={{
+                                                        padding: '10px 24px', background: 'var(--accent-primary)', border: 'none',
+                                                        borderRadius: '8px', color: '#0A225C', fontWeight: 600, cursor: 'pointer',
+                                                    }}
+                                                >
+                                                    Next: Preview Contacts
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        {/* Step 2: Preview + Compose */}
+                                        {smsStep === 2 && (
+                                            <div>
+                                                {smsLoading ? (
+                                                    <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>Loading eligible contacts...</div>
+                                                ) : smsData ? (
+                                                    <>
+                                                        {/* Forecast Summary */}
+                                                        {smsData.forecast && (
+                                                            <div style={{
+                                                                padding: '12px 16px', marginBottom: '16px',
+                                                                background: 'rgba(255,255,255,0.03)', borderRadius: '8px',
+                                                                fontSize: '0.875rem', color: 'var(--text-secondary)',
+                                                            }}>
+                                                                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{smsData.forecast.targetContacts}</span> contacts
+                                                                {' | '}~<span style={{ fontWeight: 600 }}>${smsData.forecast.estimatedCost}</span> est. cost
+                                                                {' | '}~<span style={{ fontWeight: 600, color: '#34D399' }}>{smsData.forecast.predictedBookings}</span> predicted bookings
+                                                                {smsData.forecast.projectedROI > 0 && (
+                                                                    <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                                                                        ({smsData.forecast.projectedROI}x projected ROI)
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        )}
+
+                                                        {/* Template + Message */}
+                                                        <div style={{ marginBottom: '16px' }}>
+                                                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '10px' }}>
+                                                                <label style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Template:</label>
+                                                                <select
+                                                                    onChange={e => { if (e.target.value) setSmsMessage(e.target.value); }}
+                                                                    value={smsMessage}
+                                                                    style={{
+                                                                        flex: 1, padding: '8px 12px', background: 'rgba(255,255,255,0.05)',
+                                                                        border: '1px solid var(--border-subtle)', borderRadius: '6px',
+                                                                        color: 'var(--text-primary)', fontSize: '0.8125rem',
+                                                                    }}
+                                                                >
+                                                                    <option value="">Custom message...</option>
+                                                                    {Object.entries(smsData.templates || {}).map(([key, tmpl]: [string, any]) => (
+                                                                        <option key={key} value={tmpl.template}>{tmpl.label}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
+                                                            <textarea
+                                                                value={smsMessage}
+                                                                onChange={e => setSmsMessage(e.target.value)}
+                                                                rows={3}
+                                                                style={{
+                                                                    width: '100%', padding: '10px', background: 'rgba(255,255,255,0.05)',
+                                                                    border: '1px solid var(--border-subtle)', borderRadius: '8px',
+                                                                    color: 'var(--text-primary)', fontSize: '0.875rem', resize: 'vertical',
+                                                                }}
+                                                                placeholder="Type your message... Use {{firstName}} for personalization"
+                                                            />
+                                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                                                {smsMessage.length} chars | Use {'{{firstName}}'} and {'{{locationName}}'} for personalization
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Message Preview */}
+                                                        {smsData.contacts?.length > 0 && smsMessage && (
+                                                            <div style={{ marginBottom: '16px' }}>
+                                                                <label style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Preview:</label>
+                                                                {smsData.contacts.slice(0, 2).map((c: any, idx: number) => (
+                                                                    <div key={idx} style={{
+                                                                        padding: '8px 12px', marginBottom: '4px',
+                                                                        background: 'rgba(255,255,255,0.03)', borderRadius: '6px',
+                                                                        fontSize: '0.8125rem', color: 'var(--text-secondary)',
+                                                                    }}>
+                                                                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.contactName}</span>:{' '}
+                                                                        {smsMessage.replace(/\{\{firstName\}\}/g, c.firstName || 'there').replace(/\{\{locationName\}\}/g, c.locationName)}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+
+                                                        {/* Contact count + actions */}
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                                                            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                                                                {smsSelected.size} of {smsData.contacts?.length || 0} contacts selected
+                                                                {smsData.dndFiltered > 0 && <span style={{ color: 'var(--text-muted)' }}> ({smsData.dndFiltered} DND excluded)</span>}
+                                                            </div>
+                                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                                <button
+                                                                    onClick={() => setSmsSelected(new Set((smsData.contacts || []).map((c: any) => c.contactId)))}
+                                                                    style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                                                                >All</button>
+                                                                <button
+                                                                    onClick={() => setSmsSelected(new Set())}
+                                                                    style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                                                                >None</button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                                                            <button onClick={() => setSmsStep(1)} style={{
+                                                                padding: '10px 20px', background: 'transparent', border: '1px solid var(--border-subtle)',
+                                                                borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer',
+                                                            }}>
+                                                                Back
+                                                            </button>
+                                                            <button
+                                                                onClick={() => {
+                                                                    if (confirm(`This will send ${smsSelected.size} SMS messages. Estimated cost: $${smsData.forecast?.estimatedCost || '?'}. Proceed?`))
+                                                                        sendSmsCampaign();
+                                                                }}
+                                                                disabled={smsSelected.size === 0 || !smsMessage || smsSending}
+                                                                style={{
+                                                                    padding: '10px 24px', background: smsSelected.size > 0 && smsMessage ? '#34D399' : 'rgba(255,255,255,0.1)',
+                                                                    border: 'none', borderRadius: '8px', color: '#0A225C', fontWeight: 600,
+                                                                    cursor: smsSelected.size > 0 ? 'pointer' : 'not-allowed', opacity: smsSending ? 0.5 : 1,
+                                                                }}
+                                                            >
+                                                                {smsSending ? 'Sending...' : `Send to ${smsSelected.size} Contact${smsSelected.size !== 1 ? 's' : ''}`}
+                                                            </button>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No eligible contacts found for this segment.</div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Step 3: Results */}
+                                        {smsStep === 3 && smsResults && (
+                                            <div>
+                                                <div style={{
+                                                    padding: '20px', textAlign: 'center', marginBottom: '20px',
+                                                    background: smsResults.failed === 0 ? 'rgba(52,211,153,0.1)' : 'rgba(251,191,36,0.1)',
+                                                    border: `1px solid ${smsResults.failed === 0 ? 'rgba(52,211,153,0.3)' : 'rgba(251,191,36,0.3)'}`,
+                                                    borderRadius: '8px',
+                                                }}>
+                                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: smsResults.failed === 0 ? '#34D399' : '#FBBF24' }}>
+                                                        Campaign Sent
+                                                    </div>
+                                                    <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', fontSize: '0.9375rem', color: 'var(--text-secondary)' }}>
+                                                        <span style={{ color: '#34D399' }}>{smsResults.sent} sent</span>
+                                                        {smsResults.failed > 0 && <span style={{ color: '#F87171' }}>{smsResults.failed} failed</span>}
+                                                        {smsResults.skipped > 0 && <span style={{ color: 'var(--text-muted)' }}>{smsResults.skipped} skipped</span>}
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => { setSmsOpen(false); setSmsResults(null); }} style={{
+                                                    padding: '10px 24px', background: 'var(--accent-primary)', border: 'none',
+                                                    borderRadius: '8px', color: '#0A225C', fontWeight: 600, cursor: 'pointer',
+                                                }}>
+                                                    Close
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Transcript Modal */}
+                            {transcriptOpen && (
+                                <div style={{
+                                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    zIndex: 1000, padding: '20px',
+                                }} onClick={() => setTranscriptOpen(false)}>
+                                    <div style={{
+                                        background: 'var(--surface-card)', borderRadius: '12px',
+                                        width: '100%', maxWidth: '700px', maxHeight: '80vh', overflow: 'auto',
+                                        padding: '24px', border: '1px solid var(--border-subtle)',
+                                    }} onClick={e => e.stopPropagation()}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                            <h3 style={{ margin: 0 }}>Call Transcript — {transcriptContactName}</h3>
+                                            <button onClick={() => setTranscriptOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.25rem' }}>X</button>
+                                        </div>
+
+                                        {/* PHI Warning */}
+                                        <div style={{
+                                            padding: '10px 14px', marginBottom: '16px',
+                                            background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)',
+                                            borderRadius: '8px', fontSize: '0.8125rem', color: '#F87171',
+                                        }}>
+                                            This transcript may contain protected health information (PHI). Do not share or copy outside this dashboard.
+                                        </div>
+
+                                        {transcriptLoading ? (
+                                            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>Loading transcript...</div>
+                                        ) : transcriptData?.transcript?.length > 0 ? (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                {transcriptData.transcript.map((seg: any, idx: number) => (
+                                                    <div key={idx} style={{
+                                                        display: 'flex', gap: '12px',
+                                                        flexDirection: seg.mediaChannel === 1 ? 'row' : 'row-reverse',
+                                                    }}>
+                                                        <div style={{
+                                                            padding: '10px 14px',
+                                                            background: seg.mediaChannel === 1 ? 'rgba(96,165,250,0.1)' : 'rgba(52,211,153,0.1)',
+                                                            border: `1px solid ${seg.mediaChannel === 1 ? 'rgba(96,165,250,0.2)' : 'rgba(52,211,153,0.2)'}`,
+                                                            borderRadius: seg.mediaChannel === 1 ? '12px 12px 12px 4px' : '12px 12px 4px 12px',
+                                                            maxWidth: '75%', fontSize: '0.875rem', lineHeight: 1.5,
+                                                        }}>
+                                                            <div style={{ fontSize: '0.7rem', fontWeight: 600, marginBottom: '4px', color: seg.mediaChannel === 1 ? '#60A5FA' : '#34D399' }}>
+                                                                {seg.mediaChannel === 1 ? 'Patient' : 'Staff'}
+                                                            </div>
+                                                            {seg.transcript}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                                                No transcript available for this call.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* DND filtered count */}
+                            {(engagementData.summary?.dndFiltered || 0) > 0 && (
+                                <div style={{ marginTop: '16px', padding: '10px 16px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                                    {engagementData.summary.dndFiltered} contacts excluded from analysis (DND/opted-out)
+                                </div>
+                            )}
+
+                            {/* Data freshness */}
+                            {engagementData.fetchedAt && (
+                                <div style={{ marginTop: '8px', fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'right' }}>
+                                    Data fetched: {new Date(engagementData.fetchedAt).toLocaleString()}
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <div className="section-card">
+                            <div className="empty-state">
+                                <h3>No engagement data</h3>
+                                <p>Conversation intelligence requires GHL v2 Private Integration Tokens. Check your PIT configuration.</p>
                             </div>
                         </div>
                     )}

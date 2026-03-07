@@ -27,9 +27,11 @@ export async function GET(req: NextRequest) {
     const locationParam = req.nextUrl.searchParams.get('location') as LocationKey | null;
 
     try {
+        const enrichConversations = req.nextUrl.searchParams.get('enrichConversations') !== 'false';
         const data = await getStrategyAnalysis({
             locationFilter: locationParam || undefined,
             isAdmin,
+            enrichWithConversations: enrichConversations,
         });
 
         return NextResponse.json({ configured: true, ...data });

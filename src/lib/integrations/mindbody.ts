@@ -319,7 +319,7 @@ type ClientRevenue = { client: Client; revenue: number };
 export async function getClientMatchMaps(
     startDate: string,
     endDate: string
-): Promise<{ emailMap: Map<string, ClientRevenue>; phoneMap: Map<string, ClientRevenue> }> {
+): Promise<{ emailMap: Map<string, ClientRevenue>; phoneMap: Map<string, ClientRevenue>; nameMap: Map<string, ClientRevenue> }> {
     const { clients, sales } = await getPurchasingClients(startDate, endDate);
 
     // Build clientId → revenue map from sales
@@ -331,6 +331,8 @@ export async function getClientMatchMaps(
 
     const emailMap = new Map<string, ClientRevenue>();
     const phoneMap = new Map<string, ClientRevenue>();
+    const nameMap = new Map<string, ClientRevenue>();
+    const nameCollisions = new Set<string>();
 
     for (const client of clients) {
         const entry: ClientRevenue = {
@@ -352,8 +354,24 @@ export async function getClientMatchMaps(
                 phoneMap.set(phone, entry);
             }
         }
+
+        // Name map (fallback for cases where email/phone differ between systems)
+        if (client.FirstName && client.LastName) {
+            const nameKey = `${client.FirstName.toLowerCase().trim()} ${client.LastName.toLowerCase().trim()}`;
+            if (nameMap.has(nameKey)) {
+                nameCollisions.add(nameKey); // Ambiguous — will be removed
+            } else {
+                nameMap.set(nameKey, entry);
+            }
+        }
     }
-    return { emailMap, phoneMap };
+
+    // Remove ambiguous names (multiple clients share the same name)
+    for (const name of nameCollisions) {
+        nameMap.delete(name);
+    }
+
+    return { emailMap, phoneMap, nameMap };
 }
 
 /** @deprecated Use getClientMatchMaps instead */

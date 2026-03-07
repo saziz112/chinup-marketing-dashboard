@@ -5,6 +5,7 @@
  */
 
 import { type FullPipelineData, type StaleLead, type LocationKey, getStaleLeads, getFullPipelineData } from '@/lib/integrations/gohighlevel';
+import { getConversationsIntelligence, type ConversationsIntelligence } from '@/lib/integrations/ghl-conversations';
 
 // --- Types ---
 
@@ -23,6 +24,11 @@ export interface StrategyResponse {
     };
     locationComparison: LocationComparisonRow[];
     funnelAnalysis: FunnelAnalysis[];
+    staleLeadCorrections?: {
+        falsePositiveCount: number;
+        correctedStaleness: number;
+        conversationEnriched: number;
+    };
 }
 
 interface StaleGroup {
@@ -267,7 +273,11 @@ function generateNewFunnelSuggestions(
 
 // --- Insight Functions ---
 
-function computeInsights(pipelineData: FullPipelineData, staleLeads: StaleLead[]): string[] {
+function computeInsights(
+    pipelineData: FullPipelineData,
+    staleLeads: StaleLead[],
+    conversationIntelligence?: ConversationsIntelligence | null,
+): string[] {
     const insights: string[] = [];
     const { totals, locations } = pipelineData;
 
@@ -284,15 +294,40 @@ function computeInsights(pipelineData: FullPipelineData, staleLeads: StaleLead[]
     }
 
     if (staleLeads.length > 0) {
-        const dormant = staleLeads.filter(l => l.staleness === 'dormant');
-        const atRisk = staleLeads.filter(l => l.staleness === 'at-risk');
-        const totalValue = staleLeads.reduce((s, l) => s + l.opportunity.monetaryValue, 0);
+        const realStale = staleLeads.filter(l => !l.falsePositive);
+        const falsePositives = staleLeads.filter(l => l.falsePositive);
+        const dormant = realStale.filter(l => l.staleness === 'dormant');
+        const atRisk = realStale.filter(l => l.staleness === 'at-risk');
+        const totalValue = realStale.reduce((s, l) => s + l.opportunity.monetaryValue, 0);
         const estimated = Math.round(totalValue * 0.15);
 
-        insights.push(
-            `${staleLeads.length} leads are inactive for 14+ days (${atRisk.length} at-risk, ${dormant.length} dormant). ` +
-            `Re-engaging these could recover an estimated ${formatCurrency(estimated)} in revenue at a 15% reactivation rate.`
-        );
+        let staleInsight = `${realStale.length} leads are inactive for 14+ days (${atRisk.length} at-risk, ${dormant.length} dormant). ` +
+            `Re-engaging these could recover an estimated ${formatCurrency(estimated)} in revenue at a 15% reactivation rate.`;
+        if (falsePositives.length > 0) {
+            staleInsight += ` (${falsePositives.length} leads marked stale actually have recent conversation activity.)`;
+        }
+        insights.push(staleInsight);
+    }
+
+    // Conversation intelligence insights
+    if (conversationIntelligence) {
+        const ci = conversationIntelligence;
+        if (ci.summary.needsOutreach > 0 || ci.summary.goingCold > 0) {
+            insights.push(
+                `Conversation analysis: ${ci.summary.needsOutreach} leads need outreach, ${ci.summary.goingCold} are going cold. ` +
+                `${ci.summary.lostRevenuePotential > 0 ? `Lost revenue potential: ${formatCurrency(ci.summary.lostRevenuePotential)}.` : ''}`
+            );
+        }
+        if (ci.lifecycleCounts.untouched > 0) {
+            insights.push(
+                `${ci.lifecycleCounts.untouched} leads have never been contacted — these are quick wins for immediate outreach.`
+            );
+        }
+        if (ci.speedToLead.neverResponded > 0) {
+            insights.push(
+                `${ci.speedToLead.neverResponded} leads have zero outbound messages. Speed-to-lead is critical — respond within 5 minutes for 21x higher conversion.`
+            );
+        }
     }
 
     if (locations.length > 1) {
@@ -429,6 +464,7 @@ function formatCurrency(val: number): string {
 export async function getStrategyAnalysis(options?: {
     locationFilter?: LocationKey;
     isAdmin?: boolean;
+    enrichWithConversations?: boolean;
 }): Promise<StrategyResponse> {
     const [pipelineData, staleLeads] = await Promise.all([
         getFullPipelineData({ locationFilter: options?.locationFilter }),
@@ -436,20 +472,77 @@ export async function getStrategyAnalysis(options?: {
     ]);
 
     const isAdmin = options?.isAdmin ?? false;
-    const insights = computeInsights(pipelineData, staleLeads);
+
+    // Optionally enrich stale leads with conversation data
+    let staleLeadCorrections: StrategyResponse['staleLeadCorrections'];
+    let conversationIntelligence: ConversationsIntelligence | null = null;
+
+    if (options?.enrichWithConversations) {
+        try {
+            conversationIntelligence = await getConversationsIntelligence({
+                locationFilter: options.locationFilter,
+            });
+
+            // Mark false positives on stale leads
+            const overrideIds = new Set(conversationIntelligence.staleLeadOverrides.map(o => o.contactId));
+            let correctedCount = 0;
+
+            for (const lead of staleLeads) {
+                if (overrideIds.has(lead.opportunity.contactId)) {
+                    lead.falsePositive = true;
+                    correctedCount++;
+                }
+            }
+
+            // Enrich stale leads with engagement data
+            let enrichedCount = 0;
+            for (const lead of staleLeads) {
+                const override = conversationIntelligence.staleLeadOverrides.find(
+                    o => o.contactId === lead.opportunity.contactId
+                );
+                if (override) {
+                    const eng = override.engagement;
+                    lead.lastCommunicationDate = eng.lastCommunicationDate || undefined;
+                    lead.daysSinceCommunication = eng.daysSinceLastContact || undefined;
+                    lead.engagementSummary = {
+                        totalMessages: eng.totalMessages,
+                        totalConversations: eng.totalConversations,
+                        lifecycleStage: eng.lifecycleStage,
+                        lastInbound: eng.lastInboundDate,
+                        lastOutbound: eng.lastOutboundDate,
+                    };
+                    if (eng.hasRecentActivity) {
+                        lead.lastActivitySource = 'conversation';
+                    }
+                    enrichedCount++;
+                }
+            }
+
+            staleLeadCorrections = {
+                falsePositiveCount: correctedCount,
+                correctedStaleness: correctedCount,
+                conversationEnriched: enrichedCount,
+            };
+        } catch (err) {
+            console.warn('[ghl-strategy] Conversation enrichment failed, continuing without:', err);
+        }
+    }
+
+    const insights = computeInsights(pipelineData, staleLeads, conversationIntelligence);
     const staleBySeverity = computeStaleGroups(staleLeads, isAdmin);
     const locationComparison = computeLocationComparison(pipelineData, staleLeads);
     const funnelAnalysis = computeFunnelAnalysis(pipelineData);
 
-    // Recovery potential
-    const totalStaleValue = staleLeads.reduce((s, l) => s + l.opportunity.monetaryValue, 0);
+    // Recovery potential — exclude false positives from counts
+    const realStaleLeads = staleLeads.filter(l => !l.falsePositive);
+    const totalStaleValue = realStaleLeads.reduce((s, l) => s + l.opportunity.monetaryValue, 0);
     const reactivationRate = 0.15;
-    const highPriority = staleLeads.filter(l => l.staleness === 'at-risk' && l.opportunity.monetaryValue > 0).length;
+    const highPriority = realStaleLeads.filter(l => l.staleness === 'at-risk' && l.opportunity.monetaryValue > 0).length;
 
     return {
         insights,
         recoveryPotential: {
-            totalStaleLeads: staleLeads.length,
+            totalStaleLeads: realStaleLeads.length,
             estimatedRevenue: isAdmin ? Math.round(totalStaleValue * reactivationRate) : 0,
             highPriority,
             reactivationRate,
@@ -462,5 +555,6 @@ export async function getStrategyAnalysis(options?: {
                 ...f,
                 stages: f.stages.map(s => ({ ...s, value: 0 })),
             })),
+        staleLeadCorrections,
     };
 }

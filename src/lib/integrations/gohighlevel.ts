@@ -488,11 +488,22 @@ export interface StaleLead {
     opportunity: GHLOpportunity;
     daysSinceActivity: number;
     staleness: 'at-risk' | 'stale' | 'dormant';
-    lastActivitySource: 'opportunity' | 'contact'; // which timestamp determined staleness
+    lastActivitySource: 'opportunity' | 'contact' | 'conversation'; // which timestamp determined staleness
     locationKey: LocationKey;
     locationName: string;
     pipelineName: string;
     stageName: string;
+    // Conversation enrichment fields (populated when enrichWithConversations is true)
+    lastCommunicationDate?: string;
+    daysSinceCommunication?: number;
+    engagementSummary?: {
+        totalMessages: number;
+        totalConversations: number;
+        lifecycleStage: string;
+        lastInbound: string | null;
+        lastOutbound: string | null;
+    };
+    falsePositive?: boolean; // true if conversations show recent activity despite stale timestamp
 }
 
 // Separate cache for contact dateUpdated values (avoids re-fetching on every call)
