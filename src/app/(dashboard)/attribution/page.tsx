@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, Legend,
@@ -140,6 +140,7 @@ export default function LeadsPipelinePage() {
     // Engagement intelligence data (admin-only, Phase 27)
     const [engagementData, setEngagementData] = useState<any>(null);
     const [engagementLoading, setEngagementLoading] = useState(false);
+    const engagementFetchedRef = useRef<string | null>(null);
 
     // Pipeline reorganization state
     const [reorgData, setReorgData] = useState<any>(null);
@@ -509,10 +510,11 @@ export default function LeadsPipelinePage() {
     }, [session, tab, fetchRevenueAttribution]);
 
     useEffect(() => {
-        if (session && tab === 'engagement' && isAdmin) {
+        if (session && tab === 'engagement' && isAdmin && engagementFetchedRef.current !== location) {
+            engagementFetchedRef.current = location;
             fetchEngagement();
         }
-    }, [session, tab, isAdmin, fetchEngagement]);
+    }, [session, tab, isAdmin, fetchEngagement, location]);
 
     // Computed values
     const allPipelines = pipelineData?.locations.flatMap(l => l.pipelines) || [];
