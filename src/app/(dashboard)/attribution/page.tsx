@@ -314,27 +314,103 @@ export default function LeadsPipelinePage() {
     }, []);
 
     // Fetch SMS eligible contacts
+    const SMS_TEMPLATES_LOCAL: Record<string, { label: string; template: string }> = {
+        reactivation: { label: 'Re-activation (Stale)', template: "Hi {{firstName}}, it's been a while since we've seen you at Chin Up! We'd love to welcome you back. Reply DELETE to opt out." },
+        winback: { label: 'Win-back (Dormant)', template: "Hi {{firstName}}, we miss you at Chin Up! Aesthetics. We have a special offer just for returning clients \u2014 reply YES to learn more. Reply DELETE to opt out." },
+        followup: { label: 'Follow-up (At-risk)', template: "Hi {{firstName}}, just checking in! We noticed you had an inquiry with us. Would you like to schedule? Reply DELETE to opt out." },
+        'lapsed-patient': { label: 'Lapsed Patient', template: "Hi {{firstName}}, we miss seeing you at Chin Up! {{locationName}}! It's been a while since your last visit. We'd love to have you back \u2014 reply YES to book. Reply DELETE to opt out." },
+        'lapsed-vip': { label: 'Lapsed VIP Patient', template: "Hi {{firstName}}, as one of our valued patients at Chin Up!, we wanted to reach out personally. We have some exciting new treatments and would love to see you again. Reply YES to learn more. Reply DELETE to opt out." },
+    };
+
     const fetchSmsContacts = useCallback(async (segment: string) => {
         setSmsLoading(true);
         try {
-            const params = new URLSearchParams({ segment });
-            if (location !== 'all') params.set('location', location);
-            const res = await fetch(`/api/attribution/ghl-reactivation?${params}`);
-            if (res.ok) {
-                const data = await res.json();
+            const isLapsed = segment.startsWith('lapsed');
+
+            if (!isLapsed && engagementData?.engagementGaps) {
+                // Build contacts client-side from already-loaded engagement data (avoids Vercel timeout)
+                const segmentMap: Record<string, string[]> = {
+                    'at-risk': ['needs-outreach'],
+                    'stale': ['going-cold'],
+                    'dormant': ['abandoned'],
+                };
+                const riskLevels = segmentMap[segment] || segmentMap['stale'];
+
+                const eligible = engagementData.engagementGaps.filter((g: any) => {
+                    if (!riskLevels.includes(g.riskLevel)) return false;
+                    if (!g.engagement?.phone) return false;
+                    if (g.engagement?.isDND) return false;
+                    if (g.mindbodyMatch?.isActive) return false;
+                    return true;
+                });
+
+                const contacts = eligible.map((g: any) => {
+                    const phone = g.engagement?.phone || '';
+                    const maskedPhone = phone.length > 4
+                        ? phone.slice(0, -4).replace(/\d/g, '*') + phone.slice(-4) : '****';
+                    return {
+                        contactId: g.opportunity.contactId,
+                        contactName: g.opportunity.contactName,
+                        firstName: g.opportunity.contactName?.split(' ')[0] || '',
+                        phone, maskedPhone,
+                        locationKey: g.locationKey,
+                        locationName: g.locationName,
+                        stageName: g.stageName,
+                        monetaryValue: g.monetaryValue,
+                        riskLevel: g.riskLevel,
+                        tags: g.engagement?.isDND ? ['DND'] : [],
+                    };
+                });
+
+                const targetCount = contacts.length;
+                const smsCost = 0.02;
+                const responseRates: Record<string, number> = { 'needs-outreach': 0.30, 'going-cold': 0.15, 'abandoned': 0.07 };
+                const avgRate = contacts.length > 0
+                    ? contacts.reduce((s: number, c: any) => s + (responseRates[c.riskLevel] || 0.15), 0) / contacts.length : 0.15;
+                const predicted = Math.round(targetCount * avgRate);
+                const bookings = Math.round(predicted * 0.35);
+                const avgVal = contacts.length > 0 ? contacts.reduce((s: number, c: any) => s + c.monetaryValue, 0) / contacts.length : 500;
+                const revenue = Math.round(bookings * avgVal);
+                const cost = Math.round(targetCount * smsCost * 100) / 100;
+
+                const data = {
+                    contacts,
+                    totalEligible: contacts.length,
+                    segment,
+                    forecast: {
+                        targetContacts: targetCount, estimatedCost: cost,
+                        predictedResponseRate: Math.round(avgRate * 100),
+                        predictedResponses: predicted, predictedBookings: bookings,
+                        projectedRevenue: revenue, projectedROI: cost > 0 ? Math.round((revenue - cost) / cost) : 0,
+                        avgAchievabilityScore: 0,
+                    },
+                    templates: SMS_TEMPLATES_LOCAL,
+                    dndFiltered: engagementData.summary?.dndFiltered || 0,
+                    source: 'ghl',
+                };
                 setSmsData(data);
-                // Pre-select all
-                setSmsSelected(new Set((data.contacts || []).map((c: any) => c.contactId)));
-                // Set default template based on segment
+                setSmsSelected(new Set(contacts.map((c: any) => c.contactId)));
                 const templateKey = segment === 'at-risk' ? 'followup' : segment === 'dormant' ? 'winback' : 'reactivation';
-                setSmsMessage(data.templates?.[templateKey]?.template || '');
+                setSmsMessage(SMS_TEMPLATES_LOCAL[templateKey]?.template || '');
+            } else {
+                // Lapsed segments need API call (MindBody data not available client-side)
+                const params = new URLSearchParams({ segment });
+                if (location !== 'all') params.set('location', location);
+                const res = await fetch(`/api/attribution/ghl-reactivation?${params}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setSmsData(data);
+                    setSmsSelected(new Set((data.contacts || []).map((c: any) => c.contactId)));
+                    const templateKey = segment.startsWith('lapsed') ? 'lapsed-patient' : 'reactivation';
+                    setSmsMessage(data.templates?.[templateKey]?.template || SMS_TEMPLATES_LOCAL[templateKey]?.template || '');
+                }
             }
         } catch {
             // Supplementary
         } finally {
             setSmsLoading(false);
         }
-    }, [location]);
+    }, [location, engagementData]);
 
     // Send SMS campaign
     const sendSmsCampaign = useCallback(async () => {
