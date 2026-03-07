@@ -13,7 +13,7 @@ import { trackCall } from '@/lib/api-usage-tracker';
 import {
     LocationKey, GHLOpportunity, getLocations, getStaleLeads, getFullPipelineData,
 } from '@/lib/integrations/gohighlevel';
-import { getClientMatchMaps, normalizePhone, type Client, getPurchasingClients } from '@/lib/integrations/mindbody';
+import { getClientMatchMaps, normalizePhone, type Client, getPurchasingClients, getAppointments, type StaffAppointment } from '@/lib/integrations/mindbody';
 
 const GHL_V2_BASE = 'https://services.leadconnectorhq.com';
 const GHL_API_VERSION = '2021-07-28';
@@ -1238,40 +1238,18 @@ export async function getLapsedPatients(
         });
     }
 
-    // Cross-reference with GHL contacts to get contactIds for SMS
+    // Cross-reference with GHL contacts via phone map (instant, no API calls)
     try {
-        const v2Locations = getV2Locations();
-        const targetLocations = locationFilter
-            ? v2Locations.filter(l => l.key === locationFilter)
-            : v2Locations;
-
-        for (const loc of targetLocations) {
-            // Search GHL contacts by phone for each lapsed patient
-            // We batch this efficiently: search for all at once via the conversations search
-            for (const patient of lapsed) {
-                if (patient.ghlContactId) continue; // already matched
-
-                const normalizedPhone = normalizePhone(patient.phone);
-                if (normalizedPhone.length < 10) continue;
-
-                // Try to find this contact in GHL via conversations search
-                try {
-                    const searchResult = await ghlV2Fetch<{ contacts?: { id: string; name: string; locationId: string }[] }>(
-                        loc.pit,
-                        '/contacts/search',
-                        { query: normalizedPhone, locationId: loc.locationId },
-                    );
-                    trackCall('ghl', 'searchContactByPhone', false);
-
-                    const contacts = searchResult.contacts || [];
-                    if (contacts.length > 0) {
-                        patient.ghlContactId = contacts[0].id;
-                        patient.ghlContactName = contacts[0].name;
-                        patient.locationKey = loc.key;
-                    }
-                } catch {
-                    // Contact search failed, skip
-                }
+        const phoneMap = await buildPhoneMap(locationFilter);
+        for (const patient of lapsed) {
+            if (patient.ghlContactId) continue;
+            const normalized = normalizePhone(patient.phone);
+            if (normalized.length < 10) continue;
+            const match = phoneMap.get(normalized);
+            if (match) {
+                patient.ghlContactId = match.contactId;
+                patient.ghlContactName = match.contactName;
+                patient.locationKey = match.locationKey;
             }
         }
     } catch (err) {
@@ -1285,4 +1263,306 @@ export async function getLapsedPatients(
     console.log(`[ghl-conversations] Found ${lapsed.length} lapsed patients (${lapsed.filter(l => l.ghlContactId).length} matched to GHL)`);
 
     return lapsed;
+}
+
+// --- Phone Map Utility (shared by lapsed, cancelled, consult-only) ---
+
+interface PhoneMapEntry {
+    contactId: string;
+    contactName: string;
+    locationKey: LocationKey;
+    tags: string[];
+    dnd: boolean;
+}
+
+let phoneMapCache: { data: Map<string, PhoneMapEntry>; timestamp: number } | null = null;
+const PHONE_MAP_CACHE_TTL = 30 * 60 * 1000; // 30 min (matches pipeline cache)
+
+/**
+ * Build a phone→contactId map from all pipeline opportunity data.
+ * Uses already-cached getFullPipelineData() — zero additional API calls.
+ */
+export async function buildPhoneMap(locationFilter?: LocationKey): Promise<Map<string, PhoneMapEntry>> {
+    if (phoneMapCache && (Date.now() - phoneMapCache.timestamp) < PHONE_MAP_CACHE_TTL) {
+        if (!locationFilter) return phoneMapCache.data;
+        // Filter cached map by location
+        const filtered = new Map<string, PhoneMapEntry>();
+        for (const [phone, entry] of phoneMapCache.data) {
+            if (entry.locationKey === locationFilter) filtered.set(phone, entry);
+        }
+        return filtered;
+    }
+
+    const pipelineData = await getFullPipelineData();
+    const phoneMap = new Map<string, PhoneMapEntry>();
+
+    for (const loc of pipelineData.locations) {
+        for (const pipeline of loc.pipelines) {
+            for (const stage of pipeline.stages) {
+                for (const opp of stage.opportunities) {
+                    if (opp.contactPhone && opp.contactId) {
+                        const normalized = normalizePhone(opp.contactPhone);
+                        if (normalized.length >= 10 && !phoneMap.has(normalized)) {
+                            phoneMap.set(normalized, {
+                                contactId: opp.contactId,
+                                contactName: opp.contactName,
+                                locationKey: opp.locationKey,
+                                tags: opp.contactTags || [],
+                                dnd: opp.contactDND === true
+                                    || (opp.contactTags || []).some(t => /dnd|do.not.disturb|opted.out|unsubscribe/i.test(t)),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    phoneMapCache = { data: phoneMap, timestamp: Date.now() };
+    console.log(`[ghl-conversations] Built phone map: ${phoneMap.size} contacts`);
+
+    if (locationFilter) {
+        const filtered = new Map<string, PhoneMapEntry>();
+        for (const [phone, entry] of phoneMap) {
+            if (entry.locationKey === locationFilter) filtered.set(phone, entry);
+        }
+        return filtered;
+    }
+    return phoneMap;
+}
+
+// --- Cancelled / No-Show Appointment Detection (Campaign 1) ---
+
+export interface CancelledAppointment {
+    mbClientId: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    serviceName: string;
+    appointmentDate: string;
+    status: string; // "Cancelled", "NoShow", etc.
+    ghlContactId?: string;
+    ghlContactName?: string;
+    locationKey?: LocationKey;
+}
+
+const cancelledCache = new Map<string, CacheEntry<CancelledAppointment[]>>();
+
+export async function getCancelledAppointments(
+    locationFilter?: LocationKey,
+): Promise<CancelledAppointment[]> {
+    const cacheKey = `cancelled_${locationFilter || 'all'}`;
+    const cached = cancelledCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < LAPSED_CACHE_TTL) {
+        return cached.data;
+    }
+
+    const now = Date.now();
+    const startDate = new Date(now - 90 * 86400000).toISOString().split('T')[0];
+    const endDate = new Date().toISOString().split('T')[0];
+
+    const appointments = await getAppointments(startDate, endDate);
+
+    // Separate completed and cancelled/no-show appointments
+    const completedByClient = new Set<string>();
+    const cancelledAppts: StaffAppointment[] = [];
+
+    for (const appt of appointments) {
+        const status = (appt.Status || '').toLowerCase();
+        if (status === 'completed' || status === 'confirmed' || status === 'arrived') {
+            if (appt.ClientId) completedByClient.add(appt.ClientId);
+        } else if (/cancel|no.?show|late.?cancel/i.test(status)) {
+            cancelledAppts.push(appt);
+        }
+    }
+
+    // Deduplicate by client (keep most recent cancelled appointment)
+    // Exclude clients who have a completed appointment (they came back)
+    const byClient = new Map<string, StaffAppointment>();
+    for (const appt of cancelledAppts) {
+        if (!appt.ClientId) continue;
+        if (completedByClient.has(appt.ClientId)) continue; // They came back
+        const existing = byClient.get(appt.ClientId);
+        if (!existing || appt.StartDateTime > existing.StartDateTime) {
+            byClient.set(appt.ClientId, appt);
+        }
+    }
+
+    // Build result list
+    const result: CancelledAppointment[] = [];
+    for (const [clientId, appt] of byClient) {
+        const phone = appt.Client?.FirstName ? '' : ''; // Client object may not have phone
+        // We'll need to look up client phone from purchasing clients cache
+        result.push({
+            mbClientId: clientId,
+            firstName: appt.Client?.FirstName || '',
+            lastName: appt.Client?.LastName || '',
+            phone: '', // Will be filled from purchasing clients
+            serviceName: appt.SessionType?.Name || 'appointment',
+            appointmentDate: appt.StartDateTime,
+            status: appt.Status,
+        });
+    }
+
+    // Get client phone numbers from purchasing clients cache
+    try {
+        const lookbackStart = new Date(now - 548 * 86400000).toISOString().split('T')[0];
+        const { clients } = await getPurchasingClients(lookbackStart, endDate);
+        const clientMap = new Map<string, Client>();
+        for (const c of clients) clientMap.set(c.Id, c);
+
+        for (const r of result) {
+            const client = clientMap.get(r.mbClientId);
+            if (client) {
+                r.phone = client.MobilePhone || client.HomePhone || '';
+                if (!r.firstName) r.firstName = client.FirstName || '';
+                if (!r.lastName) r.lastName = client.LastName || '';
+            }
+        }
+    } catch {
+        // Purchasing clients might not be cached yet; phone will be empty for some
+    }
+
+    // Filter: must have phone
+    const withPhone = result.filter(r => r.phone);
+
+    // Cross-reference to GHL via phone map
+    try {
+        const phoneMap = await buildPhoneMap(locationFilter);
+        for (const r of withPhone) {
+            const normalized = normalizePhone(r.phone);
+            const match = phoneMap.get(normalized);
+            if (match) {
+                r.ghlContactId = match.contactId;
+                r.ghlContactName = match.contactName;
+                r.locationKey = match.locationKey;
+            }
+        }
+    } catch {
+        // Phone map failed
+    }
+
+    withPhone.sort((a, b) => b.appointmentDate.localeCompare(a.appointmentDate));
+    cancelledCache.set(cacheKey, { data: withPhone, timestamp: now });
+    console.log(`[ghl-conversations] Found ${withPhone.length} cancelled/no-show appointments (${withPhone.filter(c => c.ghlContactId).length} matched to GHL)`);
+
+    return withPhone;
+}
+
+// --- Consultation-Only Detection (Campaign 3) ---
+
+export interface ConsultOnlyPatient {
+    mbClientId: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    consultDate: string;
+    consultService: string;
+    ghlContactId?: string;
+    ghlContactName?: string;
+    locationKey?: LocationKey;
+}
+
+const consultCache = new Map<string, CacheEntry<ConsultOnlyPatient[]>>();
+
+export async function getConsultOnlyPatients(
+    locationFilter?: LocationKey,
+): Promise<ConsultOnlyPatient[]> {
+    const cacheKey = `consult_${locationFilter || 'all'}`;
+    const cached = consultCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < LAPSED_CACHE_TTL) {
+        return cached.data;
+    }
+
+    const now = Date.now();
+    const startDate = new Date(now - 180 * 86400000).toISOString().split('T')[0];
+    const endDate = new Date().toISOString().split('T')[0];
+
+    // Get appointments and sales data
+    const [appointments, purchasingData] = await Promise.all([
+        getAppointments(startDate, endDate),
+        getPurchasingClients(startDate, endDate),
+    ]);
+
+    // Find completed consultations
+    const consultAppts: StaffAppointment[] = [];
+    for (const appt of appointments) {
+        const status = (appt.Status || '').toLowerCase();
+        const sessionName = (appt.SessionType?.Name || '').toLowerCase();
+        if ((status === 'completed' || status === 'confirmed' || status === 'arrived')
+            && /consult/i.test(sessionName)) {
+            consultAppts.push(appt);
+        }
+    }
+
+    // Build a set of clients who made purchases AFTER their consultation
+    const salesByClient = new Map<string, string[]>(); // clientId → sale dates
+    for (const sale of purchasingData.sales) {
+        if (!sale.ClientId) continue;
+        const saleDate = sale.SaleDate || sale.SaleDateTime || '';
+        if (!salesByClient.has(sale.ClientId)) salesByClient.set(sale.ClientId, []);
+        salesByClient.get(sale.ClientId)!.push(saleDate);
+    }
+
+    // Deduplicate consults by client (keep most recent)
+    const consultByClient = new Map<string, StaffAppointment>();
+    for (const appt of consultAppts) {
+        if (!appt.ClientId) continue;
+        const existing = consultByClient.get(appt.ClientId);
+        if (!existing || appt.StartDateTime > existing.StartDateTime) {
+            consultByClient.set(appt.ClientId, appt);
+        }
+    }
+
+    // Filter: clients who consulted but never purchased after
+    const result: ConsultOnlyPatient[] = [];
+    const clientMap = new Map<string, Client>();
+    for (const c of purchasingData.clients) clientMap.set(c.Id, c);
+
+    for (const [clientId, appt] of consultByClient) {
+        const clientSales = salesByClient.get(clientId) || [];
+        const consultDate = appt.StartDateTime;
+
+        // Check if any sale happened AFTER the consultation
+        const hasPurchaseAfter = clientSales.some(sd => sd > consultDate);
+        if (hasPurchaseAfter) continue; // They converted — skip
+
+        const client = clientMap.get(clientId);
+        const phone = client?.MobilePhone || client?.HomePhone || '';
+        if (!phone) continue;
+
+        result.push({
+            mbClientId: clientId,
+            firstName: appt.Client?.FirstName || client?.FirstName || '',
+            lastName: appt.Client?.LastName || client?.LastName || '',
+            phone,
+            consultDate: appt.StartDateTime,
+            consultService: appt.SessionType?.Name || 'Consultation',
+            ghlContactId: undefined,
+            ghlContactName: undefined,
+            locationKey: undefined,
+        });
+    }
+
+    // Cross-reference to GHL via phone map
+    try {
+        const phoneMap = await buildPhoneMap(locationFilter);
+        for (const r of result) {
+            const normalized = normalizePhone(r.phone);
+            const match = phoneMap.get(normalized);
+            if (match) {
+                r.ghlContactId = match.contactId;
+                r.ghlContactName = match.contactName;
+                r.locationKey = match.locationKey;
+            }
+        }
+    } catch {
+        // Phone map failed
+    }
+
+    result.sort((a, b) => b.consultDate.localeCompare(a.consultDate));
+    consultCache.set(cacheKey, { data: result, timestamp: now });
+    console.log(`[ghl-conversations] Found ${result.length} consult-only patients (${result.filter(c => c.ghlContactId).length} matched to GHL)`);
+
+    return result;
 }

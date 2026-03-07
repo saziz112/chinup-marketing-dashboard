@@ -57,6 +57,7 @@ export interface GHLOpportunity {
     contactPhone: string;
     contactTags: string[];
     contactDateUpdated?: string; // from nested contact object — reflects last contact activity
+    contactDND?: boolean; // native GHL DND status
     assignedTo: string | null;
     createdAt: string;
     updatedAt: string;
@@ -192,6 +193,7 @@ function parseOpportunity(o: any, locationKey: LocationKey): GHLOpportunity {
         contactPhone: o.contact?.phone || '',
         contactTags: o.contact?.tags || [],
         contactDateUpdated: o.contact?.dateUpdated || undefined,
+        contactDND: o.contact?.dnd === true || o.contact?.dndSettings?.Call?.status === 'active' || o.contact?.dndSettings?.SMS?.status === 'active' || false,
         assignedTo: o.assignedTo || null,
         createdAt: o.createdAt,
         updatedAt: o.updatedAt,

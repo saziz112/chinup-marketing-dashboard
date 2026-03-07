@@ -90,12 +90,13 @@ export async function sendSMS(
  */
 export function renderTemplate(
     template: string,
-    vars: { firstName?: string; locationName?: string; lastService?: string },
+    vars: { firstName?: string; locationName?: string; lastService?: string; serviceName?: string },
 ): string {
     let rendered = template;
     rendered = rendered.replace(/\{\{firstName\}\}/g, vars.firstName || 'there');
     rendered = rendered.replace(/\{\{locationName\}\}/g, vars.locationName || 'Chin Up!');
     rendered = rendered.replace(/\{\{lastService\}\}/g, vars.lastService || 'your treatment');
+    rendered = rendered.replace(/\{\{serviceName\}\}/g, vars.serviceName || 'your appointment');
     return rendered;
 }
 
@@ -171,25 +172,41 @@ export async function sendBulkSMS(
 /**
  * Pre-built SMS templates
  */
-export const SMS_TEMPLATES = {
-    'reactivation': {
-        label: 'Re-activation (Stale)',
-        template: "Hi {{firstName}}, it's been a while since we've seen you at Chin Up! We'd love to welcome you back. Reply DELETE to opt out.",
+export const SMS_TEMPLATES: Record<string, { label: string; template: string }> = {
+    'cancelled': {
+        label: "Let's Reschedule",
+        template: "Hi {{firstName}}, we noticed you had to reschedule your appointment at Chin Up! We totally understand \u2014 life happens. We'd love to get you rebooked whenever you're ready. Reply YES to schedule. Reply STOP to opt out.",
     },
-    'winback': {
-        label: 'Win-back (Dormant)',
-        template: "Hi {{firstName}}, we miss you at Chin Up! Aesthetics. We have a special offer just for returning clients \u2014 reply YES to learn more. Reply DELETE to opt out.",
+    'engaged': {
+        label: 'Ready to Book?',
+        template: "Hi {{firstName}}, we chatted recently and wanted to follow up! Would you like to schedule your consultation at Chin Up? Reply YES to book. Reply STOP to opt out.",
     },
-    'followup': {
-        label: 'Follow-up (At-risk)',
-        template: "Hi {{firstName}}, just checking in! We noticed you had an inquiry with us. Would you like to schedule? Reply DELETE to opt out.",
+    'consult-only': {
+        label: "We'd Love to See You",
+        template: "Hi {{firstName}}, thanks for coming in for your consultation at Chin Up! We'd love to help you take the next step. Reply YES if you'd like to schedule your treatment. Reply STOP to opt out.",
     },
-    'lapsed-patient': {
-        label: 'Lapsed Patient',
-        template: "Hi {{firstName}}, we miss seeing you at Chin Up! {{locationName}}! It's been a while since your last visit. We'd love to have you back \u2014 reply YES to book. Reply DELETE to opt out.",
+    'lapsed-recent': {
+        label: 'Time for a Refresh',
+        template: "Hi {{firstName}}, it's been a little while since your last visit at Chin Up! {{locationName}}. Ready for a refresh? Reply YES to book. Reply STOP to opt out.",
+    },
+    'ghost': {
+        label: 'Still Thinking?',
+        template: "Hi {{firstName}}, you were interested in treatments at Chin Up! Just wanted to follow up \u2014 we'd love to help you get started. Reply YES for our current availability. Reply STOP to opt out.",
     },
     'lapsed-vip': {
-        label: 'Lapsed VIP Patient',
-        template: "Hi {{firstName}}, as one of our valued patients at Chin Up!, we wanted to reach out personally. We have some exciting new treatments and would love to see you again. Reply YES to learn more. Reply DELETE to opt out.",
+        label: 'VIP Welcome Back',
+        template: "Hi {{firstName}}, as one of our valued patients at Chin Up!, we wanted to personally invite you back. We've added exciting new treatments \u2014 reply YES to learn more. Reply STOP to opt out.",
+    },
+    'pipeline-followup': {
+        label: 'Quick Follow-Up',
+        template: "Hi {{firstName}}, just following up on your inquiry with Chin Up! Would you like to schedule a consultation? Reply YES and we'll get you booked. Reply STOP to opt out.",
+    },
+    'untouched': {
+        label: 'We Dropped the Ball',
+        template: "Hi {{firstName}}, thanks for your interest in Chin Up! Aesthetics. We apologize for the delayed follow-up. We'd still love to help \u2014 would you like to schedule a consultation? Reply YES to book. Reply STOP to opt out.",
+    },
+    'lapsed-long': {
+        label: 'We Miss You',
+        template: "Hi {{firstName}}, it's been a while! We'd love to welcome you back to Chin Up! with something special for returning patients. Reply YES for details. Reply STOP to opt out.",
     },
 };
