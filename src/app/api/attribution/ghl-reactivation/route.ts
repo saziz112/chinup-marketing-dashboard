@@ -10,6 +10,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@vercel/postgres';
 import { type LocationKey, isGHLConfigured, getStaleLeads } from '@/lib/integrations/gohighlevel';
+
+export const maxDuration = 60; // 60s for heavy multi-location API calls
 import {
     getConversationsIntelligence,
     getLapsedPatients,
