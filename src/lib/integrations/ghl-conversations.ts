@@ -1613,7 +1613,9 @@ export async function getConsultOnlyPatients(
     }
 
     // Find completed appointments with $0 revenue that day
+    // Exclude appointments from last 7 days (too soon to reach out)
     const SKIP_SESSION = /follow.?up|block|unavailable/i;
+    const sevenDaysAgo = new Date(now - 7 * 86400000).toISOString().split('T')[0];
     const zeroRevenueAppts: StaffAppointment[] = [];
 
     for (const appt of appointments) {
@@ -1625,6 +1627,8 @@ export async function getConsultOnlyPatients(
         if (SKIP_SESSION.test(sessionName)) continue;
 
         const apptDate = (appt.StartDateTime || '').split('T')[0];
+        if (apptDate > sevenDaysAgo) continue; // Too recent — give them time to book on their own
+
         const revenueKey = `${appt.ClientId}_${apptDate}`;
         const dayRevenue = revenueByClientDate.get(revenueKey) || 0;
 
@@ -1661,16 +1665,16 @@ export async function getConsultOnlyPatients(
         }
     }
 
-    // Build results — exclude clients who had ANY revenue-generating sale AFTER the qualifying appointment
+    // Build results — exclude clients who had ANY revenue in the lookback period
+    // (not just after the appointment — covers series purchases before follow-up consultations)
     const result: ConsultOnlyPatient[] = [];
 
     for (const [clientId, appt] of byClient) {
-        const apptDate = (appt.StartDateTime || '').split('T')[0];
         const clientSales = salesByClient.get(clientId) || [];
 
-        // Check if any sale with revenue > 0 happened AFTER this appointment
-        const hasRevenueAfter = clientSales.some(s => s.date > apptDate && s.revenue > 0);
-        if (hasRevenueAfter) continue; // They eventually converted — skip
+        // If this client has ANY revenue-generating sale in the period, they're not "consulted only"
+        const hasAnyRevenue = clientSales.some(s => s.revenue > 0);
+        if (hasAnyRevenue) continue; // They've paid for treatments — skip
 
         const client = clientMap.get(clientId);
         const phone = client?.MobilePhone || client?.HomePhone || '';
