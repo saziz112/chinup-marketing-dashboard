@@ -14,6 +14,8 @@ import {
     LocationKey, GHLOpportunity, getLocations, getStaleLeads, getFullPipelineData,
 } from '@/lib/integrations/gohighlevel';
 import { getClientMatchMaps, normalizePhone, type Client, getPurchasingClients, getAppointments, getClients, type StaffAppointment } from '@/lib/integrations/mindbody';
+import { checkDNDSimple } from '@/lib/dnd-check';
+import { pgCacheGet, pgCacheSet } from '@/lib/pg-cache';
 
 const GHL_V2_BASE = 'https://services.leadconnectorhq.com';
 const GHL_API_VERSION = '2021-07-28';
@@ -327,7 +329,7 @@ export async function getContactEngagement(
         phone = first.phone || '';
         email = first.email || '';
         if (first.tags) tags.push(...first.tags);
-        isDND = tags.some(t => /dnd|do.not.disturb|opted.out/i.test(t));
+        isDND = checkDNDSimple(false, tags, 'sms', phone || 'unknown');
     }
 
     // For each conversation, get messages (limit to most recent 30 per conv for efficiency)
@@ -1181,9 +1183,18 @@ export async function getLapsedPatients(
     locationFilter?: LocationKey,
 ): Promise<LapsedPatient[]> {
     const cacheKey = `lapsed_${minDaysSinceVisit}_${locationFilter || 'all'}`;
+
+    // Tier 1: in-memory cache
     const cached = lapsedCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < LAPSED_CACHE_TTL) {
         return cached.data;
+    }
+
+    // Tier 2: Postgres cache
+    const pgCached = await pgCacheGet<LapsedPatient[]>(cacheKey);
+    if (pgCached) {
+        lapsedCache.set(cacheKey, { data: pgCached, timestamp: Date.now() });
+        return pgCached;
     }
 
     // Look back 18 months for purchasing clients
@@ -1238,9 +1249,9 @@ export async function getLapsedPatients(
         });
     }
 
-    // Cross-reference with GHL contacts via phone map (instant, no API calls)
+    // Cross-reference with GHL contacts via unified phone map (all locations for dedup)
     try {
-        const phoneMap = await buildPhoneMap(locationFilter);
+        const phoneMap = await buildUnifiedPhoneMap(locationFilter);
         for (const patient of lapsed) {
             if (patient.ghlContactId) continue;
             const normalized = normalizePhone(patient.phone);
@@ -1259,7 +1270,9 @@ export async function getLapsedPatients(
     // Sort by revenue (highest value first)
     lapsed.sort((a, b) => b.totalRevenue - a.totalRevenue);
 
+    // Save to both caches
     lapsedCache.set(cacheKey, { data: lapsed, timestamp: now });
+    await pgCacheSet(cacheKey, lapsed).catch(() => {});
     console.log(`[ghl-conversations] Found ${lapsed.length} lapsed patients (${lapsed.filter(l => l.ghlContactId).length} matched to GHL)`);
 
     return lapsed;
@@ -1267,25 +1280,27 @@ export async function getLapsedPatients(
 
 // --- Phone Map Utility (shared by lapsed, cancelled, consult-only) ---
 
-interface PhoneMapEntry {
+export interface PhoneMapEntry {
     contactId: string;
     contactName: string;
+    contactEmail: string;
     locationKey: LocationKey;
     tags: string[];
-    dnd: boolean;
+    dnd: boolean;       // DND for SMS
+    dndEmail: boolean;  // DND for Email
 }
 
 let phoneMapCache: { data: Map<string, PhoneMapEntry>; timestamp: number } | null = null;
 const PHONE_MAP_CACHE_TTL = 30 * 60 * 1000; // 30 min (matches pipeline cache)
 
 /**
- * Build a phone→contactId map from all pipeline opportunity data.
- * Uses already-cached getFullPipelineData() — zero additional API calls.
+ * Build a unified phone→contactId map from ALL pipeline opportunity data.
+ * Cross-location dedup: if same phone in multiple locations, DND = true if ANY location is DND.
+ * Picks the location with the most recent activity for contactId.
  */
-export async function buildPhoneMap(locationFilter?: LocationKey): Promise<Map<string, PhoneMapEntry>> {
+export async function buildUnifiedPhoneMap(locationFilter?: LocationKey): Promise<Map<string, PhoneMapEntry>> {
     if (phoneMapCache && (Date.now() - phoneMapCache.timestamp) < PHONE_MAP_CACHE_TTL) {
         if (!locationFilter) return phoneMapCache.data;
-        // Filter cached map by location
         const filtered = new Map<string, PhoneMapEntry>();
         for (const [phone, entry] of phoneMapCache.data) {
             if (entry.locationKey === locationFilter) filtered.set(phone, entry);
@@ -1296,21 +1311,18 @@ export async function buildPhoneMap(locationFilter?: LocationKey): Promise<Map<s
     const pipelineData = await getFullPipelineData();
     const phoneMap = new Map<string, PhoneMapEntry>();
 
+    // Collect ALL entries per phone across all locations
+    const phoneEntries = new Map<string, { entries: Array<{ opp: GHLOpportunity; locationKey: LocationKey }> }>();
+
     for (const loc of pipelineData.locations) {
         for (const pipeline of loc.pipelines) {
             for (const stage of pipeline.stages) {
                 for (const opp of stage.opportunities) {
                     if (opp.contactPhone && opp.contactId) {
                         const normalized = normalizePhone(opp.contactPhone);
-                        if (normalized.length >= 10 && !phoneMap.has(normalized)) {
-                            phoneMap.set(normalized, {
-                                contactId: opp.contactId,
-                                contactName: opp.contactName,
-                                locationKey: opp.locationKey,
-                                tags: opp.contactTags || [],
-                                dnd: opp.contactDND === true
-                                    || (opp.contactTags || []).some(t => /dnd|do.not.disturb|opted.out|unsubscribe/i.test(t)),
-                            });
+                        if (normalized.length >= 10) {
+                            if (!phoneEntries.has(normalized)) phoneEntries.set(normalized, { entries: [] });
+                            phoneEntries.get(normalized)!.entries.push({ opp, locationKey: loc.location });
                         }
                     }
                 }
@@ -1318,8 +1330,39 @@ export async function buildPhoneMap(locationFilter?: LocationKey): Promise<Map<s
         }
     }
 
+    // For each phone, pick best entry and merge DND across all locations
+    for (const [phone, { entries }] of phoneEntries) {
+        // DND = true if ANY location has DND
+        const dnd = entries.some(e => checkDNDSimple(e.opp.contactDND ?? false, e.opp.contactTags || [], 'sms', phone));
+        const dndEmail = entries.some(e => checkDNDSimple(e.opp.contactDND ?? false, e.opp.contactTags || [], 'email', e.opp.contactEmail || phone));
+
+        // Pick entry with most recent activity (updatedAt)
+        let best = entries[0];
+        for (let i = 1; i < entries.length; i++) {
+            const entryDate = entries[i].opp.updatedAt || entries[i].opp.createdAt || '';
+            const bestDate = best.opp.updatedAt || best.opp.createdAt || '';
+            if (entryDate > bestDate) best = entries[i];
+        }
+
+        // Merge all tags from all locations
+        const allTags = new Set<string>();
+        for (const e of entries) {
+            for (const t of (e.opp.contactTags || [])) allTags.add(t);
+        }
+
+        phoneMap.set(phone, {
+            contactId: best.opp.contactId,
+            contactName: best.opp.contactName,
+            contactEmail: best.opp.contactEmail || '',
+            locationKey: best.locationKey,
+            tags: [...allTags],
+            dnd,
+            dndEmail,
+        });
+    }
+
     phoneMapCache = { data: phoneMap, timestamp: Date.now() };
-    console.log(`[ghl-conversations] Built phone map: ${phoneMap.size} contacts`);
+    console.log(`[ghl-conversations] Built unified phone map: ${phoneMap.size} contacts (${phoneEntries.size} unique phones from ${pipelineData.locations.length} locations)`);
 
     if (locationFilter) {
         const filtered = new Map<string, PhoneMapEntry>();
@@ -1330,6 +1373,9 @@ export async function buildPhoneMap(locationFilter?: LocationKey): Promise<Map<s
     }
     return phoneMap;
 }
+
+/** @deprecated Use buildUnifiedPhoneMap instead */
+export const buildPhoneMap = buildUnifiedPhoneMap;
 
 // --- Cancelled / No-Show Appointment Detection (Campaign 1) ---
 
@@ -1352,36 +1398,51 @@ export async function getCancelledAppointments(
     locationFilter?: LocationKey,
 ): Promise<CancelledAppointment[]> {
     const cacheKey = `cancelled_${locationFilter || 'all'}`;
+
+    // Tier 1: in-memory cache
     const cached = cancelledCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < LAPSED_CACHE_TTL) {
         return cached.data;
     }
 
+    // Tier 2: Postgres cache
+    const pgCached = await pgCacheGet<CancelledAppointment[]>(cacheKey);
+    if (pgCached) {
+        cancelledCache.set(cacheKey, { data: pgCached, timestamp: Date.now() });
+        return pgCached;
+    }
+
     const now = Date.now();
-    const startDate = new Date(now - 90 * 86400000).toISOString().split('T')[0];
+    const startDate = new Date(now - 180 * 86400000).toISOString().split('T')[0]; // 180 days (was 90)
     const endDate = new Date().toISOString().split('T')[0];
+    const todayISO = new Date().toISOString();
 
     const appointments = await getAppointments(startDate, endDate);
 
-    // Separate completed and cancelled/no-show appointments
+    // Separate completed, future-booked, and cancelled/no-show appointments
     const completedByClient = new Set<string>();
+    const futureBookedByClient = new Set<string>(); // rescheduled check
     const cancelledAppts: StaffAppointment[] = [];
 
     for (const appt of appointments) {
         const status = (appt.Status || '').toLowerCase();
-        if (status === 'completed' || status === 'confirmed' || status === 'arrived') {
+        if (status === 'completed' || status === 'arrived') {
             if (appt.ClientId) completedByClient.add(appt.ClientId);
-        } else if (/cancel|no.?show|late.?cancel/i.test(status)) {
+        } else if ((status === 'booked' || status === 'confirmed') && appt.StartDateTime > todayISO) {
+            // Future appointment = they rebooked
+            if (appt.ClientId) futureBookedByClient.add(appt.ClientId);
+        } else if (/cancel|no.?show|late.?cancel|early.?cancel/i.test(status)) {
             cancelledAppts.push(appt);
         }
     }
 
     // Deduplicate by client (keep most recent cancelled appointment)
-    // Exclude clients who have a completed appointment (they came back)
+    // Exclude clients who completed OR have a future booking (rescheduled)
     const byClient = new Map<string, StaffAppointment>();
     for (const appt of cancelledAppts) {
         if (!appt.ClientId) continue;
         if (completedByClient.has(appt.ClientId)) continue; // They came back
+        if (futureBookedByClient.has(appt.ClientId)) continue; // They rescheduled
         const existing = byClient.get(appt.ClientId);
         if (!existing || appt.StartDateTime > existing.StartDateTime) {
             byClient.set(appt.ClientId, appt);
@@ -1391,8 +1452,6 @@ export async function getCancelledAppointments(
     // Build result list
     const result: CancelledAppointment[] = [];
     for (const [clientId, appt] of byClient) {
-        const phone = appt.Client?.FirstName ? '' : ''; // Client object may not have phone
-        // We'll need to look up client phone from purchasing clients cache
         result.push({
             mbClientId: clientId,
             firstName: appt.Client?.FirstName || '',
@@ -1447,9 +1506,9 @@ export async function getCancelledAppointments(
     // Filter: must have phone
     const withPhone = result.filter(r => r.phone);
 
-    // Cross-reference to GHL via phone map
+    // Cross-reference to GHL via unified phone map (all locations for dedup)
     try {
-        const phoneMap = await buildPhoneMap(locationFilter);
+        const phoneMap = await buildUnifiedPhoneMap(locationFilter);
         for (const r of withPhone) {
             const normalized = normalizePhone(r.phone);
             const match = phoneMap.get(normalized);
@@ -1464,7 +1523,10 @@ export async function getCancelledAppointments(
     }
 
     withPhone.sort((a, b) => b.appointmentDate.localeCompare(a.appointmentDate));
+
+    // Save to both caches
     cancelledCache.set(cacheKey, { data: withPhone, timestamp: now });
+    await pgCacheSet(cacheKey, withPhone).catch(() => {});
     console.log(`[ghl-conversations] Found ${withPhone.length} cancelled/no-show appointments (${withPhone.filter(c => c.ghlContactId).length} matched to GHL)`);
 
     return withPhone;
@@ -1486,71 +1548,109 @@ export interface ConsultOnlyPatient {
 
 const consultCache = new Map<string, CacheEntry<ConsultOnlyPatient[]>>();
 
+/**
+ * NEW ALGORITHM: Find ANY completed appointment (except Follow-Up / block / unavailable)
+ * where the client had $0 revenue on that same day. Much broader than old "consult" name match.
+ *
+ * Steps:
+ * 1. getAppointments(180 days)
+ * 2. getPurchasingClients(180 days) → build Map<clientId_date, totalRevenue>
+ * 3. For each completed/arrived appointment:
+ *    a. SKIP if SessionType.Name matches /follow.?up/i
+ *    b. SKIP if SessionType.Name matches /block|unavailable/i (admin blocks)
+ *    c. Lookup revenue for (ClientId, appointmentDate as YYYY-MM-DD)
+ *    d. If revenue == 0 → untreated consultation
+ * 4. Deduplicate by client (keep most recent)
+ * 5. Exclude clients who had ANY revenue-generating sale AFTER the qualifying appointment
+ * 6. Get phone via purchasing clients + getClients() fallback
+ * 7. Match to GHL via unified phone map
+ */
 export async function getConsultOnlyPatients(
     locationFilter?: LocationKey,
 ): Promise<ConsultOnlyPatient[]> {
     const cacheKey = `consult_${locationFilter || 'all'}`;
+
+    // Tier 1: in-memory cache
     const cached = consultCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < LAPSED_CACHE_TTL) {
         return cached.data;
+    }
+
+    // Tier 2: Postgres cache
+    const pgCached = await pgCacheGet<ConsultOnlyPatient[]>(cacheKey);
+    if (pgCached) {
+        consultCache.set(cacheKey, { data: pgCached, timestamp: Date.now() });
+        return pgCached;
     }
 
     const now = Date.now();
     const startDate = new Date(now - 180 * 86400000).toISOString().split('T')[0];
     const endDate = new Date().toISOString().split('T')[0];
 
-    // Get appointments and sales data
+    // Fetch appointments and sales in parallel
     const [appointments, purchasingData] = await Promise.all([
         getAppointments(startDate, endDate),
         getPurchasingClients(startDate, endDate),
     ]);
 
-    // Find completed consultations
-    const consultAppts: StaffAppointment[] = [];
-    for (const appt of appointments) {
-        const status = (appt.Status || '').toLowerCase();
-        const sessionName = (appt.SessionType?.Name || '').toLowerCase();
-        if ((status === 'completed' || status === 'confirmed' || status === 'arrived')
-            && /consult/i.test(sessionName)) {
-            consultAppts.push(appt);
-        }
-    }
+    // Build revenue map: "clientId_YYYY-MM-DD" → total revenue that day
+    const revenueByClientDate = new Map<string, number>();
+    // Also track all sale dates per client for the "any revenue after" check
+    const salesByClient = new Map<string, Array<{ date: string; revenue: number }>>();
 
-    // Build a set of clients who made purchases AFTER their consultation
-    const salesByClient = new Map<string, string[]>(); // clientId → sale dates
     for (const sale of purchasingData.sales) {
         if (!sale.ClientId) continue;
-        const saleDate = sale.SaleDate || sale.SaleDateTime || '';
+        const saleDate = (sale.SaleDate || sale.SaleDateTime || '').split('T')[0];
+        if (!saleDate) continue;
+        const total = sale.PurchasedItems?.reduce((s, i) => s + (i.TotalAmount || 0), 0) || 0;
+
+        const key = `${sale.ClientId}_${saleDate}`;
+        revenueByClientDate.set(key, (revenueByClientDate.get(key) || 0) + total);
+
         if (!salesByClient.has(sale.ClientId)) salesByClient.set(sale.ClientId, []);
-        salesByClient.get(sale.ClientId)!.push(saleDate);
+        salesByClient.get(sale.ClientId)!.push({ date: saleDate, revenue: total });
     }
 
-    // Deduplicate consults by client (keep most recent)
-    const consultByClient = new Map<string, StaffAppointment>();
-    for (const appt of consultAppts) {
+    // Find completed appointments with $0 revenue that day
+    const SKIP_SESSION = /follow.?up|block|unavailable/i;
+    const zeroRevenueAppts: StaffAppointment[] = [];
+
+    for (const appt of appointments) {
+        const status = (appt.Status || '').toLowerCase();
+        if (status !== 'completed' && status !== 'arrived') continue;
         if (!appt.ClientId) continue;
-        const existing = consultByClient.get(appt.ClientId);
-        if (!existing || appt.StartDateTime > existing.StartDateTime) {
-            consultByClient.set(appt.ClientId, appt);
+
+        const sessionName = appt.SessionType?.Name || '';
+        if (SKIP_SESSION.test(sessionName)) continue;
+
+        const apptDate = (appt.StartDateTime || '').split('T')[0];
+        const revenueKey = `${appt.ClientId}_${apptDate}`;
+        const dayRevenue = revenueByClientDate.get(revenueKey) || 0;
+
+        if (dayRevenue === 0) {
+            zeroRevenueAppts.push(appt);
         }
     }
 
-    // Filter: clients who consulted but never purchased after
-    const result: ConsultOnlyPatient[] = [];
+    // Deduplicate by client (keep most recent zero-revenue appointment)
+    const byClient = new Map<string, StaffAppointment>();
+    for (const appt of zeroRevenueAppts) {
+        const existing = byClient.get(appt.ClientId!);
+        if (!existing || appt.StartDateTime > existing.StartDateTime) {
+            byClient.set(appt.ClientId!, appt);
+        }
+    }
+
+    // Build client map for phone lookup
     const clientMap = new Map<string, Client>();
     for (const c of purchasingData.clients) clientMap.set(c.Id, c);
 
     // Collect client IDs we need to fetch (not in purchasing clients)
     const needsFetch: string[] = [];
-    for (const [clientId, appt] of consultByClient) {
-        const clientSales = salesByClient.get(clientId) || [];
-        const consultDate = appt.StartDateTime;
-        const hasPurchaseAfter = clientSales.some(sd => sd > consultDate);
-        if (hasPurchaseAfter) continue;
+    for (const clientId of byClient.keys()) {
         if (!clientMap.has(clientId)) needsFetch.push(clientId);
     }
 
-    // Fetch missing client records for phone numbers
     if (needsFetch.length > 0) {
         try {
             const fetched = await getClients(needsFetch);
@@ -1560,13 +1660,16 @@ export async function getConsultOnlyPatients(
         }
     }
 
-    for (const [clientId, appt] of consultByClient) {
-        const clientSales = salesByClient.get(clientId) || [];
-        const consultDate = appt.StartDateTime;
+    // Build results — exclude clients who had ANY revenue-generating sale AFTER the qualifying appointment
+    const result: ConsultOnlyPatient[] = [];
 
-        // Check if any sale happened AFTER the consultation
-        const hasPurchaseAfter = clientSales.some(sd => sd > consultDate);
-        if (hasPurchaseAfter) continue; // They converted — skip
+    for (const [clientId, appt] of byClient) {
+        const apptDate = (appt.StartDateTime || '').split('T')[0];
+        const clientSales = salesByClient.get(clientId) || [];
+
+        // Check if any sale with revenue > 0 happened AFTER this appointment
+        const hasRevenueAfter = clientSales.some(s => s.date > apptDate && s.revenue > 0);
+        if (hasRevenueAfter) continue; // They eventually converted — skip
 
         const client = clientMap.get(clientId);
         const phone = client?.MobilePhone || client?.HomePhone || '';
@@ -1578,16 +1681,16 @@ export async function getConsultOnlyPatients(
             lastName: appt.Client?.LastName || client?.LastName || '',
             phone,
             consultDate: appt.StartDateTime,
-            consultService: appt.SessionType?.Name || 'Consultation',
+            consultService: appt.SessionType?.Name || 'Appointment',
             ghlContactId: undefined,
             ghlContactName: undefined,
             locationKey: undefined,
         });
     }
 
-    // Cross-reference to GHL via phone map
+    // Cross-reference to GHL via unified phone map
     try {
-        const phoneMap = await buildPhoneMap(locationFilter);
+        const phoneMap = await buildUnifiedPhoneMap(locationFilter);
         for (const r of result) {
             const normalized = normalizePhone(r.phone);
             const match = phoneMap.get(normalized);
@@ -1602,7 +1705,10 @@ export async function getConsultOnlyPatients(
     }
 
     result.sort((a, b) => b.consultDate.localeCompare(a.consultDate));
+
+    // Save to both caches
     consultCache.set(cacheKey, { data: result, timestamp: now });
+    await pgCacheSet(cacheKey, result).catch(() => {});
     console.log(`[ghl-conversations] Found ${result.length} consult-only patients (${result.filter(c => c.ghlContactId).length} matched to GHL)`);
 
     return result;

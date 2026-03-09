@@ -22,6 +22,9 @@ export async function initAllTables() {
         initCompetitorNotesTable(),
         initCreativeImageTagsTable(),
         initCreativePostUsageTable(),
+        initCampaignRunsTable(),
+        initCampaignContactsTable(),
+        initSmsCacheTable(),
     ]);
 }
 
@@ -326,4 +329,60 @@ async function initCreativePostUsageTable() {
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_cpu_creative ON creative_post_usage(creative_image_id)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_cpu_post ON creative_post_usage(content_post_id)`;
+}
+
+/* ── SMS/Email Campaign Tables ─────────────────────────────── */
+
+async function initCampaignRunsTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS campaign_runs (
+            run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            segment VARCHAR(50) NOT NULL,
+            segment_label VARCHAR(100) NOT NULL,
+            channel VARCHAR(10) NOT NULL DEFAULT 'sms',
+            location_key VARCHAR(20),
+            total_targeted INT DEFAULT 0,
+            total_sent INT DEFAULT 0,
+            total_failed INT DEFAULT 0,
+            total_skipped INT DEFAULT 0,
+            message_template_key VARCHAR(50),
+            run_by VARCHAR(255),
+            run_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_campaign_runs_segment ON campaign_runs(segment)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_campaign_runs_run_at ON campaign_runs(run_at)`;
+}
+
+async function initCampaignContactsTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS campaign_contacts (
+            id SERIAL PRIMARY KEY,
+            run_id UUID NOT NULL REFERENCES campaign_runs(run_id),
+            contact_id VARCHAR(100) NOT NULL,
+            phone_hash VARCHAR(64),
+            email_hash VARCHAR(64),
+            location_key VARCHAR(20),
+            channel VARCHAR(10) NOT NULL DEFAULT 'sms',
+            status VARCHAR(20) NOT NULL DEFAULT 'sent',
+            error_message VARCHAR(200),
+            sent_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_cc_run ON campaign_contacts(run_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_cc_phone_hash ON campaign_contacts(phone_hash)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_cc_email_hash ON campaign_contacts(email_hash)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_cc_sent_at ON campaign_contacts(sent_at)`;
+}
+
+async function initSmsCacheTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS sms_data_cache (
+            cache_key VARCHAR(100) PRIMARY KEY,
+            cache_data JSONB NOT NULL,
+            expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_sms_cache_expires ON sms_data_cache(expires_at)`;
 }

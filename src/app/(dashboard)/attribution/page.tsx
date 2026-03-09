@@ -156,9 +156,9 @@ export default function LeadsPipelinePage() {
     const [transcriptLoading, setTranscriptLoading] = useState(false);
     const [transcriptContactName, setTranscriptContactName] = useState('');
 
-    // SMS Re-activation state
+    // SMS/Email Re-activation state
     const [smsOpen, setSmsOpen] = useState(false);
-    const [smsStep, setSmsStep] = useState<1 | 2 | 3>(1); // 1: select segment, 2: compose, 3: results
+    const [smsStep, setSmsStep] = useState<1 | 2 | 3>(1);
     const [smsSegment, setSmsSegment] = useState<string>('cancelled');
     const [smsData, setSmsData] = useState<any>(null);
     const [smsLoading, setSmsLoading] = useState(false);
@@ -167,6 +167,12 @@ export default function LeadsPipelinePage() {
     const [smsSelected, setSmsSelected] = useState<Set<string>>(new Set());
     const [smsSending, setSmsSending] = useState(false);
     const [smsResults, setSmsResults] = useState<any>(null);
+    const [smsChannel, setSmsChannel] = useState<'sms' | 'email'>('sms');
+    const [smsSubject, setSmsSubject] = useState('');
+    const [smsLocationFilter, setSmsLocationFilter] = useState<string>('all');
+    const [smsTestSending, setSmsTestSending] = useState(false);
+    const [smsTestResult, setSmsTestResult] = useState<{ success: boolean; message: string } | null>(null);
+    const [campaignHistory, setCampaignHistory] = useState<Record<string, { runAt: string; totalSent: number; channel: string }>>({});
 
     // Fetch pipeline data
     const fetchPipeline = useCallback(async () => {
@@ -315,14 +321,16 @@ export default function LeadsPipelinePage() {
         }
     }, []);
 
-    // Fetch SMS eligible contacts — all segments go through the API route
+    // Fetch SMS eligible contacts — always fetch ALL locations, filter client-side
     const fetchSmsContacts = useCallback(async (segment: string) => {
         setSmsLoading(true);
         setSmsError(null);
         setSmsData(null);
+        setSmsLocationFilter('all');
+        setSmsTestResult(null);
         try {
             const params = new URLSearchParams({ segment });
-            if (location !== 'all') params.set('location', location);
+            // Always fetch all locations — user filters in Step 2 via chips
             const res = await fetch(`/api/attribution/ghl-reactivation?${params}`);
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({}));
@@ -331,25 +339,39 @@ export default function LeadsPipelinePage() {
             const data = await res.json();
             setSmsData(data);
             setSmsSelected(new Set((data.contacts || []).map((c: any) => c.contactId)));
-            // Auto-select the matching template
-            const tmpl = data.templates?.[segment];
-            if (tmpl?.template) setSmsMessage(tmpl.template);
+            // Auto-select the matching template based on channel
+            if (smsChannel === 'email') {
+                const etmpl = data.emailTemplates?.[segment];
+                if (etmpl?.template) { setSmsMessage(etmpl.template); setSmsSubject(etmpl.subject || ''); }
+            } else {
+                const tmpl = data.templates?.[segment];
+                if (tmpl?.template) setSmsMessage(tmpl.template);
+            }
+            // Store last campaign info
+            if (data.lastCampaign) {
+                setCampaignHistory(prev => ({ ...prev, [segment]: data.lastCampaign }));
+            }
         } catch (err: unknown) {
             setSmsError(err instanceof Error ? err.message : 'Failed to load contacts');
         } finally {
             setSmsLoading(false);
         }
-    }, [location]);
+    }, [smsChannel]);
 
-    // Send SMS campaign
+    // Send SMS/Email campaign
     const sendSmsCampaign = useCallback(async () => {
         if (!smsData?.contacts || smsSelected.size === 0 || !smsMessage) return;
         setSmsSending(true);
         try {
-            // Group by location
+            // Filter to visible contacts (respecting location filter)
+            const visibleContacts = smsLocationFilter === 'all'
+                ? smsData.contacts
+                : smsData.contacts.filter((c: any) => c.locationKey === smsLocationFilter);
+            const selectedContacts = visibleContacts.filter((c: any) => smsSelected.has(c.contactId));
+
+            // Group by location for sending
             const contactsByLocation = new Map<string, any[]>();
-            for (const c of smsData.contacts) {
-                if (!smsSelected.has(c.contactId)) continue;
+            for (const c of selectedContacts) {
                 const list = contactsByLocation.get(c.locationKey) || [];
                 list.push(c);
                 contactsByLocation.set(c.locationKey, list);
@@ -365,6 +387,9 @@ export default function LeadsPipelinePage() {
                         contacts,
                         message: smsMessage,
                         locationKey: locKey,
+                        channel: smsChannel,
+                        segment: smsSegment,
+                        subject: smsChannel === 'email' ? smsSubject : undefined,
                     }),
                 });
                 if (res.ok) {
@@ -376,14 +401,49 @@ export default function LeadsPipelinePage() {
             const totalSent = allResults.reduce((s, r) => s + (r.sent || 0), 0);
             const totalFailed = allResults.reduce((s, r) => s + (r.failed || 0), 0);
             const totalSkipped = allResults.reduce((s, r) => s + (r.skipped || 0), 0);
-            setSmsResults({ sent: totalSent, failed: totalFailed, skipped: totalSkipped });
+            const emailCapped = allResults.some(r => r.emailCapped);
+            setSmsResults({ sent: totalSent, failed: totalFailed, skipped: totalSkipped, channel: smsChannel, emailCapped });
             setSmsStep(3);
         } catch {
             // Error
         } finally {
             setSmsSending(false);
         }
-    }, [smsData, smsSelected, smsMessage]);
+    }, [smsData, smsSelected, smsMessage, smsChannel, smsSegment, smsSubject, smsLocationFilter]);
+
+    // Send test message
+    const sendTestMessage = useCallback(async () => {
+        if (!smsMessage) return;
+        setSmsTestSending(true);
+        setSmsTestResult(null);
+        try {
+            // Use first visible location or decatur
+            const locKey = smsLocationFilter !== 'all' ? smsLocationFilter : (smsData?.contacts?.[0]?.locationKey || 'decatur');
+            const res = await fetch('/api/attribution/ghl-reactivation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    testMode: true,
+                    channel: smsChannel,
+                    message: smsMessage,
+                    locationKey: locKey,
+                    testPhone: '4046685785',
+                    testEmail: 'saziz112@gmail.com',
+                    subject: smsChannel === 'email' ? smsSubject : undefined,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setSmsTestResult({ success: true, message: `Test ${smsChannel} sent to ${data.recipient}` });
+            } else {
+                setSmsTestResult({ success: false, message: data.error || 'Test failed' });
+            }
+        } catch (err: unknown) {
+            setSmsTestResult({ success: false, message: err instanceof Error ? err.message : 'Test failed' });
+        } finally {
+            setSmsTestSending(false);
+        }
+    }, [smsMessage, smsChannel, smsSubject, smsLocationFilter, smsData]);
 
     // Apply selected stage moves
     const applyReorgMoves = useCallback(async () => {
@@ -1379,7 +1439,7 @@ export default function LeadsPipelinePage() {
                                 </div>
                             )}
 
-                            {/* SMS Re-activation Modal */}
+                            {/* SMS/Email Re-activation Modal */}
                             {smsOpen && (
                                 <div style={{
                                     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
@@ -1393,7 +1453,7 @@ export default function LeadsPipelinePage() {
                                         boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
                                     }} onClick={e => e.stopPropagation()}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                            <h3 style={{ margin: 0 }}>SMS Re-activation Campaign</h3>
+                                            <h3 style={{ margin: 0 }}>Re-activation Campaign</h3>
                                             <button onClick={() => setSmsOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.25rem' }}>X</button>
                                         </div>
 
@@ -1404,74 +1464,68 @@ export default function LeadsPipelinePage() {
 
                                                 {/* Highest Intent */}
                                                 <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', fontWeight: 600 }}>Highest Intent</div>
-                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '16px' }}>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '16px' }}>
                                                     {[
-                                                        { id: 'cancelled', label: "Let's Reschedule", sub: 'Cancelled / no-showed', color: '#F87171' },
-                                                        { id: 'consult-only', label: 'Consulted, Not Treated', sub: 'Had consult, never booked', color: '#FB923C' },
-                                                        { id: 'engaged', label: 'Engaged Leads', sub: 'Interested, never booked', color: '#FBBF24' },
-                                                    ].map(seg => (
-                                                        <button
-                                                            key={seg.id}
-                                                            onClick={() => setSmsSegment(seg.id)}
-                                                            style={{
-                                                                padding: '12px 10px', textAlign: 'center',
-                                                                background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
-                                                                border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
-                                                                borderRadius: '8px', cursor: 'pointer',
-                                                            }}
-                                                        >
+                                                        { id: 'cancelled', label: "Let's Reschedule", sub: 'Cancelled / no-showed (180d)', color: '#F87171' },
+                                                        { id: 'consult-only', label: 'Consulted, Not Treated', sub: '$0 revenue on visit day', color: '#FB923C' },
+                                                    ].map(seg => {
+                                                        const hist = campaignHistory[seg.id];
+                                                        return (
+                                                        <button key={seg.id} onClick={() => setSmsSegment(seg.id)} style={{
+                                                            padding: '12px 10px', textAlign: 'center',
+                                                            background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
+                                                            border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
+                                                            borderRadius: '8px', cursor: 'pointer',
+                                                        }}>
                                                             <div style={{ fontWeight: 600, color: seg.color, fontSize: '0.8125rem' }}>{seg.label}</div>
                                                             <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>{seg.sub}</div>
+                                                            {hist && <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)', marginTop: '4px' }}>Last: {new Date(hist.runAt).toLocaleDateString()} ({hist.totalSent} {hist.channel})</div>}
                                                         </button>
-                                                    ))}
+                                                    ); })}
                                                 </div>
 
                                                 {/* Lapsed Patients */}
                                                 <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', fontWeight: 600 }}>Lapsed Patients</div>
-                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '16px' }}>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '16px' }}>
                                                     {[
-                                                        { id: 'lapsed-recent', label: 'Due for Refresh', sub: '2-4 months ago', color: '#60A5FA' },
                                                         { id: 'lapsed-vip', label: 'VIP Welcome Back', sub: '$500+, 4-12 months', color: '#818CF8' },
-                                                        { id: 'lapsed-long', label: 'Long-Lapsed', sub: '6+ months ago', color: '#A78BFA' },
-                                                    ].map(seg => (
-                                                        <button
-                                                            key={seg.id}
-                                                            onClick={() => setSmsSegment(seg.id)}
-                                                            style={{
-                                                                padding: '12px 10px', textAlign: 'center',
-                                                                background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
-                                                                border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
-                                                                borderRadius: '8px', cursor: 'pointer',
-                                                            }}
-                                                        >
+                                                        { id: 'lapsed-long', label: 'Long-Lapsed', sub: '6+ months since last visit', color: '#A78BFA' },
+                                                    ].map(seg => {
+                                                        const hist = campaignHistory[seg.id];
+                                                        return (
+                                                        <button key={seg.id} onClick={() => setSmsSegment(seg.id)} style={{
+                                                            padding: '12px 10px', textAlign: 'center',
+                                                            background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
+                                                            border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
+                                                            borderRadius: '8px', cursor: 'pointer',
+                                                        }}>
                                                             <div style={{ fontWeight: 600, color: seg.color, fontSize: '0.8125rem' }}>{seg.label}</div>
                                                             <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>{seg.sub}</div>
+                                                            {hist && <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)', marginTop: '4px' }}>Last: {new Date(hist.runAt).toLocaleDateString()} ({hist.totalSent} {hist.channel})</div>}
                                                         </button>
-                                                    ))}
+                                                    ); })}
                                                 </div>
 
                                                 {/* Pipeline Leads */}
                                                 <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', fontWeight: 600 }}>Pipeline Leads</div>
-                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '20px' }}>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '20px' }}>
                                                     {[
-                                                        { id: 'ghost', label: 'Ghosted Quotes', sub: 'Discussed pricing, silent', color: '#2DD4BF' },
-                                                        { id: 'untouched', label: 'Untouched Leads', sub: 'Never heard back', color: '#E879F9' },
-                                                        { id: 'pipeline-followup', label: 'Pipeline Follow-Up', sub: 'Gone quiet 14+ days', color: '#94A3B8' },
-                                                    ].map(seg => (
-                                                        <button
-                                                            key={seg.id}
-                                                            onClick={() => setSmsSegment(seg.id)}
-                                                            style={{
-                                                                padding: '12px 10px', textAlign: 'center',
-                                                                background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
-                                                                border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
-                                                                borderRadius: '8px', cursor: 'pointer',
-                                                            }}
-                                                        >
+                                                        { id: 'ghost', label: 'Ghosted Quotes', sub: 'Discussed pricing, silent 14+ days', color: '#2DD4BF' },
+                                                        { id: 'pipeline-followup', label: 'Pipeline Follow-Up', sub: 'All stale leads, 14+ days quiet', color: '#94A3B8' },
+                                                    ].map(seg => {
+                                                        const hist = campaignHistory[seg.id];
+                                                        return (
+                                                        <button key={seg.id} onClick={() => setSmsSegment(seg.id)} style={{
+                                                            padding: '12px 10px', textAlign: 'center',
+                                                            background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
+                                                            border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
+                                                            borderRadius: '8px', cursor: 'pointer',
+                                                        }}>
                                                             <div style={{ fontWeight: 600, color: seg.color, fontSize: '0.8125rem' }}>{seg.label}</div>
                                                             <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>{seg.sub}</div>
+                                                            {hist && <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)', marginTop: '4px' }}>Last: {new Date(hist.runAt).toLocaleDateString()} ({hist.totalSent} {hist.channel})</div>}
                                                         </button>
-                                                    ))}
+                                                    ); })}
                                                 </div>
 
                                                 <button
@@ -1499,51 +1553,108 @@ export default function LeadsPipelinePage() {
                                                         <div style={{ color: '#F87171', marginBottom: '12px', fontSize: '0.9375rem' }}>Failed to load contacts</div>
                                                         <div style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', marginBottom: '16px' }}>{smsError}</div>
                                                         <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-                                                            <button onClick={() => setSmsStep(1)} style={{
-                                                                padding: '8px 16px', background: 'transparent', border: '1px solid var(--border-subtle)',
-                                                                borderRadius: '6px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8125rem',
-                                                            }}>Back</button>
-                                                            <button onClick={() => fetchSmsContacts(smsSegment)} style={{
-                                                                padding: '8px 16px', background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-subtle)',
-                                                                borderRadius: '6px', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '0.8125rem',
-                                                            }}>Retry</button>
+                                                            <button onClick={() => setSmsStep(1)} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border-subtle)', borderRadius: '6px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8125rem' }}>Back</button>
+                                                            <button onClick={() => fetchSmsContacts(smsSegment)} style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.08)', border: '1px solid var(--border-subtle)', borderRadius: '6px', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '0.8125rem' }}>Retry</button>
                                                         </div>
                                                     </div>
-                                                ) : smsData && smsData.contacts?.length > 0 ? (
+                                                ) : smsData && smsData.contacts?.length > 0 ? (() => {
+                                                    // Filter contacts by location
+                                                    const visibleContacts = smsLocationFilter === 'all'
+                                                        ? smsData.contacts
+                                                        : smsData.contacts.filter((c: any) => c.locationKey === smsLocationFilter);
+                                                    const visibleSelected = visibleContacts.filter((c: any) => smsSelected.has(c.contactId));
+                                                    return (
                                                     <>
-                                                        {/* Forecast Summary */}
+                                                        {/* Channel Toggle + Location Filters */}
+                                                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
+                                                            {/* Channel Toggle */}
+                                                            <div style={{ display: 'flex', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+                                                                {(['sms', 'email'] as const).map(ch => (
+                                                                    <button key={ch} onClick={() => {
+                                                                        setSmsChannel(ch);
+                                                                        // Switch template when toggling channel
+                                                                        const templates = ch === 'email' ? smsData.emailTemplates : smsData.templates;
+                                                                        const tmpl = templates?.[smsSegment];
+                                                                        if (tmpl?.template) { setSmsMessage(tmpl.template); if (tmpl.subject) setSmsSubject(tmpl.subject); }
+                                                                    }} style={{
+                                                                        padding: '6px 16px', border: 'none', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 600,
+                                                                        background: smsChannel === ch ? 'rgba(52,211,153,0.2)' : 'transparent',
+                                                                        color: smsChannel === ch ? '#34D399' : 'var(--text-muted)',
+                                                                    }}>{ch.toUpperCase()}</button>
+                                                                ))}
+                                                            </div>
+
+                                                            {/* Location Filter Chips */}
+                                                            <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+                                                                {['all', 'decatur', 'smyrna', 'kennesaw'].map(loc => {
+                                                                    const count = loc === 'all' ? smsData.contacts.length : smsData.contacts.filter((c: any) => c.locationKey === loc).length;
+                                                                    if (loc !== 'all' && count === 0) return null;
+                                                                    return (
+                                                                        <button key={loc} onClick={() => setSmsLocationFilter(loc)} style={{
+                                                                            padding: '4px 10px', borderRadius: '12px', fontSize: '0.75rem', cursor: 'pointer',
+                                                                            background: smsLocationFilter === loc ? 'rgba(52,211,153,0.15)' : 'rgba(255,255,255,0.03)',
+                                                                            border: `1px solid ${smsLocationFilter === loc ? '#34D399' : 'var(--border-subtle)'}`,
+                                                                            color: smsLocationFilter === loc ? '#34D399' : 'var(--text-muted)',
+                                                                        }}>{loc === 'all' ? 'All' : loc.charAt(0).toUpperCase() + loc.slice(1)} ({count})</button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Cooldown + DND info */}
+                                                        {(smsData.cooldownExcluded > 0 || smsData.dndFiltered > 0) && (
+                                                            <div style={{ padding: '8px 12px', marginBottom: '12px', background: 'rgba(251,191,36,0.08)', borderRadius: '6px', fontSize: '0.75rem', color: '#FBBF24' }}>
+                                                                {smsData.cooldownExcluded > 0 && <span>{smsData.cooldownExcluded} excluded (contacted within 30 days). </span>}
+                                                                {smsData.dndFiltered > 0 && <span>{smsData.dndFiltered} excluded (DND/opted-out).</span>}
+                                                            </div>
+                                                        )}
+
+                                                        {/* Forecast */}
                                                         {smsData.forecast && (
-                                                            <div style={{
-                                                                padding: '12px 16px', marginBottom: '16px',
-                                                                background: 'rgba(255,255,255,0.03)', borderRadius: '8px',
-                                                                fontSize: '0.875rem', color: 'var(--text-secondary)',
-                                                            }}>
-                                                                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{smsData.forecast.targetContacts}</span> contacts
-                                                                {' | '}~<span style={{ fontWeight: 600 }}>${smsData.forecast.estimatedCost}</span> est. cost
-                                                                {' | '}~<span style={{ fontWeight: 600, color: '#34D399' }}>{smsData.forecast.predictedBookings}</span> predicted bookings
-                                                                {smsData.forecast.projectedROI > 0 && (
-                                                                    <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginLeft: '8px' }}>
-                                                                        ({smsData.forecast.projectedROI}x projected ROI)
-                                                                    </span>
-                                                                )}
+                                                            <div style={{ padding: '10px 14px', marginBottom: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                                                                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{visibleContacts.length}</span> contacts
+                                                                {smsChannel === 'sms' && <>{' | '}~<span style={{ fontWeight: 600 }}>${(visibleContacts.length * 0.02).toFixed(2)}</span> est. cost</>}
+                                                                {' | '}~<span style={{ fontWeight: 600, color: '#34D399' }}>{Math.round(visibleContacts.length * (smsData.forecast.predictedResponseRate / 100) * 0.35)}</span> predicted bookings
+                                                            </div>
+                                                        )}
+
+                                                        {/* Email Subject (email only) */}
+                                                        {smsChannel === 'email' && (
+                                                            <div style={{ marginBottom: '12px' }}>
+                                                                <label style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Subject Line:</label>
+                                                                <input
+                                                                    value={smsSubject}
+                                                                    onChange={e => setSmsSubject(e.target.value)}
+                                                                    style={{
+                                                                        width: '100%', padding: '8px 12px', background: 'rgba(255,255,255,0.05)',
+                                                                        border: '1px solid var(--border-subtle)', borderRadius: '6px',
+                                                                        color: 'var(--text-primary)', fontSize: '0.875rem',
+                                                                    }}
+                                                                    placeholder="Email subject line..."
+                                                                />
                                                             </div>
                                                         )}
 
                                                         {/* Template + Message */}
-                                                        <div style={{ marginBottom: '16px' }}>
-                                                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '10px' }}>
+                                                        <div style={{ marginBottom: '14px' }}>
+                                                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '8px' }}>
                                                                 <label style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Template:</label>
                                                                 <select
-                                                                    onChange={e => { if (e.target.value) setSmsMessage(e.target.value); }}
-                                                                    value={smsMessage}
-                                                                    style={{
-                                                                        flex: 1, padding: '8px 12px', background: 'rgba(255,255,255,0.05)',
-                                                                        border: '1px solid var(--border-subtle)', borderRadius: '6px',
-                                                                        color: 'var(--text-primary)', fontSize: '0.8125rem',
+                                                                    onChange={e => {
+                                                                        if (!e.target.value) return;
+                                                                        setSmsMessage(e.target.value);
+                                                                        // Also set subject from email templates
+                                                                        if (smsChannel === 'email') {
+                                                                            const ets = smsData.emailTemplates || {};
+                                                                            const match = Object.values(ets).find((t: any) => t.template === e.target.value) as any;
+                                                                            if (match?.subject) setSmsSubject(match.subject);
+                                                                        }
                                                                     }}
+                                                                    value={smsMessage}
+                                                                    style={{ flex: 1, padding: '8px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.8125rem' }}
                                                                 >
                                                                     <option value="">Custom message...</option>
-                                                                    {Object.entries(smsData.templates || {}).map(([key, tmpl]: [string, any]) => (
+                                                                    {Object.entries((smsChannel === 'email' ? smsData.emailTemplates : smsData.templates) || {}).map(([key, tmpl]: [string, any]) => (
                                                                         <option key={key} value={tmpl.template}>{tmpl.label}</option>
                                                                     ))}
                                                                 </select>
@@ -1551,90 +1662,66 @@ export default function LeadsPipelinePage() {
                                                             <textarea
                                                                 value={smsMessage}
                                                                 onChange={e => setSmsMessage(e.target.value)}
-                                                                rows={3}
+                                                                rows={smsChannel === 'email' ? 6 : 3}
                                                                 style={{
                                                                     width: '100%', padding: '10px', background: 'rgba(255,255,255,0.05)',
                                                                     border: '1px solid var(--border-subtle)', borderRadius: '8px',
                                                                     color: 'var(--text-primary)', fontSize: '0.875rem', resize: 'vertical',
                                                                 }}
-                                                                placeholder="Type your message... Use {{firstName}} for personalization"
+                                                                placeholder={smsChannel === 'email' ? 'Email body... Use {{firstName}} and {{locationName}} for personalization' : 'Type your message... Use {{firstName}} for personalization'}
                                                             />
                                                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                                                                {smsMessage.length} chars | Variables: {'{{firstName}}'}, {'{{locationName}}'}, {'{{serviceName}}'}
+                                                                {smsMessage.length} chars {smsChannel === 'sms' && smsMessage.length > 160 && <span style={{ color: '#FBBF24' }}>(multi-part SMS)</span>}
+                                                                {' | Variables: {{firstName}}, {{locationName}}, {{serviceName}}'}
+                                                                {smsChannel === 'email' && smsMessage.length > 50 && <span style={{ color: '#34D399' }}> {smsChannel === 'email' ? '| Max 50 per run' : ''}</span>}
                                                             </div>
                                                         </div>
 
                                                         {/* Message Preview */}
-                                                        {smsData.contacts?.length > 0 && smsMessage && (
-                                                            <div style={{ marginBottom: '16px' }}>
+                                                        {visibleContacts.length > 0 && smsMessage && (
+                                                            <div style={{ marginBottom: '14px' }}>
                                                                 <label style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Preview:</label>
-                                                                {smsData.contacts.slice(0, 2).map((c: any, idx: number) => (
-                                                                    <div key={idx} style={{
-                                                                        padding: '8px 12px', marginBottom: '4px',
-                                                                        background: 'rgba(255,255,255,0.03)', borderRadius: '6px',
-                                                                        fontSize: '0.8125rem', color: 'var(--text-secondary)',
-                                                                    }}>
+                                                                {visibleContacts.slice(0, 2).map((c: any, idx: number) => (
+                                                                    <div key={idx} style={{ padding: '8px 12px', marginBottom: '4px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
                                                                         <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.contactName}</span>:{' '}
-                                                                        {smsMessage
-                                                                            .replace(/\{\{firstName\}\}/g, c.firstName || 'there')
-                                                                            .replace(/\{\{locationName\}\}/g, c.locationName || 'Chin Up!')
-                                                                            .replace(/\{\{serviceName\}\}/g, c.serviceName || 'your appointment')}
+                                                                        {smsMessage.replace(/\{\{firstName\}\}/g, c.firstName || 'there').replace(/\{\{locationName\}\}/g, c.locationName || 'Chin Up!').replace(/\{\{serviceName\}\}/g, c.serviceName || 'your appointment')}
                                                                     </div>
                                                                 ))}
                                                             </div>
                                                         )}
 
-                                                        {/* Contact count + actions */}
+                                                        {/* Contact count + select actions */}
                                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                                                            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                                                                {smsSelected.size} of {smsData.contacts?.length || 0} contacts selected
-                                                                {smsData.dndFiltered > 0 && <span style={{ color: 'var(--text-muted)' }}> ({smsData.dndFiltered} DND excluded)</span>}
+                                                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                                                                {visibleSelected.length} of {visibleContacts.length} contacts selected
                                                             </div>
                                                             <div style={{ display: 'flex', gap: '8px' }}>
-                                                                <button
-                                                                    onClick={() => setSmsSelected(new Set((smsData.contacts || []).map((c: any) => c.contactId)))}
-                                                                    style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
-                                                                >All</button>
-                                                                <button
-                                                                    onClick={() => setSmsSelected(new Set())}
-                                                                    style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
-                                                                >None</button>
+                                                                <button onClick={() => setSmsSelected(new Set(visibleContacts.map((c: any) => c.contactId)))} style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>All</button>
+                                                                <button onClick={() => setSmsSelected(new Set())} style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>None</button>
                                                             </div>
                                                         </div>
 
-                                                        {/* Contact list with checkboxes */}
-                                                        <div style={{
-                                                            maxHeight: '200px', overflowY: 'auto', marginBottom: '16px',
-                                                            border: '1px solid var(--border-subtle)', borderRadius: '8px',
-                                                        }}>
-                                                            {(smsData.contacts || []).map((c: any) => {
+                                                        {/* Contact list */}
+                                                        <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '16px', border: '1px solid var(--border-subtle)', borderRadius: '8px' }}>
+                                                            {visibleContacts.map((c: any) => {
                                                                 const isSelected = smsSelected.has(c.contactId);
                                                                 return (
-                                                                    <div
-                                                                        key={c.contactId}
-                                                                        onClick={() => {
-                                                                            const next = new Set(smsSelected);
-                                                                            if (isSelected) next.delete(c.contactId);
-                                                                            else next.add(c.contactId);
-                                                                            setSmsSelected(next);
-                                                                        }}
-                                                                        style={{
-                                                                            display: 'flex', alignItems: 'center', gap: '10px',
-                                                                            padding: '8px 12px', cursor: 'pointer',
-                                                                            background: isSelected ? 'rgba(52,211,153,0.08)' : 'transparent',
-                                                                            borderBottom: '1px solid rgba(255,255,255,0.04)',
-                                                                            fontSize: '0.8125rem',
-                                                                        }}
-                                                                    >
+                                                                    <div key={c.contactId} onClick={() => {
+                                                                        const next = new Set(smsSelected);
+                                                                        if (isSelected) next.delete(c.contactId); else next.add(c.contactId);
+                                                                        setSmsSelected(next);
+                                                                    }} style={{
+                                                                        display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', cursor: 'pointer',
+                                                                        background: isSelected ? 'rgba(52,211,153,0.08)' : 'transparent',
+                                                                        borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: '0.8125rem',
+                                                                    }}>
                                                                         <span style={{
                                                                             width: '16px', height: '16px', borderRadius: '3px', flexShrink: 0,
                                                                             border: isSelected ? '2px solid #34D399' : '2px solid var(--border-subtle)',
                                                                             background: isSelected ? '#34D399' : 'transparent',
                                                                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                                                                             color: '#0A225C', fontSize: '0.625rem', fontWeight: 700,
-                                                                        }}>
-                                                                            {isSelected && '✓'}
-                                                                        </span>
+                                                                        }}>{isSelected && '\u2713'}</span>
                                                                         <span style={{ fontWeight: 500, color: 'var(--text-primary)', minWidth: '140px' }}>{c.contactName}</span>
                                                                         <span style={{ color: 'var(--text-muted)' }}>{c.maskedPhone}</span>
                                                                         <span style={{ color: 'var(--text-muted)', marginLeft: 'auto' }}>{c.locationName}</span>
@@ -1643,52 +1730,54 @@ export default function LeadsPipelinePage() {
                                                             })}
                                                         </div>
 
-                                                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                                                            <button onClick={() => setSmsStep(1)} style={{
-                                                                padding: '10px 20px', background: 'transparent', border: '1px solid var(--border-subtle)',
-                                                                borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer',
-                                                            }}>
-                                                                Back
-                                                            </button>
-                                                            <button
-                                                                onClick={() => {
-                                                                    if (confirm(`This will send ${smsSelected.size} SMS messages. Estimated cost: $${smsData.forecast?.estimatedCost || '?'}. Proceed?`))
-                                                                        sendSmsCampaign();
-                                                                }}
-                                                                disabled={smsSelected.size === 0 || !smsMessage || smsSending}
-                                                                style={{
-                                                                    padding: '10px 24px', background: smsSelected.size > 0 && smsMessage ? '#34D399' : 'rgba(255,255,255,0.1)',
-                                                                    border: 'none', borderRadius: '8px', color: '#0A225C', fontWeight: 600,
-                                                                    cursor: smsSelected.size > 0 ? 'pointer' : 'not-allowed', opacity: smsSending ? 0.5 : 1,
-                                                                }}
-                                                            >
-                                                                {smsSending ? 'Sending...' : `Send to ${smsSelected.size} Contact${smsSelected.size !== 1 ? 's' : ''}`}
-                                                            </button>
+                                                        {/* Test send result */}
+                                                        {smsTestResult && (
+                                                            <div style={{
+                                                                padding: '8px 12px', marginBottom: '12px', borderRadius: '6px', fontSize: '0.8125rem',
+                                                                background: smsTestResult.success ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)',
+                                                                color: smsTestResult.success ? '#34D399' : '#F87171',
+                                                                border: `1px solid ${smsTestResult.success ? 'rgba(52,211,153,0.3)' : 'rgba(248,113,113,0.3)'}`,
+                                                            }}>{smsTestResult.message}</div>
+                                                        )}
+
+                                                        {/* Action Buttons */}
+                                                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'space-between' }}>
+                                                            <button onClick={() => setSmsStep(1)} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid var(--border-subtle)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer' }}>Back</button>
+                                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                                <button
+                                                                    onClick={sendTestMessage}
+                                                                    disabled={!smsMessage || smsTestSending}
+                                                                    style={{
+                                                                        padding: '10px 16px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)',
+                                                                        borderRadius: '8px', color: 'var(--text-secondary)', cursor: smsMessage ? 'pointer' : 'not-allowed',
+                                                                        fontSize: '0.875rem', opacity: smsTestSending ? 0.5 : 1,
+                                                                    }}
+                                                                >{smsTestSending ? 'Sending...' : `Send Test ${smsChannel.toUpperCase()}`}</button>
+                                                                <button
+                                                                    onClick={() => {
+                                                                        const count = visibleSelected.length;
+                                                                        const channelLabel = smsChannel === 'email' ? 'emails' : 'SMS messages';
+                                                                        if (confirm(`This will send ${count} ${channelLabel}. Proceed?`)) sendSmsCampaign();
+                                                                    }}
+                                                                    disabled={visibleSelected.length === 0 || !smsMessage || smsSending}
+                                                                    style={{
+                                                                        padding: '10px 24px', border: 'none', borderRadius: '8px', fontWeight: 600,
+                                                                        background: visibleSelected.length > 0 && smsMessage ? '#34D399' : 'rgba(255,255,255,0.1)',
+                                                                        color: '#0A225C', cursor: visibleSelected.length > 0 ? 'pointer' : 'not-allowed',
+                                                                        opacity: smsSending ? 0.5 : 1,
+                                                                    }}
+                                                                >{smsSending ? 'Sending...' : `Send ${smsChannel.toUpperCase()} to ${visibleSelected.length} Contact${visibleSelected.length !== 1 ? 's' : ''}`}</button>
+                                                            </div>
                                                         </div>
                                                     </>
-                                                ) : (
+                                                ); })() : (
                                                     <div style={{ textAlign: 'center', padding: '40px' }}>
                                                         <div style={{ color: 'var(--text-muted)', fontSize: '0.9375rem', marginBottom: '8px' }}>No eligible contacts found</div>
                                                         <div style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', marginBottom: '4px' }}>
                                                             {smsData?.dndFiltered > 0 && <span>{smsData.dndFiltered} contacts excluded (DND/opted-out). </span>}
+                                                            {smsData?.cooldownExcluded > 0 && <span>{smsData.cooldownExcluded} contacts excluded (contacted within 30 days). </span>}
                                                             {smsData?.totalEligible === 0 && 'All contacts in this segment are either active patients, on DND, or have no phone number.'}
                                                         </div>
-                                                        {/* Debug funnel — shows where contacts were lost */}
-                                                        {smsData?.debug && (
-                                                            <div style={{
-                                                                marginTop: '16px', padding: '12px', textAlign: 'left',
-                                                                background: 'rgba(255,255,255,0.03)', borderRadius: '8px',
-                                                                fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.6,
-                                                            }}>
-                                                                <div style={{ fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>Diagnostic Funnel:</div>
-                                                                {Object.entries(smsData.debug).map(([key, val]) => (
-                                                                    <div key={key}>
-                                                                        <span style={{ color: 'var(--text-secondary)' }}>{key}:</span>{' '}
-                                                                        {typeof val === 'object' ? JSON.stringify(val) : String(val)}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        )}
                                                         <button onClick={() => setSmsStep(1)} style={{
                                                             marginTop: '12px', padding: '8px 16px', background: 'transparent',
                                                             border: '1px solid var(--border-subtle)', borderRadius: '6px',
@@ -1709,20 +1798,23 @@ export default function LeadsPipelinePage() {
                                                     borderRadius: '8px',
                                                 }}>
                                                     <div style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: smsResults.failed === 0 ? '#34D399' : '#FBBF24' }}>
-                                                        Campaign Sent
+                                                        {smsResults.channel === 'email' ? 'Emails' : 'Campaign'} Sent
                                                     </div>
                                                     <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', fontSize: '0.9375rem', color: 'var(--text-secondary)' }}>
                                                         <span style={{ color: '#34D399' }}>{smsResults.sent} sent</span>
                                                         {smsResults.failed > 0 && <span style={{ color: '#F87171' }}>{smsResults.failed} failed</span>}
                                                         {smsResults.skipped > 0 && <span style={{ color: 'var(--text-muted)' }}>{smsResults.skipped} skipped</span>}
                                                     </div>
+                                                    {smsResults.emailCapped && (
+                                                        <div style={{ marginTop: '8px', fontSize: '0.8125rem', color: '#FBBF24' }}>
+                                                            Email cap reached (50 per run for domain protection). Run again tomorrow for the next batch.
+                                                        </div>
+                                                    )}
                                                 </div>
                                                 <button onClick={() => { setSmsOpen(false); setSmsResults(null); }} style={{
                                                     padding: '10px 24px', background: 'var(--accent-primary)', border: 'none',
                                                     borderRadius: '8px', color: '#0A225C', fontWeight: 600, cursor: 'pointer',
-                                                }}>
-                                                    Close
-                                                </button>
+                                                }}>Close</button>
                                             </div>
                                         )}
                                     </div>
