@@ -10,8 +10,6 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@vercel/postgres';
 import { type LocationKey, isGHLConfigured, getStaleLeads } from '@/lib/integrations/gohighlevel';
-
-export const maxDuration = 60; // 60s for heavy multi-location API calls
 import {
     getConversationsIntelligence,
     getLapsedPatients,
@@ -26,6 +24,8 @@ import {
 } from '@/lib/integrations/ghl-messaging';
 import { hashPhone, hashEmail, checkDNDSimple } from '@/lib/dnd-check';
 import { normalizePhone } from '@/lib/integrations/mindbody';
+
+export const maxDuration = 300; // 5 min — cold-start fetches MindBody + GHL for all 3 locations
 
 const LOCATION_NAMES: Record<LocationKey, string> = {
     decatur: 'Decatur',

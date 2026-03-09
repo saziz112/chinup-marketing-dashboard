@@ -1416,8 +1416,14 @@ export async function getCancelledAppointments(
     const startDate = new Date(now - 180 * 86400000).toISOString().split('T')[0]; // 180 days (was 90)
     const endDate = new Date().toISOString().split('T')[0];
     const todayISO = new Date().toISOString();
+    const lookbackStart = new Date(now - 548 * 86400000).toISOString().split('T')[0];
 
-    const appointments = await getAppointments(startDate, endDate);
+    // Parallelize independent heavy fetches — saves 15-30s on cold start
+    const [appointments, purchasingResult, phoneMap] = await Promise.all([
+        getAppointments(startDate, endDate),
+        getPurchasingClients(lookbackStart, endDate).catch(() => ({ clients: [] as Client[], sales: [] })),
+        buildUnifiedPhoneMap(locationFilter).catch(() => new Map<string, PhoneMapEntry>()),
+    ]);
 
     // Separate completed, future-booked, and cancelled/no-show appointments
     const completedByClient = new Set<string>();
@@ -1463,10 +1469,9 @@ export async function getCancelledAppointments(
         });
     }
 
-    // Get client phone numbers — try purchasing clients cache first, then fetch remaining
+    // Get client phone numbers from purchasing clients (already fetched in parallel)
     try {
-        const lookbackStart = new Date(now - 548 * 86400000).toISOString().split('T')[0];
-        const { clients } = await getPurchasingClients(lookbackStart, endDate);
+        const { clients } = purchasingResult;
         const clientMap = new Map<string, Client>();
         for (const c of clients) clientMap.set(c.Id, c);
 
@@ -1506,20 +1511,15 @@ export async function getCancelledAppointments(
     // Filter: must have phone
     const withPhone = result.filter(r => r.phone);
 
-    // Cross-reference to GHL via unified phone map (all locations for dedup)
-    try {
-        const phoneMap = await buildUnifiedPhoneMap(locationFilter);
-        for (const r of withPhone) {
-            const normalized = normalizePhone(r.phone);
-            const match = phoneMap.get(normalized);
-            if (match) {
-                r.ghlContactId = match.contactId;
-                r.ghlContactName = match.contactName;
-                r.locationKey = match.locationKey;
-            }
+    // Cross-reference to GHL via unified phone map (already fetched in parallel above)
+    for (const r of withPhone) {
+        const normalized = normalizePhone(r.phone);
+        const match = phoneMap.get(normalized);
+        if (match) {
+            r.ghlContactId = match.contactId;
+            r.ghlContactName = match.contactName;
+            r.locationKey = match.locationKey;
         }
-    } catch {
-        // Phone map failed
     }
 
     withPhone.sort((a, b) => b.appointmentDate.localeCompare(a.appointmentDate));
@@ -1587,10 +1587,11 @@ export async function getConsultOnlyPatients(
     const startDate = new Date(now - 180 * 86400000).toISOString().split('T')[0];
     const endDate = new Date().toISOString().split('T')[0];
 
-    // Fetch appointments and sales in parallel
-    const [appointments, purchasingData] = await Promise.all([
+    // Fetch appointments, sales, and phone map in parallel
+    const [appointments, purchasingData, phoneMap] = await Promise.all([
         getAppointments(startDate, endDate),
         getPurchasingClients(startDate, endDate),
+        buildUnifiedPhoneMap(locationFilter).catch(() => new Map<string, PhoneMapEntry>()),
     ]);
 
     // Build revenue map: "clientId_YYYY-MM-DD" → total revenue that day
@@ -1688,20 +1689,15 @@ export async function getConsultOnlyPatients(
         });
     }
 
-    // Cross-reference to GHL via unified phone map
-    try {
-        const phoneMap = await buildUnifiedPhoneMap(locationFilter);
-        for (const r of result) {
-            const normalized = normalizePhone(r.phone);
-            const match = phoneMap.get(normalized);
-            if (match) {
-                r.ghlContactId = match.contactId;
-                r.ghlContactName = match.contactName;
-                r.locationKey = match.locationKey;
-            }
+    // Cross-reference to GHL via unified phone map (already fetched in parallel above)
+    for (const r of result) {
+        const normalized = normalizePhone(r.phone);
+        const match = phoneMap.get(normalized);
+        if (match) {
+            r.ghlContactId = match.contactId;
+            r.ghlContactName = match.contactName;
+            r.locationKey = match.locationKey;
         }
-    } catch {
-        // Phone map failed
     }
 
     result.sort((a, b) => b.consultDate.localeCompare(a.consultDate));
