@@ -489,48 +489,77 @@ export async function POST(req: NextRequest) {
                 locationName: LOCATION_NAMES[locationKey] || 'Chin Up!',
             });
 
-            // Find admin contact in GHL
-            const envMap: Record<LocationKey, { envId: string; envPit: string }> = {
-                decatur: { envId: 'GHL_LOCATION_ID_DECATUR', envPit: 'GHL_PIT_DECATUR' },
-                smyrna: { envId: 'GHL_LOCATION_ID_SMYRNA', envPit: 'GHL_PIT_SMYRNA' },
-                kennesaw: { envId: 'GHL_LOCATION_ID_KENNESAW', envPit: 'GHL_PIT_KENNESAW' },
-            };
-            const config = envMap[locationKey];
-            const locationId = process.env[config.envId];
-            const pit = process.env[config.envPit];
-            if (!locationId || !pit) {
-                return NextResponse.json({ error: 'Location not configured for sending' }, { status: 400 });
-            }
+            // Find admin contact in GHL — search all locations (contact may only exist in one)
+            const allLocations: { key: LocationKey; envId: string; envPit: string }[] = [
+                { key: 'decatur', envId: 'GHL_LOCATION_ID_DECATUR', envPit: 'GHL_PIT_DECATUR' },
+                { key: 'smyrna', envId: 'GHL_LOCATION_ID_SMYRNA', envPit: 'GHL_PIT_SMYRNA' },
+                { key: 'kennesaw', envId: 'GHL_LOCATION_ID_KENNESAW', envPit: 'GHL_PIT_KENNESAW' },
+            ];
+            // Try selected location first, then fall back to others
+            const orderedLocations = [
+                allLocations.find(l => l.key === locationKey)!,
+                ...allLocations.filter(l => l.key !== locationKey),
+            ];
 
             if (channel === 'sms') {
                 const phone = testPhone || '4046685785';
-                const contact = await searchContactByPhone(pit, phone);
-                if (!contact) {
-                    return NextResponse.json({ error: `Contact not found in GHL for phone ${phone}` }, { status: 404 });
+                let foundContact: { contactId: string; contactName: string } | null = null;
+                let foundLocationId = '';
+                let foundPit = '';
+
+                for (const loc of orderedLocations) {
+                    const locId = process.env[loc.envId];
+                    const locPit = process.env[loc.envPit];
+                    if (!locId || !locPit) continue;
+                    const contact = await searchContactByPhone(locPit, phone);
+                    if (contact) {
+                        foundContact = contact;
+                        foundLocationId = locId;
+                        foundPit = locPit;
+                        break;
+                    }
                 }
-                const result = await sendSMS(locationId, pit, contact.contactId, rendered);
+                if (!foundContact) {
+                    return NextResponse.json({ error: `Contact not found in GHL for phone ${phone}. Make sure this number exists as a contact in at least one GHL location.` }, { status: 404 });
+                }
+                const result = await sendSMS(foundLocationId, foundPit, foundContact.contactId, rendered);
                 return NextResponse.json({
                     testMode: true,
                     channel: 'sms',
                     recipient: phone,
-                    contactId: contact.contactId,
-                    contactName: contact.contactName,
+                    contactId: foundContact.contactId,
+                    contactName: foundContact.contactName,
                     renderedMessage: rendered,
                     ...result,
                 });
             } else {
                 const email = testEmail || 'saziz112@gmail.com';
-                const contact = await searchContactByEmail(pit, email);
-                if (!contact) {
-                    return NextResponse.json({ error: `Contact not found in GHL for email ${email}` }, { status: 404 });
+                let foundContact: { contactId: string; contactName: string } | null = null;
+                let foundLocationId = '';
+                let foundPit = '';
+
+                for (const loc of orderedLocations) {
+                    const locId = process.env[loc.envId];
+                    const locPit = process.env[loc.envPit];
+                    if (!locId || !locPit) continue;
+                    const contact = await searchContactByEmail(locPit, email);
+                    if (contact) {
+                        foundContact = contact;
+                        foundLocationId = locId;
+                        foundPit = locPit;
+                        break;
+                    }
                 }
-                const result = await sendEmail(locationId, pit, contact.contactId, rendered, subject || 'Chin Up! Aesthetics');
+                if (!foundContact) {
+                    return NextResponse.json({ error: `Contact not found in GHL for email ${email}. Make sure this email exists as a contact in at least one GHL location.` }, { status: 404 });
+                }
+                const result = await sendEmail(foundLocationId, foundPit, foundContact.contactId, rendered, subject || 'Chin Up! Aesthetics');
                 return NextResponse.json({
                     testMode: true,
                     channel: 'email',
                     recipient: email,
-                    contactId: contact.contactId,
-                    contactName: contact.contactName,
+                    contactId: foundContact.contactId,
+                    contactName: foundContact.contactName,
                     renderedMessage: rendered,
                     ...result,
                 });
