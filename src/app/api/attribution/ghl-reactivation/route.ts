@@ -17,6 +17,7 @@ import {
     getConsultOnlyPatients,
     buildUnifiedPhoneMap,
     getRecentOutboundContactIds,
+    getV2SmsDndContactIds,
 } from '@/lib/integrations/ghl-conversations';
 import {
     sendBulkSMS, sendBulkEmail, SMS_TEMPLATES, EMAIL_TEMPLATES,
@@ -156,6 +157,23 @@ function applyOutboundCooldown(
     return { filtered, outboundExcluded: contacts.length - filtered.length };
 }
 
+/**
+ * Apply v2 per-channel SMS DND check. The v1 pipeline API only returns the global
+ * `dnd` boolean — misses contacts with per-channel DND (e.g. "Text Messages" only).
+ * This calls v2 API to check `dndSettings.SMS.status` for each contact.
+ */
+async function applyV2SmsDnd(
+    contacts: ContactEntry[],
+): Promise<{ filtered: ContactEntry[]; v2DndFiltered: number }> {
+    if (contacts.length === 0) return { filtered: contacts, v2DndFiltered: 0 };
+    const smsDndIds = await getV2SmsDndContactIds(
+        contacts.map(c => ({ contactId: c.contactId, locationKey: c.locationKey })),
+    );
+    if (smsDndIds.size === 0) return { filtered: contacts, v2DndFiltered: 0 };
+    const filtered = contacts.filter(c => !smsDndIds.has(c.contactId));
+    return { filtered, v2DndFiltered: contacts.length - filtered.length };
+}
+
 export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.email) {
@@ -209,7 +227,8 @@ export async function GET(req: NextRequest) {
             }));
 
             const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
-            const { filtered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
 
             return NextResponse.json({
                 contacts: filtered,
@@ -218,7 +237,7 @@ export async function GET(req: NextRequest) {
                 forecast: buildForecast(filtered, 0.30),
                 templates: SMS_TEMPLATES,
                 emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: sendable.length - noDND.length,
+                dndFiltered: (sendable.length - noDND.length) + v2DndFiltered,
                 cooldownExcluded,
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
@@ -254,7 +273,8 @@ export async function GET(req: NextRequest) {
             }));
 
             const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
-            const { filtered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
 
             return NextResponse.json({
                 contacts: filtered,
@@ -263,7 +283,7 @@ export async function GET(req: NextRequest) {
                 forecast: buildForecast(filtered, 0.22),
                 templates: SMS_TEMPLATES,
                 emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: sendable.length - noDND.length,
+                dndFiltered: (sendable.length - noDND.length) + v2DndFiltered,
                 cooldownExcluded,
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
@@ -301,7 +321,8 @@ export async function GET(req: NextRequest) {
             }));
 
             const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
-            const { filtered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
 
             return NextResponse.json({
                 contacts: filtered,
@@ -310,7 +331,7 @@ export async function GET(req: NextRequest) {
                 forecast: buildForecast(filtered, 0.18),
                 templates: SMS_TEMPLATES,
                 emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: intelligence.summary.dndFiltered,
+                dndFiltered: intelligence.summary.dndFiltered + v2DndFiltered,
                 cooldownExcluded,
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
@@ -360,7 +381,8 @@ export async function GET(req: NextRequest) {
             }));
 
             const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
-            const { filtered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
 
             return NextResponse.json({
                 contacts: filtered,
@@ -369,7 +391,7 @@ export async function GET(req: NextRequest) {
                 forecast: buildForecast(filtered, 0.12),
                 templates: SMS_TEMPLATES,
                 emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: dedupedLeads.length - noDND.length,
+                dndFiltered: (dedupedLeads.length - noDND.length) + v2DndFiltered,
                 cooldownExcluded,
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
@@ -429,7 +451,8 @@ export async function GET(req: NextRequest) {
 
             const responseRate = segment === 'lapsed-vip' ? 0.22 : 0.06;
             const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
-            const { filtered: finalFiltered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered: finalFiltered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
 
             return NextResponse.json({
                 contacts: finalFiltered,
@@ -438,7 +461,7 @@ export async function GET(req: NextRequest) {
                 forecast: buildForecast(finalFiltered, responseRate),
                 templates: SMS_TEMPLATES,
                 emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: filtered.filter(p => p.ghlContactId).length - sendable.length,
+                dndFiltered: (filtered.filter(p => p.ghlContactId).length - sendable.length) + v2DndFiltered,
                 cooldownExcluded,
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,

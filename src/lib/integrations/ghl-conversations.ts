@@ -240,6 +240,8 @@ const ENGAGEMENT_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 const INTELLIGENCE_CACHE_TTL = 30 * 60 * 1000;
 let outboundCooldownCache: CacheEntry<Set<string>> | null = null;
 const OUTBOUND_COOLDOWN_TTL = 30 * 60 * 1000; // 30 minutes
+const v2DndCache = new Map<string, { smsDnd: boolean; emailDnd: boolean; ts: number }>();
+const V2_DND_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 // --- Core Conversation Fetchers ---
 
@@ -1793,4 +1795,101 @@ export async function getRecentOutboundContactIds(daysCutoff: number = 7): Promi
     console.log(`[ghl-conversations] Found ${contactIds.size} contacts with outbound messages in last ${daysCutoff} days`);
     outboundCooldownCache = { data: contactIds, timestamp: now };
     return contactIds;
+}
+
+/* ── v2 Per-Channel DND Check ────────────────────────────── */
+
+interface V2ContactDnd {
+    contactId: string;
+    smsDnd: boolean;
+    emailDnd: boolean;
+}
+
+/**
+ * Check per-channel DND for a list of contacts via GHL v2 API.
+ * v1 API only returns the global `dnd` boolean — misses per-channel DND
+ * (e.g. "Text Messages" checked but "DND all channels" unchecked).
+ * Returns Set of contactIds that have SMS DND enabled.
+ *
+ * Uses per-contactId cache (30 min) to avoid redundant lookups across segments.
+ * Fetches 5 contacts concurrently per location to stay within rate limits.
+ */
+export async function getV2SmsDndContactIds(
+    contacts: { contactId: string; locationKey: LocationKey }[],
+): Promise<Set<string>> {
+    const now = Date.now();
+    const smsDndIds = new Set<string>();
+    const unchecked: { contactId: string; locationKey: LocationKey }[] = [];
+
+    // Check cache first
+    for (const c of contacts) {
+        const cached = v2DndCache.get(c.contactId);
+        if (cached && (now - cached.ts) < V2_DND_CACHE_TTL) {
+            if (cached.smsDnd) smsDndIds.add(c.contactId);
+        } else {
+            unchecked.push(c);
+        }
+    }
+
+    if (unchecked.length === 0) return smsDndIds;
+
+    // Group by location
+    const byLocation = new Map<LocationKey, string[]>();
+    for (const c of unchecked) {
+        if (!byLocation.has(c.locationKey)) byLocation.set(c.locationKey, []);
+        byLocation.get(c.locationKey)!.push(c.contactId);
+    }
+
+    const locations = getV2Locations();
+    const pitMap = new Map<LocationKey, string>();
+    for (const loc of locations) pitMap.set(loc.key, loc.pit);
+
+    // Fetch v2 contact details per location in parallel
+    await Promise.all([...byLocation.entries()].map(async ([locKey, contactIdList]) => {
+        const pit = pitMap.get(locKey);
+        if (!pit) return;
+
+        // Process in chunks of 5 concurrent requests
+        const CONCURRENCY = 5;
+        for (let i = 0; i < contactIdList.length; i += CONCURRENCY) {
+            const chunk = contactIdList.slice(i, i + CONCURRENCY);
+            const results = await Promise.allSettled(chunk.map(async (cid): Promise<V2ContactDnd> => {
+                try {
+                    const data = await ghlV2Fetch<{
+                        contact?: {
+                            id?: string;
+                            dnd?: boolean;
+                            dndSettings?: {
+                                SMS?: { status?: string };
+                                Email?: { status?: string };
+                                Call?: { status?: string };
+                            };
+                        };
+                    }>(pit, `/contacts/${cid}`);
+                    trackCall('ghl', 'getContactV2DND', false);
+
+                    const contact = data.contact || (data as any);
+                    const smsDnd = contact?.dnd === true
+                        || contact?.dndSettings?.SMS?.status === 'active';
+                    const emailDnd = contact?.dnd === true
+                        || contact?.dndSettings?.Email?.status === 'active';
+
+                    return { contactId: cid, smsDnd: !!smsDnd, emailDnd: !!emailDnd };
+                } catch {
+                    // On error, assume not DND (don't block legitimate sends)
+                    return { contactId: cid, smsDnd: false, emailDnd: false };
+                }
+            }));
+
+            for (const r of results) {
+                if (r.status === 'fulfilled') {
+                    v2DndCache.set(r.value.contactId, { smsDnd: r.value.smsDnd, emailDnd: r.value.emailDnd, ts: now });
+                    if (r.value.smsDnd) smsDndIds.add(r.value.contactId);
+                }
+            }
+        }
+    }));
+
+    console.log(`[ghl-conversations] v2 DND check: ${unchecked.length} contacts checked, ${smsDndIds.size} with SMS DND`);
+    return smsDndIds;
 }
