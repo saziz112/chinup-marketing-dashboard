@@ -21,8 +21,7 @@ import {
 } from '@/lib/integrations/ghl-conversations';
 import {
     sendBulkSMS, sendBulkEmail, SMS_TEMPLATES, EMAIL_TEMPLATES,
-    searchContactByPhone, searchContactByEmail, sendSMS, sendEmail,
-    renderTemplate,
+    sendSMS, sendEmail, renderTemplate,
 } from '@/lib/integrations/ghl-messaging';
 import { hashPhone, hashEmail, checkDNDSimple } from '@/lib/dnd-check';
 import { normalizePhone } from '@/lib/integrations/mindbody';
@@ -512,77 +511,80 @@ export async function POST(req: NextRequest) {
                 locationName: LOCATION_NAMES[locationKey] || 'Chin Up!',
             });
 
-            // Find admin contact in GHL — search all locations (contact may only exist in one)
-            const allLocations: { key: LocationKey; envId: string; envPit: string }[] = [
-                { key: 'decatur', envId: 'GHL_LOCATION_ID_DECATUR', envPit: 'GHL_PIT_DECATUR' },
-                { key: 'smyrna', envId: 'GHL_LOCATION_ID_SMYRNA', envPit: 'GHL_PIT_SMYRNA' },
-                { key: 'kennesaw', envId: 'GHL_LOCATION_ID_KENNESAW', envPit: 'GHL_PIT_KENNESAW' },
-            ];
-            // Try selected location first, then fall back to others
-            const orderedLocations = [
-                allLocations.find(l => l.key === locationKey)!,
-                ...allLocations.filter(l => l.key !== locationKey),
-            ];
+            // Find or create test contact via v2 upsert (most reliable approach)
+            const envMap: Record<LocationKey, { envId: string; envPit: string }> = {
+                decatur: { envId: 'GHL_LOCATION_ID_DECATUR', envPit: 'GHL_PIT_DECATUR' },
+                smyrna: { envId: 'GHL_LOCATION_ID_SMYRNA', envPit: 'GHL_PIT_SMYRNA' },
+                kennesaw: { envId: 'GHL_LOCATION_ID_KENNESAW', envPit: 'GHL_PIT_KENNESAW' },
+            };
+            const locConfig = envMap[locationKey];
+            const locId = process.env[locConfig.envId] || '';
+            const locPit = process.env[locConfig.envPit] || '';
+            if (!locId || !locPit) {
+                return NextResponse.json({ error: 'Location not configured' }, { status: 400 });
+            }
+
+            const phone = testPhone || '4046685785';
+            const emailAddr = testEmail || 'saziz112@gmail.com';
+            const digits = phone.replace(/\D/g, '');
+            const e164 = digits.length === 10 ? `+1${digits}` : `+${digits}`;
+
+            // Upsert: finds existing contact by phone/email, or creates a new one
+            const upsertBody: Record<string, string> = {
+                locationId: locId,
+                firstName: 'Sam',
+                lastName: 'Test',
+                name: 'Sam Test',
+            };
+            if (channel === 'sms') {
+                upsertBody.phone = e164;
+            } else {
+                upsertBody.email = emailAddr;
+            }
+
+            const upsertRes = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${locPit}`,
+                    'Version': '2021-07-28',
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify(upsertBody),
+            });
+
+            if (!upsertRes.ok) {
+                const errText = await upsertRes.text();
+                return NextResponse.json({ error: `GHL upsert failed (${upsertRes.status}): ${errText.slice(0, 200)}` }, { status: 500 });
+            }
+
+            const upsertData = await upsertRes.json();
+            const contactId = upsertData.contact?.id || upsertData.id;
+            const contactName = upsertData.contact?.name || upsertData.contact?.firstName || 'Test Contact';
+
+            if (!contactId) {
+                return NextResponse.json({ error: 'GHL upsert returned no contactId', detail: JSON.stringify(upsertData).slice(0, 300) }, { status: 500 });
+            }
 
             if (channel === 'sms') {
-                const phone = testPhone || '4046685785';
-                let foundContact: { contactId: string; contactName: string } | null = null;
-                let foundLocationId = '';
-                let foundPit = '';
-
-                for (const loc of orderedLocations) {
-                    const locId = process.env[loc.envId];
-                    const locPit = process.env[loc.envPit];
-                    if (!locId || !locPit) continue;
-                    const contact = await searchContactByPhone(locPit, phone, locId);
-                    if (contact) {
-                        foundContact = contact;
-                        foundLocationId = locId;
-                        foundPit = locPit;
-                        break;
-                    }
-                }
-                if (!foundContact) {
-                    return NextResponse.json({ error: `Contact not found in GHL for phone ${phone}. Make sure this number exists as a contact in at least one GHL location.` }, { status: 404 });
-                }
-                const result = await sendSMS(foundLocationId, foundPit, foundContact.contactId, rendered);
+                const result = await sendSMS(locId, locPit, contactId, rendered);
                 return NextResponse.json({
                     testMode: true,
                     channel: 'sms',
                     recipient: phone,
-                    contactId: foundContact.contactId,
-                    contactName: foundContact.contactName,
+                    contactId,
+                    contactName,
                     renderedMessage: rendered,
                     ...result,
                 });
             } else {
-                const email = testEmail || 'saziz112@gmail.com';
-                let foundContact: { contactId: string; contactName: string } | null = null;
-                let foundLocationId = '';
-                let foundPit = '';
-
-                for (const loc of orderedLocations) {
-                    const locId = process.env[loc.envId];
-                    const locPit = process.env[loc.envPit];
-                    if (!locId || !locPit) continue;
-                    const contact = await searchContactByEmail(locPit, email, locId);
-                    if (contact) {
-                        foundContact = contact;
-                        foundLocationId = locId;
-                        foundPit = locPit;
-                        break;
-                    }
-                }
-                if (!foundContact) {
-                    return NextResponse.json({ error: `Contact not found in GHL for email ${email}. Make sure this email exists as a contact in at least one GHL location.` }, { status: 404 });
-                }
-                const result = await sendEmail(foundLocationId, foundPit, foundContact.contactId, rendered, subject || 'Chin Up! Aesthetics');
+                const result = await sendEmail(locId, locPit, contactId, rendered, subject || 'Chin Up! Aesthetics');
                 return NextResponse.json({
                     testMode: true,
                     channel: 'email',
-                    recipient: email,
-                    contactId: foundContact.contactId,
-                    contactName: foundContact.contactName,
+                    recipient: emailAddr,
+                    contactId,
+                    contactName,
                     renderedMessage: rendered,
                     ...result,
                 });
