@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@vercel/postgres';
-import { type LocationKey, isGHLConfigured, getStaleLeads } from '@/lib/integrations/gohighlevel';
+import { type LocationKey, isGHLConfigured, getStaleLeads, getLocations } from '@/lib/integrations/gohighlevel';
 import {
     getConversationsIntelligence,
     getLapsedPatients,
@@ -511,80 +511,80 @@ export async function POST(req: NextRequest) {
                 locationName: LOCATION_NAMES[locationKey] || 'Chin Up!',
             });
 
-            // Find or create test contact via v2 upsert (most reliable approach)
-            const envMap: Record<LocationKey, { envId: string; envPit: string }> = {
-                decatur: { envId: 'GHL_LOCATION_ID_DECATUR', envPit: 'GHL_PIT_DECATUR' },
-                smyrna: { envId: 'GHL_LOCATION_ID_SMYRNA', envPit: 'GHL_PIT_SMYRNA' },
-                kennesaw: { envId: 'GHL_LOCATION_ID_KENNESAW', envPit: 'GHL_PIT_KENNESAW' },
-            };
-            const locConfig = envMap[locationKey];
-            const locId = process.env[locConfig.envId] || '';
-            const locPit = process.env[locConfig.envPit] || '';
-            if (!locId || !locPit) {
-                return NextResponse.json({ error: 'Location not configured' }, { status: 400 });
-            }
-
+            // Find test contact via v1 contacts search (JWT tokens — more reliable than v2 search)
             const phone = testPhone || '4046685785';
             const emailAddr = testEmail || 'saziz112@gmail.com';
-            const digits = phone.replace(/\D/g, '');
-            const e164 = digits.length === 10 ? `+1${digits}` : `+${digits}`;
+            const searchQuery = channel === 'sms' ? phone.replace(/\D/g, '') : emailAddr;
 
-            // Upsert: finds existing contact by phone/email, or creates a new one
-            const upsertBody: Record<string, string> = {
-                locationId: locId,
-                firstName: 'Sam',
-                lastName: 'Test',
-                name: 'Sam Test',
+            const allLocs = getLocations();
+            // Try selected location first, then others
+            const selectedLoc = allLocs.find(l => l.key === locationKey);
+            const orderedLocs = selectedLoc
+                ? [selectedLoc, ...allLocs.filter(l => l.key !== locationKey)]
+                : allLocs;
+
+            let foundContactId = '';
+            let foundContactName = '';
+            let foundLocKey: LocationKey = locationKey;
+
+            for (const loc of orderedLocs) {
+                try {
+                    const res = await fetch(
+                        `https://rest.gohighlevel.com/v1/contacts/?query=${encodeURIComponent(searchQuery)}&limit=1`,
+                        { headers: { 'Authorization': `Bearer ${loc.apiKey}` } },
+                    );
+                    if (res.ok) {
+                        const data = await res.json();
+                        const contact = data.contacts?.[0];
+                        if (contact?.id) {
+                            foundContactId = contact.id;
+                            foundContactName = contact.name || contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Test';
+                            foundLocKey = loc.key;
+                            break;
+                        }
+                    }
+                } catch { /* try next location */ }
+            }
+
+            if (!foundContactId) {
+                return NextResponse.json({
+                    error: `Contact not found in any GHL location for ${channel === 'sms' ? `phone ${phone}` : `email ${emailAddr}`}. Add yourself as a contact in GHL first.`,
+                }, { status: 404 });
+            }
+
+            // Get PIT for the location where contact was found (needed for v2 messaging)
+            const pitEnvMap: Record<LocationKey, string> = {
+                decatur: 'GHL_PIT_DECATUR',
+                smyrna: 'GHL_PIT_SMYRNA',
+                kennesaw: 'GHL_PIT_KENNESAW',
             };
-            if (channel === 'sms') {
-                upsertBody.phone = e164;
-            } else {
-                upsertBody.email = emailAddr;
-            }
-
-            const upsertRes = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${locPit}`,
-                    'Version': '2021-07-28',
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                },
-                body: JSON.stringify(upsertBody),
-            });
-
-            if (!upsertRes.ok) {
-                const errText = await upsertRes.text();
-                return NextResponse.json({ error: `GHL upsert failed (${upsertRes.status}): ${errText.slice(0, 200)}` }, { status: 500 });
-            }
-
-            const upsertData = await upsertRes.json();
-            const contactId = upsertData.contact?.id || upsertData.id;
-            const contactName = upsertData.contact?.name || upsertData.contact?.firstName || 'Test Contact';
-
-            if (!contactId) {
-                return NextResponse.json({ error: 'GHL upsert returned no contactId', detail: JSON.stringify(upsertData).slice(0, 300) }, { status: 500 });
-            }
+            const locIdEnvMap: Record<LocationKey, string> = {
+                decatur: 'GHL_LOCATION_ID_DECATUR',
+                smyrna: 'GHL_LOCATION_ID_SMYRNA',
+                kennesaw: 'GHL_LOCATION_ID_KENNESAW',
+            };
+            const pit = process.env[pitEnvMap[foundLocKey]] || '';
+            const locId = process.env[locIdEnvMap[foundLocKey]] || '';
 
             if (channel === 'sms') {
-                const result = await sendSMS(locId, locPit, contactId, rendered);
+                const result = await sendSMS(locId, pit, foundContactId, rendered);
                 return NextResponse.json({
                     testMode: true,
                     channel: 'sms',
                     recipient: phone,
-                    contactId,
-                    contactName,
+                    contactId: foundContactId,
+                    contactName: foundContactName,
                     renderedMessage: rendered,
                     ...result,
                 });
             } else {
-                const result = await sendEmail(locId, locPit, contactId, rendered, subject || 'Chin Up! Aesthetics');
+                const result = await sendEmail(locId, pit, foundContactId, rendered, subject || 'Chin Up! Aesthetics');
                 return NextResponse.json({
                     testMode: true,
                     channel: 'email',
                     recipient: emailAddr,
-                    contactId,
-                    contactName,
+                    contactId: foundContactId,
+                    contactName: foundContactName,
                     renderedMessage: rendered,
                     ...result,
                 });
