@@ -256,39 +256,70 @@ export async function sendBulkEmail(
 
 /* ── Contact Search (for test sends) ─────────────────────── */
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractContact(data: any): { contactId: string; contactName: string } | null {
+    // GHL responses vary — try common shapes
+    const contact = data?.contact || data?.contacts?.[0] || data;
+    const id = contact?.id as string;
+    if (!id) return null;
+    const name = (contact.contactName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}`.trim()) as string;
+    return { contactId: id, contactName: name || 'Unknown' };
+}
+
 export async function searchContactByPhone(
     pit: string,
     phone: string,
     locationId?: string,
 ): Promise<{ contactId: string; contactName: string } | null> {
+    const digits = phone.replace(/\D/g, '');
+    const e164 = digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits.startsWith('1') ? `+${digits}` : `+${digits}`;
+    const headers = {
+        'Authorization': `Bearer ${pit}`,
+        'Version': GHL_API_VERSION,
+        'Accept': 'application/json',
+    };
+
+    // Strategy 1: v2 contacts/lookup (most reliable)
+    if (locationId) {
+        try {
+            const res = await fetch(`${GHL_V2_BASE}/contacts/lookup?phone=${encodeURIComponent(e164)}&locationId=${locationId}`, { headers });
+            trackCall('ghl', 'searchContactByPhone-lookup', false);
+            if (res.ok) {
+                const data = await res.json();
+                const found = extractContact(data);
+                if (found) return found;
+            }
+        } catch { /* fall through */ }
+    }
+
+    // Strategy 2: v2 contacts search with query param
+    if (locationId) {
+        try {
+            const res = await fetch(`${GHL_V2_BASE}/contacts/?locationId=${locationId}&query=${digits}&limit=1`, { headers });
+            trackCall('ghl', 'searchContactByPhone-search', false);
+            if (res.ok) {
+                const data = await res.json();
+                const contacts = data.contacts as Array<Record<string, unknown>> | undefined;
+                if (contacts?.[0]?.id) {
+                    return extractContact(contacts[0]);
+                }
+            }
+        } catch { /* fall through */ }
+    }
+
+    // Strategy 3: duplicate search (original approach, fallback)
     try {
-        const digits = phone.replace(/\D/g, '');
-        // v2 duplicate search requires locationId
         const params = new URLSearchParams({ number: digits });
         if (locationId) params.set('locationId', locationId);
-        const res = await fetch(`${GHL_V2_BASE}/contacts/search/duplicate?${params}`, {
-            headers: {
-                'Authorization': `Bearer ${pit}`,
-                'Version': GHL_API_VERSION,
-                'Accept': 'application/json',
-            },
-        });
-        trackCall('ghl', 'searchContactByPhone', false);
-
+        const res = await fetch(`${GHL_V2_BASE}/contacts/search/duplicate?${params}`, { headers });
+        trackCall('ghl', 'searchContactByPhone-duplicate', false);
         if (res.ok) {
             const data = await res.json();
-            const contact = data.contact || data.contacts?.[0];
-            if (contact?.id) {
-                return {
-                    contactId: contact.id,
-                    contactName: contact.contactName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
-                };
-            }
+            return extractContact(data);
         }
-        return null;
-    } catch {
-        return null;
-    }
+    } catch { /* fall through */ }
+
+    return null;
 }
 
 export async function searchContactByEmail(
@@ -296,32 +327,53 @@ export async function searchContactByEmail(
     email: string,
     locationId?: string,
 ): Promise<{ contactId: string; contactName: string } | null> {
+    const headers = {
+        'Authorization': `Bearer ${pit}`,
+        'Version': GHL_API_VERSION,
+        'Accept': 'application/json',
+    };
+
+    // Strategy 1: v2 contacts/lookup
+    if (locationId) {
+        try {
+            const res = await fetch(`${GHL_V2_BASE}/contacts/lookup?email=${encodeURIComponent(email)}&locationId=${locationId}`, { headers });
+            trackCall('ghl', 'searchContactByEmail-lookup', false);
+            if (res.ok) {
+                const data = await res.json();
+                const found = extractContact(data);
+                if (found) return found;
+            }
+        } catch { /* fall through */ }
+    }
+
+    // Strategy 2: v2 contacts search with query param
+    if (locationId) {
+        try {
+            const res = await fetch(`${GHL_V2_BASE}/contacts/?locationId=${locationId}&query=${encodeURIComponent(email)}&limit=1`, { headers });
+            trackCall('ghl', 'searchContactByEmail-search', false);
+            if (res.ok) {
+                const data = await res.json();
+                const contacts = data.contacts as Array<Record<string, unknown>> | undefined;
+                if (contacts?.[0]?.id) {
+                    return extractContact(contacts[0]);
+                }
+            }
+        } catch { /* fall through */ }
+    }
+
+    // Strategy 3: duplicate search (fallback)
     try {
         const params = new URLSearchParams({ email });
         if (locationId) params.set('locationId', locationId);
-        const res = await fetch(`${GHL_V2_BASE}/contacts/search/duplicate?${params}`, {
-            headers: {
-                'Authorization': `Bearer ${pit}`,
-                'Version': GHL_API_VERSION,
-                'Accept': 'application/json',
-            },
-        });
-        trackCall('ghl', 'searchContactByEmail', false);
-
+        const res = await fetch(`${GHL_V2_BASE}/contacts/search/duplicate?${params}`, { headers });
+        trackCall('ghl', 'searchContactByEmail-duplicate', false);
         if (res.ok) {
             const data = await res.json();
-            const contact = data.contact || data.contacts?.[0];
-            if (contact?.id) {
-                return {
-                    contactId: contact.id,
-                    contactName: contact.contactName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
-                };
-            }
+            return extractContact(data);
         }
-        return null;
-    } catch {
-        return null;
-    }
+    } catch { /* fall through */ }
+
+    return null;
 }
 
 /* ── SMS Templates (6 campaigns) ─────────────────────────── */
