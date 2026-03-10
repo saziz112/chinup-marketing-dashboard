@@ -105,7 +105,7 @@ export async function sendEmail(
             body: JSON.stringify({
                 type: 'Email',
                 contactId,
-                message: htmlBody,
+                html: htmlBody,
                 subject,
             }),
         });
