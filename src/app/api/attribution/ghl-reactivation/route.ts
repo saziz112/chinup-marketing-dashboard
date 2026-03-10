@@ -16,6 +16,7 @@ import {
     getCancelledAppointments,
     getConsultOnlyPatients,
     buildUnifiedPhoneMap,
+    getRecentOutboundContactIds,
 } from '@/lib/integrations/ghl-conversations';
 import {
     sendBulkSMS, sendBulkEmail, SMS_TEMPLATES, EMAIL_TEMPLATES,
@@ -142,6 +143,19 @@ function applyCooldown(
     return { filtered, cooldownExcluded: contacts.length - filtered.length };
 }
 
+/**
+ * Apply 7-day outbound message cooldown: remove contacts who received an outbound
+ * message (SMS/email) via GHL within the last 7 days.
+ */
+function applyOutboundCooldown(
+    contacts: ContactEntry[],
+    recentOutboundIds: Set<string>,
+): { filtered: ContactEntry[]; outboundExcluded: number } {
+    if (recentOutboundIds.size === 0) return { filtered: contacts, outboundExcluded: 0 };
+    const filtered = contacts.filter(c => !recentOutboundIds.has(c.contactId));
+    return { filtered, outboundExcluded: contacts.length - filtered.length };
+}
+
 export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.email) {
@@ -159,10 +173,11 @@ export async function GET(req: NextRequest) {
     const segment = req.nextUrl.searchParams.get('segment') || 'pipeline-followup';
 
     try {
-        // Fetch cooldown hashes and last campaign runs in parallel
-        const [recentHashes, lastRuns] = await Promise.all([
+        // Fetch cooldown hashes, last campaign runs, and outbound cooldown in parallel
+        const [recentHashes, lastRuns, recentOutboundIds] = await Promise.all([
             getRecentlyContactedHashes(),
             getLastCampaignRuns(),
+            getRecentOutboundContactIds(7),
         ]);
 
         // ── Campaign 1: Let's Reschedule (Cancelled / No-Show) ──
@@ -193,7 +208,8 @@ export async function GET(req: NextRequest) {
                 serviceName: c.serviceName,
             }));
 
-            const { filtered, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
 
             return NextResponse.json({
                 contacts: filtered,
@@ -204,6 +220,7 @@ export async function GET(req: NextRequest) {
                 emailTemplates: EMAIL_TEMPLATES,
                 dndFiltered: sendable.length - noDND.length,
                 cooldownExcluded,
+                outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
                 source: 'mindbody-appointments',
             });
@@ -236,7 +253,8 @@ export async function GET(req: NextRequest) {
                 tags: phoneMap.get(normalizePhone(c.phone))?.tags || [],
             }));
 
-            const { filtered, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
 
             return NextResponse.json({
                 contacts: filtered,
@@ -247,6 +265,7 @@ export async function GET(req: NextRequest) {
                 emailTemplates: EMAIL_TEMPLATES,
                 dndFiltered: sendable.length - noDND.length,
                 cooldownExcluded,
+                outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
                 source: 'mindbody-appointments',
             });
@@ -281,7 +300,8 @@ export async function GET(req: NextRequest) {
                 tags: [] as string[],
             }));
 
-            const { filtered, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
 
             return NextResponse.json({
                 contacts: filtered,
@@ -292,6 +312,7 @@ export async function GET(req: NextRequest) {
                 emailTemplates: EMAIL_TEMPLATES,
                 dndFiltered: intelligence.summary.dndFiltered,
                 cooldownExcluded,
+                outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
                 source: 'ghl-conversations',
             });
@@ -338,7 +359,8 @@ export async function GET(req: NextRequest) {
                 tags: sl.opportunity.contactTags || [],
             }));
 
-            const { filtered, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
 
             return NextResponse.json({
                 contacts: filtered,
@@ -349,6 +371,7 @@ export async function GET(req: NextRequest) {
                 emailTemplates: EMAIL_TEMPLATES,
                 dndFiltered: dedupedLeads.length - noDND.length,
                 cooldownExcluded,
+                outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
                 source: 'ghl-pipeline',
             });
@@ -405,17 +428,19 @@ export async function GET(req: NextRequest) {
             }));
 
             const responseRate = segment === 'lapsed-vip' ? 0.22 : 0.06;
-            const { filtered: cooldownFiltered, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: finalFiltered, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
 
             return NextResponse.json({
-                contacts: cooldownFiltered,
-                totalEligible: cooldownFiltered.length,
+                contacts: finalFiltered,
+                totalEligible: finalFiltered.length,
                 segment,
-                forecast: buildForecast(cooldownFiltered, responseRate),
+                forecast: buildForecast(finalFiltered, responseRate),
                 templates: SMS_TEMPLATES,
                 emailTemplates: EMAIL_TEMPLATES,
                 dndFiltered: filtered.filter(p => p.ghlContactId).length - sendable.length,
                 cooldownExcluded,
+                outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
                 source: 'mindbody',
             });

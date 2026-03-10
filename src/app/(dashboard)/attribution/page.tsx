@@ -1602,9 +1602,10 @@ export default function LeadsPipelinePage() {
                                                         </div>
 
                                                         {/* Cooldown + DND info */}
-                                                        {(smsData.cooldownExcluded > 0 || smsData.dndFiltered > 0) && (
+                                                        {(smsData.cooldownExcluded > 0 || smsData.outboundExcluded > 0 || smsData.dndFiltered > 0) && (
                                                             <div style={{ padding: '8px 12px', marginBottom: '12px', background: 'rgba(251,191,36,0.08)', borderRadius: '6px', fontSize: '0.75rem', color: '#FBBF24' }}>
                                                                 {smsData.cooldownExcluded > 0 && <span>{smsData.cooldownExcluded} excluded (contacted within 30 days). </span>}
+                                                                {smsData.outboundExcluded > 0 && <span>{smsData.outboundExcluded} excluded (messaged within 7 days). </span>}
                                                                 {smsData.dndFiltered > 0 && <span>{smsData.dndFiltered} excluded (DND/opted-out).</span>}
                                                             </div>
                                                         )}
@@ -1776,6 +1777,7 @@ export default function LeadsPipelinePage() {
                                                         <div style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', marginBottom: '4px' }}>
                                                             {smsData?.dndFiltered > 0 && <span>{smsData.dndFiltered} contacts excluded (DND/opted-out). </span>}
                                                             {smsData?.cooldownExcluded > 0 && <span>{smsData.cooldownExcluded} contacts excluded (contacted within 30 days). </span>}
+                                                            {smsData?.outboundExcluded > 0 && <span>{smsData.outboundExcluded} contacts excluded (messaged within 7 days). </span>}
                                                             {smsData?.totalEligible === 0 && 'All contacts in this segment are either active patients, on DND, or have no phone number.'}
                                                         </div>
                                                         <button onClick={() => setSmsStep(1)} style={{

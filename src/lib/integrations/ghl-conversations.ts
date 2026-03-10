@@ -238,6 +238,8 @@ const engagementCache = new Map<string, CacheEntry<ContactEngagement>>();
 const intelligenceCache = new Map<string, CacheEntry<ConversationsIntelligence>>();
 const ENGAGEMENT_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 const INTELLIGENCE_CACHE_TTL = 30 * 60 * 1000;
+let outboundCooldownCache: CacheEntry<Set<string>> | null = null;
+const OUTBOUND_COOLDOWN_TTL = 30 * 60 * 1000; // 30 minutes
 
 // --- Core Conversation Fetchers ---
 
@@ -1712,4 +1714,83 @@ export async function getConsultOnlyPatients(
     console.log(`[ghl-conversations] Found ${result.length} consult-only patients (${result.filter(c => c.ghlContactId).length} matched to GHL)`);
 
     return result;
+}
+
+/* ── 7-Day Outbound Message Cooldown ─────────────────────── */
+
+/**
+ * Returns contactIds that received an outbound message (SMS/email) within the last N days.
+ * Uses conversation-level lastMessageDirection + lastMessageDate for efficiency.
+ * ~3-6 API calls total (1-2 pages per location). 30-min in-memory cache.
+ */
+export async function getRecentOutboundContactIds(daysCutoff: number = 7): Promise<Set<string>> {
+    const now = Date.now();
+    if (outboundCooldownCache && (now - outboundCooldownCache.timestamp) < OUTBOUND_COOLDOWN_TTL) {
+        return outboundCooldownCache.data;
+    }
+
+    const locations = getV2Locations();
+    if (locations.length === 0) return new Set();
+
+    const cutoffMs = now - daysCutoff * 86400000;
+    const contactIds = new Set<string>();
+
+    // Fetch all locations in parallel
+    await Promise.all(locations.map(async (loc) => {
+        let afterDate: number | undefined;
+        let hasMore = true;
+
+        while (hasMore) {
+            try {
+                const params: Record<string, string> = {
+                    locationId: loc.locationId,
+                    limit: '100',
+                    sortBy: 'last_message_date',
+                    sortOrder: 'desc',
+                };
+                if (afterDate) {
+                    params.startAfterDate = String(afterDate);
+                }
+
+                const data = await ghlV2Fetch<{ conversations: GHLConversation[]; total?: number }>(
+                    loc.pit,
+                    '/conversations/search',
+                    params,
+                );
+                trackCall('ghl', 'getRecentOutboundConversations', false);
+
+                const conversations = data.conversations || [];
+                if (conversations.length === 0) {
+                    hasMore = false;
+                    break;
+                }
+
+                for (const conv of conversations) {
+                    // Stop paginating once conversations are older than cutoff
+                    if (conv.lastMessageDate < cutoffMs) {
+                        hasMore = false;
+                        break;
+                    }
+                    if (conv.lastMessageDirection === 'outbound' && conv.contactId) {
+                        contactIds.add(conv.contactId);
+                    }
+                }
+
+                // If we got fewer than 100, no more pages
+                if (conversations.length < 100) {
+                    hasMore = false;
+                } else if (hasMore) {
+                    // Use last conversation's date for pagination
+                    afterDate = conversations[conversations.length - 1].lastMessageDate;
+                }
+            } catch (err) {
+                console.warn(`[ghl-conversations] Outbound cooldown fetch failed for ${loc.key}:`, err);
+                hasMore = false;
+            }
+        }
+    }));
+
+    console.log(`[ghl-conversations] Found ${contactIds.size} contacts with outbound messages in last ${daysCutoff} days`);
+    outboundCooldownCache = { data: contactIds, timestamp: now };
+    return contactIds;
 }
