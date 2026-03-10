@@ -534,7 +534,7 @@ export async function POST(req: NextRequest) {
                     const locId = process.env[loc.envId];
                     const locPit = process.env[loc.envPit];
                     if (!locId || !locPit) continue;
-                    const contact = await searchContactByPhone(locPit, phone);
+                    const contact = await searchContactByPhone(locPit, phone, locId);
                     if (contact) {
                         foundContact = contact;
                         foundLocationId = locId;
@@ -565,7 +565,7 @@ export async function POST(req: NextRequest) {
                     const locId = process.env[loc.envId];
                     const locPit = process.env[loc.envPit];
                     if (!locId || !locPit) continue;
-                    const contact = await searchContactByEmail(locPit, email);
+                    const contact = await searchContactByEmail(locPit, email, locId);
                     if (contact) {
                         foundContact = contact;
                         foundLocationId = locId;

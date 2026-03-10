@@ -259,11 +259,14 @@ export async function sendBulkEmail(
 export async function searchContactByPhone(
     pit: string,
     phone: string,
+    locationId?: string,
 ): Promise<{ contactId: string; contactName: string } | null> {
     try {
-        // GHL v2 duplicate search endpoint
         const digits = phone.replace(/\D/g, '');
-        const res = await fetch(`${GHL_V2_BASE}/contacts/search/duplicate?number=${digits}`, {
+        // v2 duplicate search requires locationId
+        const params = new URLSearchParams({ number: digits });
+        if (locationId) params.set('locationId', locationId);
+        const res = await fetch(`${GHL_V2_BASE}/contacts/search/duplicate?${params}`, {
             headers: {
                 'Authorization': `Bearer ${pit}`,
                 'Version': GHL_API_VERSION,
@@ -291,9 +294,12 @@ export async function searchContactByPhone(
 export async function searchContactByEmail(
     pit: string,
     email: string,
+    locationId?: string,
 ): Promise<{ contactId: string; contactName: string } | null> {
     try {
-        const res = await fetch(`${GHL_V2_BASE}/contacts/search/duplicate?email=${encodeURIComponent(email)}`, {
+        const params = new URLSearchParams({ email });
+        if (locationId) params.set('locationId', locationId);
+        const res = await fetch(`${GHL_V2_BASE}/contacts/search/duplicate?${params}`, {
             headers: {
                 'Authorization': `Bearer ${pit}`,
                 'Version': GHL_API_VERSION,
