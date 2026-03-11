@@ -1,0 +1,513 @@
+/**
+ * MindBody Historical Data Sync
+ * One-time backfill + daily incremental sync for sales & appointments.
+ * Stores data in Vercel Postgres for unlimited lookback without API cost.
+ */
+
+import { sql } from '@vercel/postgres';
+import { getSales, getAppointments, getClients, normalizePhone } from './mindbody';
+import type { Sale, StaffAppointment, Client } from './mindbody';
+import type { LocationKey } from './gohighlevel';
+
+// ---------------------------------------------------------------------------
+// Sync State Helpers
+// ---------------------------------------------------------------------------
+
+export interface SyncState {
+    syncType: string;
+    lastSyncDate: string;
+    totalRecords: number;
+    updatedAt: string;
+}
+
+export async function getSyncState(): Promise<SyncState[]> {
+    try {
+        const result = await sql`SELECT sync_type, last_sync_date, total_records, updated_at FROM mb_sync_state`;
+        return result.rows.map(r => ({
+            syncType: r.sync_type,
+            lastSyncDate: r.last_sync_date,
+            totalRecords: r.total_records,
+            updatedAt: r.updated_at,
+        }));
+    } catch {
+        return [];
+    }
+}
+
+export async function hasSyncData(): Promise<boolean> {
+    try {
+        const result = await sql`SELECT COUNT(*) as cnt FROM mb_sync_state`;
+        return Number(result.rows[0]?.cnt) > 0;
+    } catch {
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MindBody Sales Backfill
+// ---------------------------------------------------------------------------
+
+/**
+ * Backfill ALL MindBody sales from startYear to today.
+ * Processes in 6-month chunks to avoid timeouts.
+ */
+export async function backfillSales(startYear: number = 2020): Promise<{ total: number; apiCalls: number }> {
+    let totalInserted = 0;
+    let apiCalls = 0;
+    const now = new Date();
+    let chunkStart = new Date(`${startYear}-01-01`);
+
+    while (chunkStart < now) {
+        const chunkEnd = new Date(chunkStart);
+        chunkEnd.setMonth(chunkEnd.getMonth() + 6);
+        if (chunkEnd > now) chunkEnd.setTime(now.getTime());
+
+        const startDate = chunkStart.toISOString().split('T')[0];
+        const endDate = chunkEnd.toISOString().split('T')[0];
+
+        console.log(`[mb-sync] Fetching sales ${startDate} to ${endDate}...`);
+        const sales = await getSales(startDate, endDate);
+        apiCalls += Math.ceil(sales.length / 100) || 1;
+
+        if (sales.length > 0) {
+            const inserted = await upsertSales(sales);
+            totalInserted += inserted;
+            console.log(`[mb-sync] Inserted ${inserted} sales for ${startDate} to ${endDate}`);
+        }
+
+        chunkStart = new Date(chunkEnd);
+        chunkStart.setDate(chunkStart.getDate() + 1);
+    }
+
+    await sql`
+        INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+        VALUES ('sales', ${now.toISOString().split('T')[0]}, ${totalInserted}, NOW())
+        ON CONFLICT (sync_type)
+        DO UPDATE SET last_sync_date = ${now.toISOString().split('T')[0]},
+                      total_records = (SELECT COUNT(*) FROM mb_sales_history),
+                      updated_at = NOW()
+    `;
+
+    console.log(`[mb-sync] Sales backfill complete: ${totalInserted} records, ${apiCalls} API calls`);
+    return { total: totalInserted, apiCalls };
+}
+
+// ---------------------------------------------------------------------------
+// MindBody Appointments Backfill
+// ---------------------------------------------------------------------------
+
+/**
+ * Backfill ALL MindBody appointments from startYear to today.
+ */
+export async function backfillAppointments(startYear: number = 2020): Promise<{ total: number; apiCalls: number }> {
+    let totalInserted = 0;
+    let apiCalls = 0;
+    const now = new Date();
+    let chunkStart = new Date(`${startYear}-01-01`);
+
+    while (chunkStart < now) {
+        const chunkEnd = new Date(chunkStart);
+        chunkEnd.setMonth(chunkEnd.getMonth() + 6);
+        if (chunkEnd > now) chunkEnd.setTime(now.getTime());
+
+        const startDate = chunkStart.toISOString().split('T')[0];
+        const endDate = chunkEnd.toISOString().split('T')[0];
+
+        console.log(`[mb-sync] Fetching appointments ${startDate} to ${endDate}...`);
+        const appts = await getAppointments(startDate, endDate);
+        apiCalls += Math.ceil(appts.length / 100) || 1;
+
+        if (appts.length > 0) {
+            const inserted = await upsertAppointments(appts);
+            totalInserted += inserted;
+            console.log(`[mb-sync] Inserted ${inserted} appointments for ${startDate} to ${endDate}`);
+        }
+
+        chunkStart = new Date(chunkEnd);
+        chunkStart.setDate(chunkStart.getDate() + 1);
+    }
+
+    await sql`
+        INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+        VALUES ('appointments', ${now.toISOString().split('T')[0]}, ${totalInserted}, NOW())
+        ON CONFLICT (sync_type)
+        DO UPDATE SET last_sync_date = ${now.toISOString().split('T')[0]},
+                      total_records = (SELECT COUNT(*) FROM mb_appointments_history),
+                      updated_at = NOW()
+    `;
+
+    console.log(`[mb-sync] Appointments backfill complete: ${totalInserted} records, ${apiCalls} API calls`);
+    return { total: totalInserted, apiCalls };
+}
+
+// ---------------------------------------------------------------------------
+// MindBody Client Backfill (for phone/email matching)
+// ---------------------------------------------------------------------------
+
+/**
+ * Backfill client details for all clients found in sales history.
+ * Stores in mb_clients_cache for phone/email matching.
+ */
+export async function backfillClients(): Promise<{ total: number; apiCalls: number }> {
+    // Get all unique client IDs from sales history that we don't have yet
+    const result = await sql`
+        SELECT DISTINCT client_id FROM mb_sales_history
+        WHERE client_id NOT IN (SELECT DISTINCT client_id FROM mb_clients_cache)
+        LIMIT 5000
+    `;
+    const clientIds = result.rows.map(r => r.client_id);
+
+    if (clientIds.length === 0) {
+        console.log('[mb-sync] No new clients to backfill');
+        return { total: 0, apiCalls: 0 };
+    }
+
+    console.log(`[mb-sync] Fetching ${clientIds.length} client records...`);
+    const clients = await getClients(clientIds);
+    const apiCalls = Math.ceil(clientIds.length / 10);
+
+    if (clients.length > 0) {
+        await upsertClients(clients);
+    }
+
+    console.log(`[mb-sync] Client backfill complete: ${clients.length} records, ${apiCalls} API calls`);
+    return { total: clients.length, apiCalls };
+}
+
+// ---------------------------------------------------------------------------
+// Incremental Sync
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch only new data since last sync. Safe to run frequently.
+ * Overlaps by 2 days to catch any late-arriving records.
+ */
+export async function incrementalSync(): Promise<{
+    newSales: number;
+    newAppts: number;
+    apiCalls: number;
+}> {
+    const states = await getSyncState();
+    const salesState = states.find(s => s.syncType === 'sales');
+    const apptsState = states.find(s => s.syncType === 'appointments');
+
+    if (!salesState && !apptsState) {
+        console.log('[mb-sync] No sync state found — run backfill first');
+        return { newSales: 0, newAppts: 0, apiCalls: 0 };
+    }
+
+    const now = new Date();
+    const endDate = now.toISOString().split('T')[0];
+    let apiCalls = 0;
+    let newSales = 0;
+    let newAppts = 0;
+
+    // Sync sales (overlap by 2 days)
+    if (salesState) {
+        const syncFrom = new Date(salesState.lastSyncDate);
+        syncFrom.setDate(syncFrom.getDate() - 2);
+        const startDate = syncFrom.toISOString().split('T')[0];
+
+        const sales = await getSales(startDate, endDate);
+        apiCalls += Math.ceil(sales.length / 100) || 1;
+        if (sales.length > 0) {
+            newSales = await upsertSales(sales);
+        }
+
+        await sql`
+            UPDATE mb_sync_state
+            SET last_sync_date = ${endDate},
+                total_records = (SELECT COUNT(*) FROM mb_sales_history),
+                updated_at = NOW()
+            WHERE sync_type = 'sales'
+        `;
+    }
+
+    // Sync appointments (overlap by 2 days)
+    if (apptsState) {
+        const syncFrom = new Date(apptsState.lastSyncDate);
+        syncFrom.setDate(syncFrom.getDate() - 2);
+        const startDate = syncFrom.toISOString().split('T')[0];
+
+        const appts = await getAppointments(startDate, endDate);
+        apiCalls += Math.ceil(appts.length / 100) || 1;
+        if (appts.length > 0) {
+            newAppts = await upsertAppointments(appts);
+        }
+
+        await sql`
+            UPDATE mb_sync_state
+            SET last_sync_date = ${endDate},
+                total_records = (SELECT COUNT(*) FROM mb_appointments_history),
+                updated_at = NOW()
+            WHERE sync_type = 'appointments'
+        `;
+    }
+
+    console.log(`[mb-sync] Incremental sync: ${newSales} new sales, ${newAppts} new appointments, ${apiCalls} API calls`);
+    return { newSales, newAppts, apiCalls };
+}
+
+// ---------------------------------------------------------------------------
+// Lapsed Patients from Postgres (replaces API-based approach)
+// ---------------------------------------------------------------------------
+
+export interface LapsedPatientDB {
+    mbClientId: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    totalRevenue: number;
+    lastSaleDate: string;
+    daysSinceLastVisit: number;
+    segment: 'recent-lapse' | 'lapsed' | 'long-lapsed';
+    lastTreatmentType?: string;
+    lastTreatmentDate?: string;
+    treatmentHistory?: string[];
+}
+
+/**
+ * Query lapsed patients from Postgres (unlimited lookback, zero API calls).
+ * Joins sales history with appointment history for treatment type detection.
+ */
+export async function getLapsedPatientsFromDB(
+    minDaysSinceVisit: number = 60,
+    treatmentFilter?: string,
+): Promise<LapsedPatientDB[]> {
+    // Get all clients with their revenue stats from the sales history
+    const salesResult = await sql`
+        SELECT
+            s.client_id,
+            SUM(s.total_amount) as total_revenue,
+            MAX(s.sale_date) as last_sale_date,
+            EXTRACT(DAY FROM NOW() - MAX(s.sale_date))::INTEGER as days_since
+        FROM mb_sales_history s
+        GROUP BY s.client_id
+        HAVING EXTRACT(DAY FROM NOW() - MAX(s.sale_date))::INTEGER >= ${minDaysSinceVisit}
+        ORDER BY SUM(s.total_amount) DESC
+    `;
+
+    if (salesResult.rows.length === 0) return [];
+
+    // Get treatment info for these clients
+    const clientIds = salesResult.rows.map(r => r.client_id);
+    const clientIdsCsv = clientIds.join(',');
+    const treatmentResult = await sql`
+        SELECT DISTINCT ON (client_id)
+            client_id,
+            session_type_name,
+            start_date
+        FROM mb_appointments_history
+        WHERE client_id = ANY(string_to_array(${clientIdsCsv}, ','))
+          AND status IN ('Completed', 'Arrived')
+          AND session_type_name IS NOT NULL
+          AND session_type_name NOT ILIKE '%follow%up%'
+          AND session_type_name NOT ILIKE '%block%'
+          AND session_type_name NOT ILIKE '%unavailable%'
+        ORDER BY client_id, start_date DESC
+    `;
+
+    const treatmentMap = new Map<string, { name: string; date: string }>();
+    for (const row of treatmentResult.rows) {
+        treatmentMap.set(row.client_id, {
+            name: row.session_type_name,
+            date: row.start_date,
+        });
+    }
+
+    // Get all treatment types per client (for treatmentHistory)
+    const historyResult = await sql`
+        SELECT client_id, ARRAY_AGG(DISTINCT session_type_name) as treatments
+        FROM mb_appointments_history
+        WHERE client_id = ANY(string_to_array(${clientIdsCsv}, ','))
+          AND status IN ('Completed', 'Arrived')
+          AND session_type_name IS NOT NULL
+          AND session_type_name NOT ILIKE '%follow%up%'
+          AND session_type_name NOT ILIKE '%block%'
+          AND session_type_name NOT ILIKE '%unavailable%'
+        GROUP BY client_id
+    `;
+
+    const historyMap = new Map<string, string[]>();
+    for (const row of historyResult.rows) {
+        historyMap.set(row.client_id, row.treatments || []);
+    }
+
+    // Get client details (name, phone, email) from cache
+    const clientDetailResult = await sql`
+        SELECT DISTINCT ON (client_id)
+            client_id, first_name, last_name, email, phone
+        FROM mb_clients_cache
+        WHERE client_id = ANY(string_to_array(${clientIdsCsv}, ','))
+    `;
+
+    const clientMap = new Map<string, { firstName: string; lastName: string; email: string; phone: string }>();
+    for (const row of clientDetailResult.rows) {
+        clientMap.set(row.client_id, {
+            firstName: row.first_name || '',
+            lastName: row.last_name || '',
+            email: row.email || '',
+            phone: row.phone || '',
+        });
+    }
+
+    // Build lapsed patient list
+    const lapsed: LapsedPatientDB[] = [];
+    for (const row of salesResult.rows) {
+        const clientId = row.client_id;
+        const details = clientMap.get(clientId);
+        if (!details?.phone) continue; // Must have a phone to be contactable
+
+        const treatment = treatmentMap.get(clientId);
+
+        // Apply treatment filter if specified
+        if (treatmentFilter && treatment?.name) {
+            if (!treatment.name.toLowerCase().includes(treatmentFilter.toLowerCase())) continue;
+        } else if (treatmentFilter && !treatment?.name) {
+            continue; // No treatment data, skip if filtering
+        }
+
+        const daysSince = Number(row.days_since);
+        let segment: LapsedPatientDB['segment'];
+        if (daysSince < 90) segment = 'recent-lapse';
+        else if (daysSince < 180) segment = 'lapsed';
+        else segment = 'long-lapsed';
+
+        lapsed.push({
+            mbClientId: clientId,
+            firstName: details.firstName,
+            lastName: details.lastName,
+            email: details.email,
+            phone: details.phone,
+            totalRevenue: Number(row.total_revenue),
+            lastSaleDate: row.last_sale_date,
+            daysSinceLastVisit: daysSince,
+            segment,
+            lastTreatmentType: treatment?.name,
+            lastTreatmentDate: treatment?.date,
+            treatmentHistory: historyMap.get(clientId),
+        });
+    }
+
+    return lapsed;
+}
+
+/**
+ * Get all unique treatment types from appointment history.
+ * Used for the treatment filter dropdown in the UI.
+ */
+export async function getAvailableTreatments(): Promise<string[]> {
+    try {
+        const result = await sql`
+            SELECT DISTINCT session_type_name
+            FROM mb_appointments_history
+            WHERE status IN ('Completed', 'Arrived')
+              AND session_type_name IS NOT NULL
+              AND session_type_name NOT ILIKE '%follow%up%'
+              AND session_type_name NOT ILIKE '%block%'
+              AND session_type_name NOT ILIKE '%unavailable%'
+            ORDER BY session_type_name
+        `;
+        return result.rows.map(r => r.session_type_name);
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Get sync statistics for admin panel display.
+ */
+export async function getSyncStats(): Promise<{
+    salesCount: number;
+    appointmentsCount: number;
+    clientsCount: number;
+    syncStates: SyncState[];
+}> {
+    try {
+        const [salesCount, apptsCount, clientsCount, states] = await Promise.all([
+            sql`SELECT COUNT(*) as cnt FROM mb_sales_history`.then(r => Number(r.rows[0]?.cnt || 0)),
+            sql`SELECT COUNT(*) as cnt FROM mb_appointments_history`.then(r => Number(r.rows[0]?.cnt || 0)),
+            sql`SELECT COUNT(*) as cnt FROM mb_clients_cache`.then(r => Number(r.rows[0]?.cnt || 0)).catch(() => 0),
+            getSyncState(),
+        ]);
+        return {
+            salesCount,
+            appointmentsCount: apptsCount,
+            clientsCount,
+            syncStates: states,
+        };
+    } catch {
+        return { salesCount: 0, appointmentsCount: 0, clientsCount: 0, syncStates: [] };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal: Upsert helpers
+// ---------------------------------------------------------------------------
+
+async function upsertSales(sales: Sale[]): Promise<number> {
+    let inserted = 0;
+    // Process in batches of 50 to avoid query size limits
+    for (let i = 0; i < sales.length; i += 50) {
+        const batch = sales.slice(i, i + 50);
+        for (const sale of batch) {
+            const totalAmount = sale.PurchasedItems?.reduce((s, item) => s + (item.TotalAmount || 0), 0) || 0;
+            const saleDate = (sale.SaleDate || sale.SaleDateTime || '').split('T')[0];
+            if (!saleDate || !sale.ClientId) continue;
+
+            await sql`
+                INSERT INTO mb_sales_history (sale_id, client_id, sale_date, location_id, total_amount, items_json, synced_at)
+                VALUES (${sale.Id}, ${sale.ClientId}, ${saleDate}, ${sale.LocationId || 0}, ${totalAmount},
+                        ${JSON.stringify(sale.PurchasedItems || [])}, NOW())
+                ON CONFLICT (sale_id) DO UPDATE SET
+                    total_amount = ${totalAmount},
+                    items_json = ${JSON.stringify(sale.PurchasedItems || [])},
+                    synced_at = NOW()
+            `;
+            inserted++;
+        }
+    }
+    return inserted;
+}
+
+async function upsertAppointments(appts: StaffAppointment[]): Promise<number> {
+    let inserted = 0;
+    for (let i = 0; i < appts.length; i += 50) {
+        const batch = appts.slice(i, i + 50);
+        for (const appt of batch) {
+            if (!appt.ClientId) continue;
+            const staffName = appt.Staff?.DisplayName || appt.Staff?.FirstName || '';
+
+            await sql`
+                INSERT INTO mb_appointments_history
+                    (appointment_id, client_id, start_date, status, session_type_id, session_type_name, location_id, staff_name, synced_at)
+                VALUES (${appt.Id}, ${appt.ClientId}, ${appt.StartDateTime}, ${appt.Status},
+                        ${appt.SessionTypeId || 0}, ${appt.SessionType?.Name || null},
+                        ${appt.LocationId || 0}, ${staffName}, NOW())
+                ON CONFLICT (appointment_id) DO UPDATE SET
+                    status = ${appt.Status},
+                    session_type_name = COALESCE(${appt.SessionType?.Name || null}, mb_appointments_history.session_type_name),
+                    synced_at = NOW()
+            `;
+            inserted++;
+        }
+    }
+    return inserted;
+}
+
+async function upsertClients(clients: Client[]): Promise<void> {
+    for (const client of clients) {
+        const phone = normalizePhone(client.MobilePhone || client.HomePhone || '');
+        await sql`
+            INSERT INTO mb_clients_cache (client_id, first_name, last_name, email, phone, synced_at)
+            VALUES (${client.Id}, ${client.FirstName || ''}, ${client.LastName || ''}, ${client.Email || ''}, ${phone}, NOW())
+            ON CONFLICT (client_id) DO UPDATE SET
+                first_name = ${client.FirstName || ''},
+                last_name = ${client.LastName || ''},
+                email = ${client.Email || ''},
+                phone = ${phone},
+                synced_at = NOW()
+        `;
+    }
+}

@@ -55,7 +55,12 @@ export default function SettingsPage() {
     const [pwMsg, setPwMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
     // --- Tab state ---
-    const [activeTab, setActiveTab] = useState<'users' | 'accounts' | 'usage'>('users');
+    const [activeTab, setActiveTab] = useState<'users' | 'accounts' | 'usage' | 'sync'>('users');
+
+    // Data sync state
+    const [syncStatus, setSyncStatus] = useState<any>(null);
+    const [syncLoading, setSyncLoading] = useState(false);
+    const [syncAction, setSyncAction] = useState<string | null>(null);
 
     useEffect(() => {
         if (user && !isAdmin) {
@@ -194,10 +199,41 @@ export default function SettingsPage() {
         return { label: 'Inactive', color: '#ef4444' };
     };
 
+    // Fetch sync status
+    const fetchSyncStatus = async () => {
+        setSyncLoading(true);
+        try {
+            const res = await fetch('/api/admin/data-sync');
+            if (res.ok) setSyncStatus(await res.json());
+        } catch { /* non-critical */ }
+        finally { setSyncLoading(false); }
+    };
+
+    // Trigger a sync action
+    const triggerSync = async (action: string) => {
+        setSyncAction(action);
+        try {
+            const res = await fetch('/api/admin/data-sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Sync failed');
+            showFlash(`${action} completed: ${JSON.stringify(data).slice(0, 200)}`, 'success');
+            fetchSyncStatus();
+        } catch (e: any) {
+            showFlash(e.message || 'Sync failed', 'error');
+        } finally {
+            setSyncAction(null);
+        }
+    };
+
     const tabs = [
         { id: 'users' as const, label: 'Users & Security', icon: '👥' },
         { id: 'accounts' as const, label: 'Connected Accounts', icon: '🔗' },
         { id: 'usage' as const, label: 'API Usage', icon: '📊' },
+        { id: 'sync' as const, label: 'Data Sync', icon: '🔄' },
     ];
 
     const platforms = [
@@ -530,6 +566,125 @@ export default function SettingsPage() {
                             Sync Now (Coming Soon)
                         </button>
                     </div>
+                </div>
+            )}
+
+            {/* ==================== DATA SYNC TAB ==================== */}
+            {activeTab === 'sync' && (
+                <div className="section-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                        <div>
+                            <h3 style={{ margin: 0 }}>Data Sync</h3>
+                            <p style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', marginTop: '4px' }}>
+                                Sync MindBody &amp; GHL data to Postgres for unlimited lookback and advanced segmentation.
+                            </p>
+                        </div>
+                        <button
+                            onClick={fetchSyncStatus}
+                            disabled={syncLoading}
+                            style={{
+                                padding: '8px 16px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)',
+                                borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8125rem',
+                            }}
+                        >
+                            {syncLoading ? 'Loading...' : 'Refresh Status'}
+                        </button>
+                    </div>
+
+                    {!syncStatus && !syncLoading && (
+                        <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                            Click &quot;Refresh Status&quot; to load sync data.
+                        </div>
+                    )}
+
+                    {syncLoading && !syncStatus && (
+                        <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>Loading...</div>
+                    )}
+
+                    {syncStatus && (
+                        <>
+                            {/* Status Cards */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '24px' }}>
+                                {[
+                                    { label: 'MB Sales', value: syncStatus.mindbody?.salesCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.sync_type === 'sales')?.last_sync_date || 'Never synced' },
+                                    { label: 'MB Appointments', value: syncStatus.mindbody?.appointmentsCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.sync_type === 'appointments')?.last_sync_date || 'Never synced' },
+                                    { label: 'MB Clients', value: syncStatus.mindbody?.clientsCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.sync_type === 'clients')?.last_sync_date || 'Never synced' },
+                                    { label: 'GHL Contacts', value: syncStatus.ghl?.totalContacts?.toLocaleString() || '0', sub: syncStatus.ghl?.lastSync || 'Never synced' },
+                                    { label: 'GHL w/ Phone', value: syncStatus.ghl?.withPhone?.toLocaleString() || '0', sub: `${syncStatus.ghl?.totalContacts ? Math.round((syncStatus.ghl.withPhone / syncStatus.ghl.totalContacts) * 100) : 0}% of total` },
+                                    { label: 'GHL w/ Email', value: syncStatus.ghl?.withEmail?.toLocaleString() || '0', sub: `${syncStatus.ghl?.totalContacts ? Math.round((syncStatus.ghl.withEmail / syncStatus.ghl.totalContacts) * 100) : 0}% of total` },
+                                ].map(stat => (
+                                    <div key={stat.label} className="metric-card" style={{ padding: '16px' }}>
+                                        <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>{stat.label}</div>
+                                        <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>{stat.value}</div>
+                                        <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>{stat.sub}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* GHL by Location */}
+                            {syncStatus.ghl?.byLocation && Object.keys(syncStatus.ghl.byLocation).length > 0 && (
+                                <div style={{ marginBottom: '24px' }}>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px', fontWeight: 600 }}>GHL Contacts by Location</div>
+                                    <div style={{ display: 'flex', gap: '16px', fontSize: '0.8125rem' }}>
+                                        {Object.entries(syncStatus.ghl.byLocation).map(([loc, cnt]) => (
+                                            <div key={loc}>
+                                                <span style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>{loc}: </span>
+                                                <span style={{ fontWeight: 600 }}>{(cnt as number).toLocaleString()}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Action Buttons */}
+                            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '20px' }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px', fontWeight: 600, textTransform: 'uppercase' }}>Backfill (One-Time)</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+                                    {[
+                                        { action: 'backfill-mindbody', label: 'Backfill MindBody (All)', est: '~500 API calls' },
+                                        { action: 'backfill-ghl', label: 'Backfill GHL Contacts', est: '~320 API calls' },
+                                    ].map(btn => (
+                                        <button
+                                            key={btn.action}
+                                            disabled={!!syncAction}
+                                            onClick={() => { if (confirm(`Run ${btn.label}? This will use ${btn.est}.`)) triggerSync(btn.action); }}
+                                            style={{
+                                                padding: '8px 16px', fontSize: '0.8125rem', fontWeight: 500,
+                                                background: 'rgba(216,180,29,0.1)', border: '1px solid rgba(216,180,29,0.3)',
+                                                borderRadius: '8px', color: '#D8B41D', cursor: syncAction ? 'wait' : 'pointer',
+                                                opacity: syncAction ? 0.6 : 1,
+                                            }}
+                                        >
+                                            {syncAction === btn.action ? 'Running...' : btn.label}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px', fontWeight: 600, textTransform: 'uppercase' }}>Incremental Sync (Daily)</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                    {[
+                                        { action: 'sync', label: 'Sync All (MB + GHL)', est: '~10 calls' },
+                                        { action: 'sync-mindbody', label: 'Sync MindBody Only', est: '~5 calls' },
+                                        { action: 'sync-ghl', label: 'Sync GHL Only', est: '~5 calls' },
+                                    ].map(btn => (
+                                        <button
+                                            key={btn.action}
+                                            disabled={!!syncAction}
+                                            onClick={() => triggerSync(btn.action)}
+                                            style={{
+                                                padding: '8px 16px', fontSize: '0.8125rem', fontWeight: 500,
+                                                background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
+                                                borderRadius: '8px', color: '#22c55e', cursor: syncAction ? 'wait' : 'pointer',
+                                                opacity: syncAction ? 0.6 : 1,
+                                            }}
+                                        >
+                                            {syncAction === btn.action ? 'Running...' : btn.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </div>
             )}
 

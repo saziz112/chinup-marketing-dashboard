@@ -25,6 +25,11 @@ export async function initAllTables() {
         initCampaignRunsTable(),
         initCampaignContactsTable(),
         initSmsCacheTable(),
+        initMbSalesHistoryTable(),
+        initMbAppointmentsHistoryTable(),
+        initMbSyncStateTable(),
+        initMbClientsCacheTable(),
+        initGhlContactsMapTable(),
     ]);
 }
 
@@ -385,4 +390,86 @@ async function initSmsCacheTable() {
         )
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_sms_cache_expires ON sms_data_cache(expires_at)`;
+}
+
+// --- Phase 21: Advanced Patient Segmentation Tables ---
+
+async function initMbSalesHistoryTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS mb_sales_history (
+            sale_id INTEGER PRIMARY KEY,
+            client_id TEXT NOT NULL,
+            sale_date DATE NOT NULL,
+            location_id INTEGER,
+            total_amount NUMERIC(10,2) DEFAULT 0,
+            items_json JSONB,
+            synced_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_mb_sales_client ON mb_sales_history(client_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_mb_sales_date ON mb_sales_history(sale_date)`;
+}
+
+async function initMbAppointmentsHistoryTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS mb_appointments_history (
+            appointment_id INTEGER PRIMARY KEY,
+            client_id TEXT NOT NULL,
+            start_date TIMESTAMPTZ NOT NULL,
+            status TEXT,
+            session_type_id INTEGER,
+            session_type_name TEXT,
+            location_id INTEGER,
+            staff_name TEXT,
+            synced_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_mb_appts_client ON mb_appointments_history(client_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_mb_appts_date ON mb_appointments_history(start_date)`;
+}
+
+async function initMbSyncStateTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS mb_sync_state (
+            sync_type TEXT PRIMARY KEY,
+            last_sync_date DATE NOT NULL,
+            total_records INTEGER DEFAULT 0,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+}
+
+async function initMbClientsCacheTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS mb_clients_cache (
+            client_id TEXT PRIMARY KEY,
+            first_name TEXT,
+            last_name TEXT,
+            email TEXT,
+            phone TEXT,
+            synced_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_mb_clients_phone ON mb_clients_cache(phone)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_mb_clients_email ON mb_clients_cache(email)`;
+}
+
+async function initGhlContactsMapTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS ghl_contacts_map (
+            contact_id TEXT NOT NULL,
+            location_key TEXT NOT NULL,
+            phone_normalized TEXT,
+            email TEXT,
+            contact_name TEXT,
+            dnd_global BOOLEAN DEFAULT FALSE,
+            tags JSONB DEFAULT '[]',
+            created_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ,
+            synced_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (contact_id, location_key)
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_phone ON ghl_contacts_map(phone_normalized)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_email ON ghl_contacts_map(email)`;
 }

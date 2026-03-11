@@ -1172,6 +1172,9 @@ export interface LapsedPatient {
     ghlContactId?: string;
     ghlContactName?: string;
     locationKey?: LocationKey;
+    lastTreatmentType?: string;
+    lastTreatmentDate?: string;
+    treatmentHistory?: string[];
 }
 
 const lapsedCache = new Map<string, CacheEntry<LapsedPatient[]>>();
@@ -1185,8 +1188,9 @@ const LAPSED_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 export async function getLapsedPatients(
     minDaysSinceVisit: number = 60,
     locationFilter?: LocationKey,
+    treatmentFilter?: string,
 ): Promise<LapsedPatient[]> {
-    const cacheKey = `lapsed_${minDaysSinceVisit}_${locationFilter || 'all'}`;
+    const cacheKey = `lapsed_${minDaysSinceVisit}_${locationFilter || 'all'}_${treatmentFilter || 'any'}`;
 
     // Tier 1: in-memory cache
     const cached = lapsedCache.get(cacheKey);
@@ -1201,7 +1205,52 @@ export async function getLapsedPatients(
         return pgCached;
     }
 
-    // Look back 18 months for purchasing clients
+    // Tier 3: If historical sync data exists in Postgres, use it (unlimited lookback, 0 API calls)
+    try {
+        const { hasSyncData, getLapsedPatientsFromDB } = await import('./mindbody-sync');
+        if (await hasSyncData()) {
+            console.log('[ghl-conversations] Using Postgres historical data for lapsed patients');
+            const dbPatients = await getLapsedPatientsFromDB(minDaysSinceVisit, treatmentFilter);
+            // Convert to LapsedPatient + cross-reference with GHL
+            const lapsed: LapsedPatient[] = dbPatients.map(p => ({
+                ...p,
+                ghlContactId: undefined,
+                ghlContactName: undefined,
+                locationKey: undefined,
+            }));
+
+            // Cross-reference with GHL contacts via phone map
+            const phoneMap = await buildUnifiedPhoneMap(locationFilter);
+            for (const patient of lapsed) {
+                const normalized = normalizePhone(patient.phone);
+                if (normalized.length < 10) continue;
+                const match = phoneMap.get(normalized);
+                if (match) {
+                    patient.ghlContactId = match.contactId;
+                    patient.ghlContactName = match.contactName;
+                    patient.locationKey = match.locationKey;
+                }
+            }
+
+            // Filter by location if specified
+            const locationFiltered = locationFilter
+                ? lapsed.filter(p => p.locationKey === locationFilter)
+                : lapsed;
+
+            // Sort by revenue
+            locationFiltered.sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+            // Cache result
+            lapsedCache.set(cacheKey, { data: locationFiltered, timestamp: Date.now() });
+            await pgCacheSet(cacheKey, locationFiltered).catch(() => {});
+            console.log(`[ghl-conversations] Found ${locationFiltered.length} lapsed patients from Postgres (${locationFiltered.filter(l => l.ghlContactId).length} matched to GHL)`);
+            return locationFiltered;
+        }
+    } catch (err) {
+        console.warn('[ghl-conversations] Postgres lapsed patients fallback to API:', err);
+    }
+
+    // Fallback: Look back 18 months for purchasing clients (original API approach)
     const startDate = new Date(Date.now() - 548 * 86400000).toISOString().split('T')[0];
     const endDate = new Date().toISOString().split('T')[0];
 
@@ -1298,9 +1347,10 @@ let phoneMapCache: { data: Map<string, PhoneMapEntry>; timestamp: number } | nul
 const PHONE_MAP_CACHE_TTL = 30 * 60 * 1000; // 30 min (matches pipeline cache)
 
 /**
- * Build a unified phone→contactId map from ALL pipeline opportunity data.
+ * Build a unified phone→contactId map.
+ * Prefers Postgres full contacts map (ALL 31K+ contacts) if available.
+ * Falls back to pipeline-only map (9.9K contacts in pipelines).
  * Cross-location dedup: if same phone in multiple locations, DND = true if ANY location is DND.
- * Picks the location with the most recent activity for contactId.
  */
 export async function buildUnifiedPhoneMap(locationFilter?: LocationKey): Promise<Map<string, PhoneMapEntry>> {
     if (phoneMapCache && (Date.now() - phoneMapCache.timestamp) < PHONE_MAP_CACHE_TTL) {
@@ -1312,6 +1362,23 @@ export async function buildUnifiedPhoneMap(locationFilter?: LocationKey): Promis
         return filtered;
     }
 
+    // Try Postgres full contacts map first (covers ALL GHL contacts, not just pipeline)
+    try {
+        const { getFullPhoneMap } = await import('./ghl-contacts-sync');
+        const fullMap = await getFullPhoneMap(locationFilter);
+        if (fullMap.size > 0) {
+            // Cache it (only cache unfiltered map)
+            if (!locationFilter) {
+                phoneMapCache = { data: fullMap, timestamp: Date.now() };
+            }
+            console.log(`[ghl-conversations] Using Postgres phone map: ${fullMap.size} contacts`);
+            return fullMap;
+        }
+    } catch (err) {
+        console.warn('[ghl-conversations] Postgres phone map not available, falling back to pipeline:', err);
+    }
+
+    // Fallback: pipeline-only approach
     const pipelineData = await getFullPipelineData();
     const phoneMap = new Map<string, PhoneMapEntry>();
 

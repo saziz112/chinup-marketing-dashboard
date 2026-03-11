@@ -126,6 +126,7 @@ type ContactEntry = {
     mbRevenue?: number;
     mbLastVisit?: string;
     serviceName?: string;
+    lastTreatmentType?: string;
 };
 
 /**
@@ -188,6 +189,19 @@ export async function GET(req: NextRequest) {
 
     const locationParam = req.nextUrl.searchParams.get('location') as LocationKey | null;
     const segment = req.nextUrl.searchParams.get('segment') || 'pipeline-followup';
+    const treatmentParam = req.nextUrl.searchParams.get('treatment') || undefined;
+    const actionParam = req.nextUrl.searchParams.get('action');
+
+    // Return available treatments for dropdown (no auth beyond session check above)
+    if (actionParam === 'treatments') {
+        try {
+            const { getAvailableTreatments } = await import('@/lib/integrations/mindbody-sync');
+            const treatments = await getAvailableTreatments();
+            return NextResponse.json({ treatments });
+        } catch {
+            return NextResponse.json({ treatments: [] });
+        }
+    }
 
     try {
         // Fetch cooldown hashes, last campaign runs, and outbound cooldown in parallel
@@ -401,7 +415,7 @@ export async function GET(req: NextRequest) {
         // ── Campaigns 3-4: Lapsed Patient Segments (VIP + Long-Lapsed only) ──
         if (segment === 'lapsed-vip' || segment === 'lapsed-long') {
             const minDays = segment === 'lapsed-vip' ? 120 : 180;
-            const lapsedPatients = await getLapsedPatients(minDays, locationParam || undefined);
+            const lapsedPatients = await getLapsedPatients(minDays, locationParam || undefined, treatmentParam);
 
             let filtered = lapsedPatients;
             if (segment === 'lapsed-vip') {
@@ -465,6 +479,207 @@ export async function GET(req: NextRequest) {
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
                 source: 'mindbody',
+            });
+        }
+
+        // ── Campaign 7: Win-Back VIPs ($500+, 365+ days) ──
+        if (segment === 'lapsed-winback') {
+            const lapsedPatients = await getLapsedPatients(365, locationParam || undefined, treatmentParam);
+            let filtered = lapsedPatients.filter(p => p.totalRevenue >= 500);
+
+            // Phone-level dedup
+            const seenPhones = new Set<string>();
+            filtered = filtered.filter(p => {
+                const normalized = normalizePhone(p.phone);
+                if (seenPhones.has(normalized)) return false;
+                seenPhones.add(normalized);
+                return true;
+            });
+
+            // GHL-matched + DND check
+            const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
+            const sendable = filtered.filter(p => {
+                if (!p.ghlContactId) return false;
+                const normalized = normalizePhone(p.phone);
+                const entry = phoneMap.get(normalized);
+                if (entry?.dnd) return false;
+                return true;
+            });
+
+            const contacts: ContactEntry[] = sendable.map(p => ({
+                contactId: p.ghlContactId!,
+                contactName: p.ghlContactName || `${p.firstName} ${p.lastName}`.trim(),
+                firstName: p.firstName,
+                phone: p.phone,
+                email: p.email || phoneMap.get(normalizePhone(p.phone))?.contactEmail || '',
+                maskedPhone: maskPhone(p.phone),
+                locationKey: p.locationKey || locationParam || 'decatur' as LocationKey,
+                locationName: LOCATION_NAMES[p.locationKey || locationParam || 'decatur' as LocationKey] || 'Chin Up!',
+                stageName: `Win-Back — ${p.lastTreatmentType || p.segment}`,
+                monetaryValue: p.totalRevenue,
+                daysSinceOutreach: p.daysSinceLastVisit,
+                achievabilityScore: Math.max(15, 50 - Math.floor(p.daysSinceLastVisit / 30)),
+                riskLevel: 'abandoned' as const,
+                tags: phoneMap.get(normalizePhone(p.phone))?.tags || [],
+                mbRevenue: p.totalRevenue,
+                mbLastVisit: p.lastSaleDate,
+                lastTreatmentType: p.lastTreatmentType,
+            }));
+
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered: finalFiltered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
+
+            return NextResponse.json({
+                contacts: finalFiltered,
+                totalEligible: finalFiltered.length,
+                segment,
+                forecast: buildForecast(finalFiltered, 0.06),
+                templates: SMS_TEMPLATES,
+                emailTemplates: EMAIL_TEMPLATES,
+                dndFiltered: (filtered.filter(p => p.ghlContactId).length - sendable.length) + v2DndFiltered,
+                cooldownExcluded,
+                outboundExcluded,
+                lastCampaign: lastRuns[segment] || null,
+                source: 'mindbody',
+            });
+        }
+
+        // ── Campaign 8: Treatment-Specific Lapsed (90+ days, filtered by treatment type) ──
+        if (segment === 'lapsed-treatment') {
+            if (!treatmentParam) {
+                return NextResponse.json({ error: 'treatment parameter required for lapsed-treatment segment', contacts: [], totalEligible: 0 }, { status: 400 });
+            }
+
+            const lapsedPatients = await getLapsedPatients(90, locationParam || undefined, treatmentParam);
+
+            // Phone-level dedup
+            const seenPhones = new Set<string>();
+            let filtered = lapsedPatients.filter(p => {
+                const normalized = normalizePhone(p.phone);
+                if (seenPhones.has(normalized)) return false;
+                seenPhones.add(normalized);
+                return true;
+            });
+
+            // GHL-matched + DND check
+            const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
+            const sendable = filtered.filter(p => {
+                if (!p.ghlContactId) return false;
+                const normalized = normalizePhone(p.phone);
+                const entry = phoneMap.get(normalized);
+                if (entry?.dnd) return false;
+                return true;
+            });
+
+            const contacts: ContactEntry[] = sendable.map(p => ({
+                contactId: p.ghlContactId!,
+                contactName: p.ghlContactName || `${p.firstName} ${p.lastName}`.trim(),
+                firstName: p.firstName,
+                phone: p.phone,
+                email: p.email || phoneMap.get(normalizePhone(p.phone))?.contactEmail || '',
+                maskedPhone: maskPhone(p.phone),
+                locationKey: p.locationKey || locationParam || 'decatur' as LocationKey,
+                locationName: LOCATION_NAMES[p.locationKey || locationParam || 'decatur' as LocationKey] || 'Chin Up!',
+                stageName: `${treatmentParam} — ${p.segment}`,
+                monetaryValue: p.totalRevenue,
+                daysSinceOutreach: p.daysSinceLastVisit,
+                achievabilityScore: p.daysSinceLastVisit < 180 ? 50 : 25,
+                riskLevel: 'going-cold' as const,
+                tags: phoneMap.get(normalizePhone(p.phone))?.tags || [],
+                mbRevenue: p.totalRevenue,
+                mbLastVisit: p.lastSaleDate,
+                lastTreatmentType: p.lastTreatmentType,
+            }));
+
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered: finalFiltered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
+
+            return NextResponse.json({
+                contacts: finalFiltered,
+                totalEligible: finalFiltered.length,
+                segment,
+                treatment: treatmentParam,
+                forecast: buildForecast(finalFiltered, 0.15),
+                templates: SMS_TEMPLATES,
+                emailTemplates: EMAIL_TEMPLATES,
+                dndFiltered: (filtered.filter(p => p.ghlContactId).length - sendable.length) + v2DndFiltered,
+                cooldownExcluded,
+                outboundExcluded,
+                lastCampaign: lastRuns[segment] || null,
+                source: 'mindbody',
+            });
+        }
+
+        // ── Campaign 9: Inquired But Never Booked (GHL contacts without MindBody match) ──
+        if (segment === 'never-booked') {
+            const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
+
+            // Get all MindBody client phones for cross-reference
+            let mbPhones = new Set<string>();
+            try {
+                const { sql: pgSql } = await import('@vercel/postgres');
+                const mbResult = await pgSql`SELECT DISTINCT phone FROM mb_clients_cache WHERE phone IS NOT NULL AND phone != ''`;
+                mbPhones = new Set(mbResult.rows.map(r => r.phone));
+            } catch {
+                // Fallback: use current API-based purchasing clients
+                try {
+                    const startDate = new Date(Date.now() - 548 * 86400000).toISOString().split('T')[0];
+                    const endDate = new Date().toISOString().split('T')[0];
+                    const { getPurchasingClients } = await import('@/lib/integrations/mindbody');
+                    const { clients } = await getPurchasingClients(startDate, endDate);
+                    for (const c of clients) {
+                        const phone = normalizePhone(c.MobilePhone || c.HomePhone || '');
+                        if (phone.length >= 10) mbPhones.add(phone);
+                    }
+                } catch { /* empty set = no filtering */ }
+            }
+
+            // Find GHL contacts whose phone is NOT in MindBody
+            const neverBooked: ContactEntry[] = [];
+            const seenPhones = new Set<string>();
+            for (const [phone, entry] of phoneMap) {
+                if (phone.length < 10) continue;
+                if (seenPhones.has(phone)) continue;
+                seenPhones.add(phone);
+                if (mbPhones.has(phone)) continue; // They ARE in MindBody, skip
+                if (entry.dnd) continue;
+
+                neverBooked.push({
+                    contactId: entry.contactId,
+                    contactName: entry.contactName,
+                    firstName: entry.contactName.split(' ')[0] || '',
+                    phone,
+                    email: entry.contactEmail || '',
+                    maskedPhone: maskPhone(phone),
+                    locationKey: entry.locationKey,
+                    locationName: LOCATION_NAMES[entry.locationKey] || 'Chin Up!',
+                    stageName: 'Inquired — Never Booked',
+                    monetaryValue: 0,
+                    daysSinceOutreach: 0,
+                    achievabilityScore: 40,
+                    riskLevel: 'going-cold' as const,
+                    tags: entry.tags,
+                });
+            }
+
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(neverBooked, recentHashes);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered: finalFiltered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
+
+            return NextResponse.json({
+                contacts: finalFiltered,
+                totalEligible: finalFiltered.length,
+                segment,
+                forecast: buildForecast(finalFiltered, 0.08),
+                templates: SMS_TEMPLATES,
+                emailTemplates: EMAIL_TEMPLATES,
+                dndFiltered: v2DndFiltered,
+                cooldownExcluded,
+                outboundExcluded,
+                lastCampaign: lastRuns[segment] || null,
+                source: 'ghl-contacts',
             });
         }
 

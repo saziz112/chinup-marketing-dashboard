@@ -173,6 +173,8 @@ export default function LeadsPipelinePage() {
     const [smsTestSending, setSmsTestSending] = useState(false);
     const [smsTestResult, setSmsTestResult] = useState<{ success: boolean; message: string } | null>(null);
     const [campaignHistory, setCampaignHistory] = useState<Record<string, { runAt: string; totalSent: number; channel: string }>>({});
+    const [treatmentFilter, setTreatmentFilter] = useState('');
+    const [treatments, setTreatments] = useState<string[]>([]);
 
     // Fetch pipeline data
     const fetchPipeline = useCallback(async () => {
@@ -321,6 +323,17 @@ export default function LeadsPipelinePage() {
         }
     }, []);
 
+    // Fetch available treatments for treatment-specific segment
+    const fetchTreatments = useCallback(async () => {
+        try {
+            const res = await fetch('/api/admin/data-sync?action=treatments');
+            if (res.ok) {
+                const data = await res.json();
+                setTreatments(data.treatments || []);
+            }
+        } catch { /* non-critical */ }
+    }, []);
+
     // Fetch SMS eligible contacts — always fetch ALL locations, filter client-side
     const fetchSmsContacts = useCallback(async (segment: string) => {
         setSmsLoading(true);
@@ -330,6 +343,9 @@ export default function LeadsPipelinePage() {
         setSmsTestResult(null);
         try {
             const params = new URLSearchParams({ segment });
+            if (segment === 'lapsed-treatment' && treatmentFilter) {
+                params.set('treatment', treatmentFilter);
+            }
             // Always fetch all locations — user filters in Step 2 via chips
             const res = await fetch(`/api/attribution/ghl-reactivation?${params}`);
             if (!res.ok) {
@@ -356,7 +372,7 @@ export default function LeadsPipelinePage() {
         } finally {
             setSmsLoading(false);
         }
-    }, [smsChannel]);
+    }, [smsChannel, treatmentFilter]);
 
     // Send SMS/Email campaign
     const sendSmsCampaign = useCallback(async () => {
@@ -1528,14 +1544,90 @@ export default function LeadsPipelinePage() {
                                                     ); })}
                                                 </div>
 
+                                                {/* High-Value Win-Back */}
+                                                <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', fontWeight: 600 }}>High-Value Win-Back</div>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '8px' }}>
+                                                    {[
+                                                        { id: 'lapsed-winback', label: 'Win-Back VIPs', sub: '$500+, 12+ months gone', color: '#E879F9' },
+                                                        { id: 'lapsed-treatment', label: 'By Treatment', sub: 'Target by service type', color: '#F472B6' },
+                                                    ].map(seg => {
+                                                        const hist = campaignHistory[seg.id];
+                                                        return (
+                                                        <button key={seg.id} onClick={() => { setSmsSegment(seg.id); if (seg.id === 'lapsed-treatment' && treatments.length === 0) fetchTreatments(); }} style={{
+                                                            padding: '12px 10px', textAlign: 'center',
+                                                            background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
+                                                            border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
+                                                            borderRadius: '8px', cursor: 'pointer',
+                                                        }}>
+                                                            <div style={{ fontWeight: 600, color: seg.color, fontSize: '0.8125rem' }}>{seg.label}</div>
+                                                            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>{seg.sub}</div>
+                                                            {hist && <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)', marginTop: '4px' }}>Last: {new Date(hist.runAt).toLocaleDateString()} ({hist.totalSent} {hist.channel})</div>}
+                                                        </button>
+                                                    ); })}
+                                                </div>
+
+                                                {/* Treatment dropdown — shown when lapsed-treatment is selected */}
+                                                {smsSegment === 'lapsed-treatment' && (
+                                                    <div style={{ marginBottom: '16px' }}>
+                                                        <select
+                                                            value={treatmentFilter}
+                                                            onChange={e => setTreatmentFilter(e.target.value)}
+                                                            style={{
+                                                                width: '100%', padding: '10px 12px',
+                                                                background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)',
+                                                                borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.8125rem',
+                                                                cursor: 'pointer', appearance: 'auto',
+                                                            }}
+                                                        >
+                                                            <option value="" style={{ background: '#0F1729' }}>Select a treatment...</option>
+                                                            {treatments.map(t => (
+                                                                <option key={t} value={t} style={{ background: '#0F1729' }}>{t}</option>
+                                                            ))}
+                                                        </select>
+                                                        {treatments.length === 0 && (
+                                                            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                                                Run MindBody backfill first to populate treatment types
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                {smsSegment !== 'lapsed-treatment' && <div style={{ marginBottom: '8px' }} />}
+
+                                                {/* Lead Recovery */}
+                                                <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', fontWeight: 600 }}>Lead Recovery</div>
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(1, 1fr)', gap: '8px', marginBottom: '20px' }}>
+                                                    {[
+                                                        { id: 'never-booked', label: 'Inquired, Never Booked', sub: 'Contacted us but never scheduled', color: '#FBBF24' },
+                                                    ].map(seg => {
+                                                        const hist = campaignHistory[seg.id];
+                                                        return (
+                                                        <button key={seg.id} onClick={() => setSmsSegment(seg.id)} style={{
+                                                            padding: '12px 10px', textAlign: 'center',
+                                                            background: smsSegment === seg.id ? `${seg.color}15` : 'rgba(255,255,255,0.03)',
+                                                            border: `1px solid ${smsSegment === seg.id ? seg.color : 'var(--border-subtle)'}`,
+                                                            borderRadius: '8px', cursor: 'pointer',
+                                                        }}>
+                                                            <div style={{ fontWeight: 600, color: seg.color, fontSize: '0.8125rem' }}>{seg.label}</div>
+                                                            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>{seg.sub}</div>
+                                                            {hist && <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)', marginTop: '4px' }}>Last: {new Date(hist.runAt).toLocaleDateString()} ({hist.totalSent} {hist.channel})</div>}
+                                                        </button>
+                                                    ); })}
+                                                </div>
+
                                                 <button
-                                                    onClick={() => { setSmsStep(2); fetchSmsContacts(smsSegment); }}
+                                                    disabled={smsSegment === 'lapsed-treatment' && !treatmentFilter}
+                                                    onClick={() => {
+                                                        if (smsSegment === 'lapsed-treatment' && !treatmentFilter) return;
+                                                        setSmsStep(2); fetchSmsContacts(smsSegment);
+                                                    }}
                                                     style={{
-                                                        padding: '10px 24px', background: 'var(--accent-primary)', border: 'none',
-                                                        borderRadius: '8px', color: '#0A225C', fontWeight: 600, cursor: 'pointer',
+                                                        padding: '10px 24px', border: 'none',
+                                                        borderRadius: '8px', fontWeight: 600, cursor: (smsSegment === 'lapsed-treatment' && !treatmentFilter) ? 'not-allowed' : 'pointer',
+                                                        background: (smsSegment === 'lapsed-treatment' && !treatmentFilter) ? 'rgba(255,255,255,0.1)' : 'var(--accent-primary)',
+                                                        color: (smsSegment === 'lapsed-treatment' && !treatmentFilter) ? 'var(--text-muted)' : '#0A225C',
                                                     }}
                                                 >
-                                                    Next: Preview Contacts
+                                                    {smsSegment === 'lapsed-treatment' && !treatmentFilter ? 'Select a treatment first' : 'Next: Preview Contacts'}
                                                 </button>
                                             </div>
                                         )}
