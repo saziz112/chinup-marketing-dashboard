@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { sql } from '@vercel/postgres';
 import {
     backfillSales,
     backfillAppointments,
@@ -116,7 +117,13 @@ export async function POST(req: NextRequest) {
             }
             case 'backfill-ghl': {
                 const result = await backfillGhlContacts();
-                return NextResponse.json({ action, ...result });
+                return NextResponse.json({ action, ...result, continue: !result.done });
+            }
+            case 'reset-ghl': {
+                // Clear GHL sync state so backfill can re-run from scratch
+                await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('ghl-contacts', 'ghl_backfill_progress')`;
+                await sql`DELETE FROM ghl_contacts_map`;
+                return NextResponse.json({ action, message: 'GHL sync state and contacts cleared. Run backfill again.' });
             }
             case 'sync': {
                 // Incremental sync for both MindBody and GHL
@@ -144,7 +151,7 @@ export async function POST(req: NextRequest) {
                     error: `Unknown action: ${action}`,
                     validActions: [
                         'backfill-sales', 'backfill-appointments', 'backfill-clients',
-                        'backfill-mindbody', 'backfill-ghl',
+                        'backfill-mindbody', 'backfill-ghl', 'reset-ghl',
                         'sync', 'sync-mindbody', 'sync-ghl',
                     ],
                 }, { status: 400 });

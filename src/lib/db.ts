@@ -437,9 +437,12 @@ async function initMbSyncStateTable() {
             sync_type TEXT PRIMARY KEY,
             last_sync_date DATE NOT NULL,
             total_records INTEGER DEFAULT 0,
+            cursor_data TEXT,
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
     `;
+    // Self-migration for existing tables without cursor_data column
+    await sql`ALTER TABLE mb_sync_state ADD COLUMN IF NOT EXISTS cursor_data TEXT`.catch(() => {});
 }
 
 async function initMbClientsCacheTable() {

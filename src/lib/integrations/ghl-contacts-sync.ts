@@ -17,91 +17,146 @@ const GHL_BASE = 'https://rest.gohighlevel.com/v1';
 // Backfill ALL GHL Contacts
 // ---------------------------------------------------------------------------
 
+const PAGES_PER_CHUNK = 5; // 5 pages × 100 contacts = 500 per invocation (~15-20s)
+
 /**
- * Paginate through ALL contacts for every location and store in Postgres.
- * ~320 API calls for 31K contacts (100/page across 3 locations).
+ * Backfill GHL contacts — chunked (PAGES_PER_CHUNK pages per call).
+ * Returns `done: false` + `continue: true` while more pages remain.
+ * Progress stored in mb_sync_state (ghl_backfill_progress row).
  */
-export async function backfillGhlContacts(): Promise<{ total: number; apiCalls: number; byLocation: Record<string, number> }> {
-    const locations = getLocations();
-    let totalInserted = 0;
-    let apiCalls = 0;
-    const byLocation: Record<string, number> = {};
+export async function backfillGhlContacts(): Promise<{
+    total: number; apiCalls: number; done: boolean; chunkLabel: string; continue?: boolean;
+}> {
+    // Ensure cursor_data column exists (self-migration)
+    await sql`ALTER TABLE mb_sync_state ADD COLUMN IF NOT EXISTS cursor_data TEXT`.catch(() => {});
 
-    for (const loc of locations) {
-        console.log(`[ghl-sync] Backfilling contacts for ${loc.name}...`);
-        let startAfter: string | undefined;
-        let locationCount = 0;
-
-        while (true) {
-            const url = new URL(`${GHL_BASE}/contacts/`);
-            url.searchParams.set('limit', '100');
-            if (startAfter) url.searchParams.set('startAfter', startAfter);
-
-            const res = await fetch(url.toString(), {
-                headers: { 'Authorization': `Bearer ${loc.apiKey}` },
-            });
-            trackCall('ghl', 'contacts-sync', false);
-            apiCalls++;
-
-            if (!res.ok) {
-                console.error(`[ghl-sync] Failed to fetch contacts for ${loc.name}: ${res.status}`);
-                break;
-            }
-
-            const data = await res.json();
-            const contacts = data.contacts || [];
-            if (contacts.length === 0) break;
-
-            // Upsert batch
-            for (const c of contacts) {
-                const phone = normalizePhone(c.phone || c.companyPhone || '');
-                const email = (c.email || '').toLowerCase().trim();
-                const name = c.contactName || c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim();
-                const dnd = c.dnd === true;
-                const tags: string[] = c.tags || [];
-
-                await sql`
-                    INSERT INTO ghl_contacts_map
-                        (contact_id, location_key, phone_normalized, email, contact_name, dnd_global, tags, created_at, updated_at, synced_at)
-                    VALUES (${c.id}, ${loc.key}, ${phone || null}, ${email || null}, ${name},
-                            ${dnd}, ${JSON.stringify(tags)}, ${c.dateAdded || null}, ${c.dateUpdated || null}, NOW())
-                    ON CONFLICT (contact_id, location_key) DO UPDATE SET
-                        phone_normalized = ${phone || null},
-                        email = ${email || null},
-                        contact_name = ${name},
-                        dnd_global = ${dnd},
-                        tags = ${JSON.stringify(tags)},
-                        updated_at = ${c.dateUpdated || null},
-                        synced_at = NOW()
-                `;
-                locationCount++;
-            }
-
-            // Pagination: use startAfter from the last contact
-            if (contacts.length < 100) break;
-            startAfter = contacts[contacts.length - 1].id;
-
-            // Rate limit protection: 100ms delay between pages
-            await new Promise(r => setTimeout(r, 100));
-        }
-
-        byLocation[loc.key] = locationCount;
-        totalInserted += locationCount;
-        console.log(`[ghl-sync] ${loc.name}: ${locationCount} contacts synced`);
+    // If already completed, skip
+    const finalState = await sql`SELECT 1 FROM mb_sync_state WHERE sync_type = 'ghl-contacts'`;
+    if (finalState.rows.length > 0) {
+        return { total: 0, apiCalls: 0, done: true, chunkLabel: 'GHL contacts backfill already complete' };
     }
 
-    // Update sync state
+    const locations = getLocations();
+
+    // Load progress
+    const progressRow = await sql`SELECT total_records, cursor_data FROM mb_sync_state WHERE sync_type = 'ghl_backfill_progress'`;
+    let locationIndex = 0;
+    let startAfter: string | undefined;
+    let totalSoFar = 0;
+
+    if (progressRow.rows.length > 0) {
+        const cursor = progressRow.rows[0].cursor_data ? JSON.parse(progressRow.rows[0].cursor_data) : {};
+        locationIndex = cursor.locationIndex || 0;
+        startAfter = cursor.startAfter || undefined;
+        totalSoFar = progressRow.rows[0].total_records || 0;
+    }
+
+    // If we've gone past all locations, we're done
+    if (locationIndex >= locations.length) {
+        // Finalize
+        await sql`
+            INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+            VALUES ('ghl-contacts', ${new Date().toISOString().split('T')[0]}, ${totalSoFar}, NOW())
+            ON CONFLICT (sync_type)
+            DO UPDATE SET last_sync_date = ${new Date().toISOString().split('T')[0]},
+                          total_records = ${totalSoFar}, updated_at = NOW()
+        `;
+        await sql`DELETE FROM mb_sync_state WHERE sync_type = 'ghl_backfill_progress'`;
+        return { total: totalSoFar, apiCalls: 0, done: true, chunkLabel: `GHL backfill complete — ${totalSoFar} contacts` };
+    }
+
+    const loc = locations[locationIndex];
+    let apiCalls = 0;
+    let chunkInserted = 0;
+    let locationDone = false;
+
+    // Process PAGES_PER_CHUNK pages for the current location
+    for (let page = 0; page < PAGES_PER_CHUNK; page++) {
+        const url = new URL(`${GHL_BASE}/contacts/`);
+        url.searchParams.set('limit', '100');
+        if (startAfter) url.searchParams.set('startAfter', startAfter);
+
+        const res = await fetch(url.toString(), {
+            headers: { 'Authorization': `Bearer ${loc.apiKey}` },
+        });
+        trackCall('ghl', 'contacts-sync', false);
+        apiCalls++;
+
+        if (!res.ok) {
+            console.error(`[ghl-sync] Failed to fetch contacts for ${loc.name}: ${res.status}`);
+            locationDone = true;
+            break;
+        }
+
+        const data = await res.json();
+        const contacts = data.contacts || [];
+        if (contacts.length === 0) { locationDone = true; break; }
+
+        for (const c of contacts) {
+            const phone = normalizePhone(c.phone || c.companyPhone || '');
+            const email = (c.email || '').toLowerCase().trim();
+            const name = c.contactName || c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim();
+            const dnd = c.dnd === true;
+            const tags: string[] = c.tags || [];
+
+            await sql`
+                INSERT INTO ghl_contacts_map
+                    (contact_id, location_key, phone_normalized, email, contact_name, dnd_global, tags, created_at, updated_at, synced_at)
+                VALUES (${c.id}, ${loc.key}, ${phone || null}, ${email || null}, ${name},
+                        ${dnd}, ${JSON.stringify(tags)}, ${c.dateAdded || null}, ${c.dateUpdated || null}, NOW())
+                ON CONFLICT (contact_id, location_key) DO UPDATE SET
+                    phone_normalized = ${phone || null},
+                    email = ${email || null},
+                    contact_name = ${name},
+                    dnd_global = ${dnd},
+                    tags = ${JSON.stringify(tags)},
+                    updated_at = ${c.dateUpdated || null},
+                    synced_at = NOW()
+            `;
+            chunkInserted++;
+        }
+
+        if (contacts.length < 100) { locationDone = true; break; }
+        startAfter = contacts[contacts.length - 1].id;
+        await new Promise(r => setTimeout(r, 100));
+    }
+
+    // Advance to next location if this one is done
+    const nextLocationIndex = locationDone ? locationIndex + 1 : locationIndex;
+    const nextStartAfter = locationDone ? undefined : startAfter;
+    const newTotal = totalSoFar + chunkInserted;
+
+    // Save progress
+    const cursorJson = JSON.stringify({ locationIndex: nextLocationIndex, startAfter: nextStartAfter });
     await sql`
-        INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
-        VALUES ('ghl-contacts', ${new Date().toISOString().split('T')[0]}, ${totalInserted}, NOW())
-        ON CONFLICT (sync_type)
-        DO UPDATE SET last_sync_date = ${new Date().toISOString().split('T')[0]},
-                      total_records = ${totalInserted},
-                      updated_at = NOW()
+        INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, cursor_data, updated_at)
+        VALUES ('ghl_backfill_progress', ${new Date().toISOString().split('T')[0]}, ${newTotal}, ${cursorJson}, NOW())
+        ON CONFLICT (sync_type) DO UPDATE SET
+            total_records = ${newTotal},
+            cursor_data = ${cursorJson},
+            updated_at = NOW()
     `;
 
-    console.log(`[ghl-sync] Total: ${totalInserted} contacts, ${apiCalls} API calls`);
-    return { total: totalInserted, apiCalls, byLocation };
+    // Check if fully done (all locations processed)
+    const allDone = nextLocationIndex >= locations.length;
+    if (allDone) {
+        await sql`
+            INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+            VALUES ('ghl-contacts', ${new Date().toISOString().split('T')[0]}, ${newTotal}, NOW())
+            ON CONFLICT (sync_type)
+            DO UPDATE SET last_sync_date = ${new Date().toISOString().split('T')[0]},
+                          total_records = ${newTotal}, updated_at = NOW()
+        `;
+        await sql`DELETE FROM mb_sync_state WHERE sync_type = 'ghl_backfill_progress'`;
+    }
+
+    const locName = loc.name || loc.key;
+    const chunkLabel = allDone
+        ? `GHL backfill complete — ${newTotal} contacts`
+        : `${locName}: +${chunkInserted} contacts (${newTotal} total)`;
+
+    console.log(`[ghl-sync] Chunk: ${chunkLabel}, ${apiCalls} API calls`);
+    return { total: chunkInserted, apiCalls, done: allDone, chunkLabel, continue: !allDone };
 }
 
 // ---------------------------------------------------------------------------
