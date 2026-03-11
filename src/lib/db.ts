@@ -6,6 +6,7 @@
 import { sql } from '@vercel/postgres';
 
 export async function initAllTables() {
+    // Phase 1: tables with no FK dependencies (parallel)
     await Promise.all([
         initUsersTable(),
         initSocialAccountsTable(),
@@ -23,7 +24,6 @@ export async function initAllTables() {
         initCreativeImageTagsTable(),
         initCreativePostUsageTable(),
         initCampaignRunsTable(),
-        initCampaignContactsTable(),
         initSmsCacheTable(),
         initMbSalesHistoryTable(),
         initMbAppointmentsHistoryTable(),
@@ -31,6 +31,8 @@ export async function initAllTables() {
         initMbClientsCacheTable(),
         initGhlContactsMapTable(),
     ]);
+    // Phase 2: tables with FK dependencies
+    await initCampaignContactsTable();
 }
 
 async function initUsersTable() {
