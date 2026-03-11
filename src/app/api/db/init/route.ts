@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { seedUsers } from '@/lib/users';
+import { initAllTables } from '@/lib/db';
 
 /**
  * POST /api/db/init
@@ -36,6 +37,11 @@ export async function POST() {
         `;
 
         console.log('[DB Init] Users table created/verified');
+
+        // Create all other tables (social, ads, reviews, sync tables, etc.)
+        console.log('[DB Init] Creating all remaining tables...');
+        await initAllTables();
+        console.log('[DB Init] All tables created/verified');
 
         // Seed initial users (Sam + Sharia)
         console.log('[DB Init] Seeding initial users...');
