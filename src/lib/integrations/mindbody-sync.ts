@@ -54,6 +54,12 @@ export async function hasSyncData(): Promise<boolean> {
 export async function backfillSales(startYear: number = 2020): Promise<{ total: number; apiCalls: number; done: boolean; chunkLabel: string }> {
     const now = new Date();
 
+    // If already completed (final 'sales' state exists), skip entirely
+    const finalState = await sql`SELECT 1 FROM mb_sync_state WHERE sync_type = 'sales'`;
+    if (finalState.rows.length > 0) {
+        return { total: 0, apiCalls: 0, done: true, chunkLabel: 'Sales backfill already complete' };
+    }
+
     // Check where we left off
     const progressResult = await sql`SELECT last_sync_date FROM mb_sync_state WHERE sync_type = 'sales_backfill_progress'`;
     let chunkStart: Date;
@@ -124,6 +130,12 @@ export async function backfillSales(startYear: number = 2020): Promise<{ total: 
  */
 export async function backfillAppointments(startYear: number = 2020): Promise<{ total: number; apiCalls: number; done: boolean; chunkLabel: string }> {
     const now = new Date();
+
+    // If already completed (final 'appointments' state exists), skip entirely
+    const finalState = await sql`SELECT 1 FROM mb_sync_state WHERE sync_type = 'appointments'`;
+    if (finalState.rows.length > 0) {
+        return { total: 0, apiCalls: 0, done: true, chunkLabel: 'Appointments backfill already complete' };
+    }
 
     const progressResult = await sql`SELECT last_sync_date FROM mb_sync_state WHERE sync_type = 'appts_backfill_progress'`;
     let chunkStart: Date;
