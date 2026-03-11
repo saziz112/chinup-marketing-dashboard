@@ -22,7 +22,7 @@ import {
     getGhlSyncStats,
 } from '@/lib/integrations/ghl-contacts-sync';
 
-export const maxDuration = 300; // 5 min — backfill can take a while
+export const maxDuration = 60; // Vercel Hobby limit
 
 export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
@@ -93,16 +93,25 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ action, ...result });
             }
             case 'backfill-mindbody': {
-                // Run all 3 MindBody backfills sequentially
-                const sales = await backfillSales(startYear || 2020);
-                const appts = await backfillAppointments(startYear || 2020);
-                const clients = await backfillClients();
+                // Step through one chunk at a time (Vercel 60s limit).
+                // Phase 1: sales chunks, Phase 2: appointment chunks, Phase 3: clients.
+                // UI should auto-loop while `continue: true`.
+                const salesResult = await backfillSales(startYear || 2020);
+                if (!salesResult.done) {
+                    return NextResponse.json({
+                        action, phase: 'sales', ...salesResult, continue: true,
+                    });
+                }
+                const apptsResult = await backfillAppointments(startYear || 2020);
+                if (!apptsResult.done) {
+                    return NextResponse.json({
+                        action, phase: 'appointments', ...apptsResult, continue: true,
+                    });
+                }
+                const clientsResult = await backfillClients();
                 return NextResponse.json({
-                    action,
-                    sales,
-                    appointments: appts,
-                    clients,
-                    totalApiCalls: sales.apiCalls + appts.apiCalls + clients.apiCalls,
+                    action, phase: 'clients', ...clientsResult, continue: false,
+                    chunkLabel: 'All MindBody backfill complete',
                 });
             }
             case 'backfill-ghl': {

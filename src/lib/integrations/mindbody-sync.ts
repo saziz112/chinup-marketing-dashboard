@@ -48,48 +48,70 @@ export async function hasSyncData(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 /**
- * Backfill ALL MindBody sales from startYear to today.
- * Processes in 6-month chunks to avoid timeouts.
+ * Backfill MindBody sales — ONE 3-month chunk per call (Vercel 60s limit).
+ * Returns `done: false` if more chunks remain. Caller should loop.
  */
-export async function backfillSales(startYear: number = 2020): Promise<{ total: number; apiCalls: number }> {
-    let totalInserted = 0;
-    let apiCalls = 0;
+export async function backfillSales(startYear: number = 2020): Promise<{ total: number; apiCalls: number; done: boolean; chunkLabel: string }> {
     const now = new Date();
-    let chunkStart = new Date(`${startYear}-01-01`);
 
-    while (chunkStart < now) {
-        const chunkEnd = new Date(chunkStart);
-        chunkEnd.setMonth(chunkEnd.getMonth() + 6);
-        if (chunkEnd > now) chunkEnd.setTime(now.getTime());
-
-        const startDate = chunkStart.toISOString().split('T')[0];
-        const endDate = chunkEnd.toISOString().split('T')[0];
-
-        console.log(`[mb-sync] Fetching sales ${startDate} to ${endDate}...`);
-        const sales = await getSales(startDate, endDate);
-        apiCalls += Math.ceil(sales.length / 100) || 1;
-
-        if (sales.length > 0) {
-            const inserted = await upsertSales(sales);
-            totalInserted += inserted;
-            console.log(`[mb-sync] Inserted ${inserted} sales for ${startDate} to ${endDate}`);
-        }
-
-        chunkStart = new Date(chunkEnd);
+    // Check where we left off
+    const progressResult = await sql`SELECT last_sync_date FROM mb_sync_state WHERE sync_type = 'sales_backfill_progress'`;
+    let chunkStart: Date;
+    if (progressResult.rows.length > 0) {
+        // Resume from where we left off
+        const lastDate = new Date(progressResult.rows[0].last_sync_date);
+        chunkStart = new Date(lastDate);
         chunkStart.setDate(chunkStart.getDate() + 1);
+    } else {
+        chunkStart = new Date(`${startYear}-01-01`);
     }
 
+    if (chunkStart >= now) {
+        // All done — finalize
+        await sql`
+            INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+            VALUES ('sales', ${now.toISOString().split('T')[0]}, (SELECT COUNT(*) FROM mb_sales_history), NOW())
+            ON CONFLICT (sync_type) DO UPDATE SET
+                last_sync_date = ${now.toISOString().split('T')[0]},
+                total_records = (SELECT COUNT(*) FROM mb_sales_history),
+                updated_at = NOW()
+        `;
+        // Clean up progress tracker
+        await sql`DELETE FROM mb_sync_state WHERE sync_type = 'sales_backfill_progress'`;
+        return { total: 0, apiCalls: 0, done: true, chunkLabel: 'Complete' };
+    }
+
+    // Process ONE 3-month chunk
+    const chunkEnd = new Date(chunkStart);
+    chunkEnd.setMonth(chunkEnd.getMonth() + 3);
+    if (chunkEnd > now) chunkEnd.setTime(now.getTime());
+
+    const startDate = chunkStart.toISOString().split('T')[0];
+    const endDate = chunkEnd.toISOString().split('T')[0];
+    const chunkLabel = `Sales: ${startDate} → ${endDate}`;
+
+    console.log(`[mb-sync] Fetching sales ${startDate} to ${endDate}...`);
+    const sales = await getSales(startDate, endDate);
+    const apiCalls = Math.ceil(sales.length / 100) || 1;
+    let totalInserted = 0;
+
+    if (sales.length > 0) {
+        totalInserted = await upsertSales(sales);
+        console.log(`[mb-sync] Inserted ${totalInserted} sales for ${startDate} to ${endDate}`);
+    }
+
+    // Save progress
     await sql`
         INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
-        VALUES ('sales', ${now.toISOString().split('T')[0]}, ${totalInserted}, NOW())
-        ON CONFLICT (sync_type)
-        DO UPDATE SET last_sync_date = ${now.toISOString().split('T')[0]},
-                      total_records = (SELECT COUNT(*) FROM mb_sales_history),
-                      updated_at = NOW()
+        VALUES ('sales_backfill_progress', ${endDate}, ${totalInserted}, NOW())
+        ON CONFLICT (sync_type) DO UPDATE SET
+            last_sync_date = ${endDate},
+            total_records = mb_sync_state.total_records + ${totalInserted},
+            updated_at = NOW()
     `;
 
-    console.log(`[mb-sync] Sales backfill complete: ${totalInserted} records, ${apiCalls} API calls`);
-    return { total: totalInserted, apiCalls };
+    const moreChunks = new Date(chunkEnd) < now;
+    return { total: totalInserted, apiCalls, done: !moreChunks, chunkLabel };
 }
 
 // ---------------------------------------------------------------------------
@@ -97,47 +119,64 @@ export async function backfillSales(startYear: number = 2020): Promise<{ total: 
 // ---------------------------------------------------------------------------
 
 /**
- * Backfill ALL MindBody appointments from startYear to today.
+ * Backfill MindBody appointments — ONE 3-month chunk per call.
+ * Returns `done: false` if more chunks remain. Caller should loop.
  */
-export async function backfillAppointments(startYear: number = 2020): Promise<{ total: number; apiCalls: number }> {
-    let totalInserted = 0;
-    let apiCalls = 0;
+export async function backfillAppointments(startYear: number = 2020): Promise<{ total: number; apiCalls: number; done: boolean; chunkLabel: string }> {
     const now = new Date();
-    let chunkStart = new Date(`${startYear}-01-01`);
 
-    while (chunkStart < now) {
-        const chunkEnd = new Date(chunkStart);
-        chunkEnd.setMonth(chunkEnd.getMonth() + 6);
-        if (chunkEnd > now) chunkEnd.setTime(now.getTime());
-
-        const startDate = chunkStart.toISOString().split('T')[0];
-        const endDate = chunkEnd.toISOString().split('T')[0];
-
-        console.log(`[mb-sync] Fetching appointments ${startDate} to ${endDate}...`);
-        const appts = await getAppointments(startDate, endDate);
-        apiCalls += Math.ceil(appts.length / 100) || 1;
-
-        if (appts.length > 0) {
-            const inserted = await upsertAppointments(appts);
-            totalInserted += inserted;
-            console.log(`[mb-sync] Inserted ${inserted} appointments for ${startDate} to ${endDate}`);
-        }
-
-        chunkStart = new Date(chunkEnd);
+    const progressResult = await sql`SELECT last_sync_date FROM mb_sync_state WHERE sync_type = 'appts_backfill_progress'`;
+    let chunkStart: Date;
+    if (progressResult.rows.length > 0) {
+        const lastDate = new Date(progressResult.rows[0].last_sync_date);
+        chunkStart = new Date(lastDate);
         chunkStart.setDate(chunkStart.getDate() + 1);
+    } else {
+        chunkStart = new Date(`${startYear}-01-01`);
+    }
+
+    if (chunkStart >= now) {
+        await sql`
+            INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+            VALUES ('appointments', ${now.toISOString().split('T')[0]}, (SELECT COUNT(*) FROM mb_appointments_history), NOW())
+            ON CONFLICT (sync_type) DO UPDATE SET
+                last_sync_date = ${now.toISOString().split('T')[0]},
+                total_records = (SELECT COUNT(*) FROM mb_appointments_history),
+                updated_at = NOW()
+        `;
+        await sql`DELETE FROM mb_sync_state WHERE sync_type = 'appts_backfill_progress'`;
+        return { total: 0, apiCalls: 0, done: true, chunkLabel: 'Complete' };
+    }
+
+    const chunkEnd = new Date(chunkStart);
+    chunkEnd.setMonth(chunkEnd.getMonth() + 3);
+    if (chunkEnd > now) chunkEnd.setTime(now.getTime());
+
+    const startDate = chunkStart.toISOString().split('T')[0];
+    const endDate = chunkEnd.toISOString().split('T')[0];
+    const chunkLabel = `Appointments: ${startDate} → ${endDate}`;
+
+    console.log(`[mb-sync] Fetching appointments ${startDate} to ${endDate}...`);
+    const appts = await getAppointments(startDate, endDate);
+    const apiCalls = Math.ceil(appts.length / 100) || 1;
+    let totalInserted = 0;
+
+    if (appts.length > 0) {
+        totalInserted = await upsertAppointments(appts);
+        console.log(`[mb-sync] Inserted ${totalInserted} appointments for ${startDate} to ${endDate}`);
     }
 
     await sql`
         INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
-        VALUES ('appointments', ${now.toISOString().split('T')[0]}, ${totalInserted}, NOW())
-        ON CONFLICT (sync_type)
-        DO UPDATE SET last_sync_date = ${now.toISOString().split('T')[0]},
-                      total_records = (SELECT COUNT(*) FROM mb_appointments_history),
-                      updated_at = NOW()
+        VALUES ('appts_backfill_progress', ${endDate}, ${totalInserted}, NOW())
+        ON CONFLICT (sync_type) DO UPDATE SET
+            last_sync_date = ${endDate},
+            total_records = mb_sync_state.total_records + ${totalInserted},
+            updated_at = NOW()
     `;
 
-    console.log(`[mb-sync] Appointments backfill complete: ${totalInserted} records, ${apiCalls} API calls`);
-    return { total: totalInserted, apiCalls };
+    const moreChunks = new Date(chunkEnd) < now;
+    return { total: totalInserted, apiCalls, done: !moreChunks, chunkLabel };
 }
 
 // ---------------------------------------------------------------------------

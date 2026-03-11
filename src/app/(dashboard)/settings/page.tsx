@@ -61,6 +61,7 @@ export default function SettingsPage() {
     const [syncStatus, setSyncStatus] = useState<any>(null);
     const [syncLoading, setSyncLoading] = useState(false);
     const [syncAction, setSyncAction] = useState<string | null>(null);
+    const [syncProgress, setSyncProgress] = useState<string | null>(null);
 
     useEffect(() => {
         if (user && !isAdmin) {
@@ -209,23 +210,39 @@ export default function SettingsPage() {
         finally { setSyncLoading(false); }
     };
 
-    // Trigger a sync action
+    // Trigger a sync action (auto-loops for chunked backfills)
     const triggerSync = async (action: string) => {
         setSyncAction(action);
+        setSyncProgress(null);
+        let loops = 0;
         try {
-            const res = await fetch('/api/admin/data-sync', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Sync failed');
-            showFlash(`${action} completed: ${JSON.stringify(data).slice(0, 200)}`, 'success');
+            while (true) {
+                loops++;
+                const res = await fetch('/api/admin/data-sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Sync failed');
+
+                // Show progress for chunked backfills
+                if (data.chunkLabel) {
+                    setSyncProgress(`Step ${loops}: ${data.chunkLabel} (${data.total || 0} records)`);
+                }
+
+                // If not a chunked response or done, break
+                if (!data.continue) {
+                    showFlash(`${action} complete! ${data.chunkLabel || `${loops} steps`}`, 'success');
+                    break;
+                }
+            }
             fetchSyncStatus();
         } catch (e: any) {
             showFlash(e.message || 'Sync failed', 'error');
         } finally {
             setSyncAction(null);
+            setSyncProgress(null);
         }
     };
 
@@ -633,6 +650,17 @@ export default function SettingsPage() {
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+                            )}
+
+                            {/* Progress indicator */}
+                            {syncProgress && (
+                                <div style={{
+                                    padding: '12px 16px', marginBottom: '16px',
+                                    background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)',
+                                    borderRadius: '8px', fontSize: '0.8125rem', color: '#60A5FA',
+                                }}>
+                                    {syncProgress}
                                 </div>
                             )}
 
