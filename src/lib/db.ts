@@ -30,6 +30,7 @@ export async function initAllTables() {
         initMbSyncStateTable(),
         initMbClientsCacheTable(),
         initGhlContactsMapTable(),
+        initApiUsageMonthlyTable(),
     ]);
     // Phase 2: tables with FK dependencies
     await initCampaignContactsTable();
@@ -474,4 +475,16 @@ async function initGhlContactsMapTable() {
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_phone ON ghl_contacts_map(phone_normalized)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_email ON ghl_contacts_map(email)`;
+}
+
+async function initApiUsageMonthlyTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS api_usage_monthly (
+            api_name TEXT NOT NULL,
+            month_key TEXT NOT NULL,
+            total_calls INTEGER DEFAULT 0,
+            cache_hits INTEGER DEFAULT 0,
+            PRIMARY KEY (api_name, month_key)
+        )
+    `;
 }

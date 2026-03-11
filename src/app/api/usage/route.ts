@@ -15,7 +15,7 @@ export async function GET() {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
 
-        const stats = getUsageStats();
+        const stats = await getUsageStats();
         return NextResponse.json(stats);
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown error';

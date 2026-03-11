@@ -1,5 +1,7 @@
-// API Usage Tracker — in-memory singleton for monitoring API call counts,
-// cache efficiency, and quota consumption across all integrations.
+// API Usage Tracker — in-memory + Postgres persistent tracking for monitoring
+// API call counts, cache efficiency, and quota consumption across all integrations.
+
+import { sql } from '@vercel/postgres';
 
 type ApiName = 'mindbody' | 'meta' | 'metaAds' | 'youtube' | 'googleAds' | 'googleBusiness' | 'ghl' | 'yelp' | 'realself' | 'googleSearchConsole' | 'kieAi';
 
@@ -114,6 +116,26 @@ const API_CONFIGS: Record<ApiName, {
 const apiCalls = new Map<ApiName, CallRecord[]>();
 let trackedSince = new Date().toISOString();
 
+/** Get current month key (YYYY-MM) */
+function getMonthKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Persist call count to Postgres (fire-and-forget) */
+function persistToDb(api: string, cached: boolean) {
+  const monthKey = getMonthKey();
+  const callInc = cached ? 0 : 1;
+  const cacheInc = cached ? 1 : 0;
+  sql`
+    INSERT INTO api_usage_monthly (api_name, month_key, total_calls, cache_hits)
+    VALUES (${api}, ${monthKey}, ${callInc}, ${cacheInc})
+    ON CONFLICT (api_name, month_key) DO UPDATE SET
+      total_calls = api_usage_monthly.total_calls + ${callInc},
+      cache_hits = api_usage_monthly.cache_hits + ${cacheInc}
+  `.catch(() => { /* fire-and-forget — table may not exist yet */ });
+}
+
 /** Track an API call or cache hit */
 export function trackCall(
   api: ApiName,
@@ -133,6 +155,9 @@ export function trackCall(
     quotaCost: cached ? 0 : quotaCost,
   });
 
+  // Persist to Postgres for monthly totals
+  persistToDb(api, cached);
+
   // Prune records older than 30 days
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   if (records.length > 500) {
@@ -141,36 +166,57 @@ export function trackCall(
   }
 }
 
+/** Fetch persistent monthly totals from Postgres */
+async function getMonthlyTotalsFromDb(): Promise<Map<string, { totalCalls: number; cacheHits: number }>> {
+  const monthKey = getMonthKey();
+  const result = new Map<string, { totalCalls: number; cacheHits: number }>();
+  try {
+    const { rows } = await sql`
+      SELECT api_name, total_calls, cache_hits
+      FROM api_usage_monthly
+      WHERE month_key = ${monthKey}
+    `;
+    for (const row of rows) {
+      result.set(row.api_name, { totalCalls: row.total_calls, cacheHits: row.cache_hits });
+    }
+  } catch { /* table may not exist yet */ }
+  return result;
+}
+
 /** Get aggregated usage stats for all APIs */
-export function getUsageStats(): UsageSnapshot {
-  const now = Date.now();
+export async function getUsageStats(): Promise<UsageSnapshot> {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
 
+  // Fetch persistent monthly totals
+  const monthlyDb = await getMonthlyTotalsFromDb();
+
   const apis: APIStats[] = (Object.keys(API_CONFIGS) as ApiName[]).map(apiName => {
     const config = API_CONFIGS[apiName];
     const records = apiCalls.get(apiName) || [];
 
-    // All-time stats for display
-    const totalCalls = records.filter(r => !r.cached).length;
-    const cacheHits = records.filter(r => r.cached).length;
-    const cacheMisses = totalCalls;
-    const totalRecords = records.length;
-    const cacheHitRate = totalRecords > 0
-      ? Math.round((cacheHits / totalRecords) * 100)
+    // In-memory stats (current server instance)
+    const memCalls = records.filter(r => !r.cached).length;
+    const memCacheHits = records.filter(r => r.cached).length;
+
+    // Persistent monthly totals from Postgres
+    const dbStats = monthlyDb.get(apiName);
+    const monthlyTotalCalls = dbStats?.totalCalls ?? memCalls;
+    const monthlyCacheHits = dbStats?.cacheHits ?? memCacheHits;
+    const monthlyTotal = monthlyTotalCalls + monthlyCacheHits;
+    const cacheHitRate = monthlyTotal > 0
+      ? Math.round((monthlyCacheHits / monthlyTotal) * 100)
       : 0;
 
-    // Quota used — filter by period (only non-cached calls count)
-    const periodStart = config.quotaPeriod === 'day'
-      ? startOfDay.getTime()
-      : startOfMonth.getTime();
-
-    const quotaUsed = records
-      .filter(r => !r.cached && r.timestamp >= periodStart)
-      .reduce((sum, r) => sum + r.quotaCost, 0);
+    // Quota used — use DB monthly total for month-period, in-memory for day-period
+    const quotaUsed = config.quotaPeriod === 'month'
+      ? monthlyTotalCalls
+      : records
+          .filter(r => !r.cached && r.timestamp >= startOfDay.getTime())
+          .reduce((sum, r) => sum + r.quotaCost, 0);
 
     // Last refresh = most recent non-cached call
     const lastActualCall = [...records]
@@ -181,7 +227,7 @@ export function getUsageStats(): UsageSnapshot {
       ? new Date(lastActualCall.timestamp).toISOString()
       : null;
 
-    // Per-function breakdown
+    // Per-function breakdown (in-memory only)
     const callsByFunction: Record<string, FunctionStats> = {};
     for (const r of records) {
       if (!callsByFunction[r.functionName]) {
@@ -194,9 +240,9 @@ export function getUsageStats(): UsageSnapshot {
     return {
       apiName,
       displayName: config.displayName,
-      totalCalls,
-      cacheHits,
-      cacheMisses,
+      totalCalls: monthlyTotalCalls,
+      cacheHits: monthlyCacheHits,
+      cacheMisses: monthlyTotalCalls,
       cacheHitRate,
       quotaLimit: config.quotaLimit,
       quotaUsed,

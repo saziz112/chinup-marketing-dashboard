@@ -691,25 +691,62 @@ export default function SettingsPage() {
             {/* ==================== API USAGE TAB ==================== */}
             {activeTab === 'usage' && (
                 <div className="section-card">
-                    <h3>API Usage</h3>
+                    <h3>API Usage — {new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}</h3>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '16px' }}>
-                        Real-time API quota consumption and cache efficiency. All integrations are on free tiers.
+                        Monthly API call totals per platform. Persisted across deploys.
                     </p>
 
                     {usageLoading ? (
                         <p style={{ color: 'var(--text-muted)' }}>Loading...</p>
                     ) : usage ? (
                         <>
+                            {/* Monthly summary bar */}
+                            <div style={{
+                                display: 'flex', gap: '20px', padding: '16px 20px', marginBottom: '20px',
+                                background: 'rgba(216,180,29,0.06)', border: '1px solid rgba(216,180,29,0.15)', borderRadius: '10px',
+                                flexWrap: 'wrap',
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '2px' }}>Total Calls This Month</div>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#D8B41D' }}>
+                                        {usage.apis.reduce((sum: number, a: APIStats) => sum + a.totalCalls, 0).toLocaleString()}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '2px' }}>Cache Hits</div>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#22c55e' }}>
+                                        {usage.apis.reduce((sum: number, a: APIStats) => sum + a.cacheHits, 0).toLocaleString()}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '2px' }}>Avg Cache Rate</div>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#22c55e' }}>
+                                        {(() => {
+                                            const total = usage.apis.reduce((s: number, a: APIStats) => s + a.totalCalls + a.cacheHits, 0);
+                                            const hits = usage.apis.reduce((s: number, a: APIStats) => s + a.cacheHits, 0);
+                                            return total > 0 ? Math.round((hits / total) * 100) : 0;
+                                        })()}%
+                                    </div>
+                                </div>
+                            </div>
+
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                                {usage.apis.map(api => (
+                                {usage.apis.map((api: APIStats) => (
                                     <div key={api.apiName} className="metric-card" style={{ padding: '20px' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                                             <span style={{ fontWeight: 700, fontSize: '0.9375rem' }}>{api.displayName}</span>
-                                            <span className="badge success">{api.estimatedCost}</span>
+                                        </div>
+
+                                        {/* Monthly total — prominent */}
+                                        <div style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: '4px' }}>
+                                            {api.totalCalls.toLocaleString()}
+                                        </div>
+                                        <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                                            calls this month
                                         </div>
 
                                         {api.quotaLimit ? (
-                                            <div style={{ marginBottom: '16px' }}>
+                                            <div style={{ marginBottom: '12px' }}>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
                                                     <span>{api.quotaUsed.toLocaleString()} / {api.quotaLimit.toLocaleString()} {api.quotaUnit}</span>
                                                     <span>{Math.round((api.quotaUsed / api.quotaLimit) * 100)}%</span>
@@ -724,20 +761,12 @@ export default function SettingsPage() {
                                                     }} />
                                                 </div>
                                                 <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                                    per {api.quotaPeriod}
+                                                    quota per {api.quotaPeriod}
                                                 </div>
                                             </div>
-                                        ) : (
-                                            <div style={{ marginBottom: '16px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                                {api.quotaUsed} {api.quotaUnit} today (no hard limit)
-                                            </div>
-                                        )}
+                                        ) : null}
 
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '0.75rem' }}>
-                                            <div>
-                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '2px' }}>API Calls</div>
-                                                <div style={{ fontWeight: 700 }}>{api.totalCalls}</div>
-                                            </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.75rem' }}>
                                             <div>
                                                 <div style={{ color: 'var(--text-muted)', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '2px' }}>Cache Rate</div>
                                                 <div style={{ fontWeight: 700, color: '#22c55e' }}>{api.cacheHitRate}%</div>
@@ -745,16 +774,13 @@ export default function SettingsPage() {
                                             <div>
                                                 <div style={{ color: 'var(--text-muted)', fontSize: '0.625rem', textTransform: 'uppercase', marginBottom: '2px' }}>Last Refresh</div>
                                                 <div style={{ fontWeight: 600, fontSize: '0.6875rem' }}>
-                                                    {api.lastRefresh ? new Date(api.lastRefresh).toLocaleTimeString() : 'Never'}
+                                                    {api.lastRefresh ? new Date(api.lastRefresh).toLocaleTimeString() : '—'}
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                 ))}
                             </div>
-                            <p style={{ color: 'var(--text-muted)', fontSize: '0.6875rem', marginTop: '12px' }}>
-                                Tracking since {new Date(usage.trackedSince).toLocaleString()}. Stats reset on server restart.
-                            </p>
                         </>
                     ) : (
                         <p style={{ color: 'var(--text-muted)' }}>Unable to load usage data</p>
