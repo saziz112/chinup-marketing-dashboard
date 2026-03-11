@@ -2,7 +2,7 @@
 
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface UserRow {
     id: number;
@@ -62,6 +62,7 @@ export default function SettingsPage() {
     const [syncLoading, setSyncLoading] = useState(false);
     const [syncAction, setSyncAction] = useState<string | null>(null);
     const [syncProgress, setSyncProgress] = useState<string | null>(null);
+    const syncStopRef = useRef(false);
 
     useEffect(() => {
         if (user && !isAdmin) {
@@ -211,13 +212,25 @@ export default function SettingsPage() {
     };
 
     // Trigger a sync action (auto-loops for chunked backfills)
+    const MAX_SYNC_LOOPS = 200; // Safety cap — 200 chunks × 3 months = 50 years max
     const triggerSync = async (action: string) => {
         setSyncAction(action);
         setSyncProgress(null);
+        syncStopRef.current = false;
         let loops = 0;
         try {
             while (true) {
                 loops++;
+                // User clicked Stop
+                if (syncStopRef.current) {
+                    showFlash(`Stopped after ${loops - 1} steps. Progress is saved — you can resume later.`, 'success');
+                    break;
+                }
+                // Safety cap
+                if (loops > MAX_SYNC_LOOPS) {
+                    showFlash(`Safety limit reached (${MAX_SYNC_LOOPS} iterations). Progress saved — resume to continue.`, 'error');
+                    break;
+                }
                 const res = await fetch('/api/admin/data-sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -243,6 +256,7 @@ export default function SettingsPage() {
         } finally {
             setSyncAction(null);
             setSyncProgress(null);
+            syncStopRef.current = false;
         }
     };
 
@@ -659,8 +673,19 @@ export default function SettingsPage() {
                                     padding: '12px 16px', marginBottom: '16px',
                                     background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)',
                                     borderRadius: '8px', fontSize: '0.8125rem', color: '#60A5FA',
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px',
                                 }}>
-                                    {syncProgress}
+                                    <span>{syncProgress}</span>
+                                    <button
+                                        onClick={() => { syncStopRef.current = true; }}
+                                        style={{
+                                            padding: '4px 14px', fontSize: '0.75rem', fontWeight: 600,
+                                            background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)',
+                                            borderRadius: '6px', color: '#EF4444', cursor: 'pointer', whiteSpace: 'nowrap',
+                                        }}
+                                    >
+                                        Stop
+                                    </button>
                                 </div>
                             )}
 
