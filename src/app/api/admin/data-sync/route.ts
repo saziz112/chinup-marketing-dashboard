@@ -110,6 +110,11 @@ export async function POST(req: NextRequest) {
                     });
                 }
                 const clientsResult = await backfillClients();
+                if (!clientsResult.done) {
+                    return NextResponse.json({
+                        action, phase: 'clients', ...clientsResult, continue: true,
+                    });
+                }
                 return NextResponse.json({
                     action, phase: 'clients', ...clientsResult, continue: false,
                     chunkLabel: 'All MindBody backfill complete',

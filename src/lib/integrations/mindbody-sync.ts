@@ -196,24 +196,54 @@ export async function backfillAppointments(startYear: number = 2020): Promise<{ 
 // ---------------------------------------------------------------------------
 
 /**
- * Backfill client details for all clients found in sales history.
- * Stores in mb_clients_cache for phone/email matching.
+ * Backfill client details — ONE chunk of ~200 clients per call (Vercel 60s limit).
+ * Pulls unique client IDs from BOTH sales and appointments history.
+ * Returns `done: false` if more remain. Caller should loop.
  */
-export async function backfillClients(): Promise<{ total: number; apiCalls: number }> {
-    // Get all unique client IDs from sales history that we don't have yet
-    const result = await sql`
-        SELECT DISTINCT client_id FROM mb_sales_history
-        WHERE client_id NOT IN (SELECT DISTINCT client_id FROM mb_clients_cache)
-        LIMIT 5000
-    `;
-    const clientIds = result.rows.map(r => r.client_id);
+export async function backfillClients(): Promise<{ total: number; apiCalls: number; done: boolean; chunkLabel: string }> {
+    const CHUNK_SIZE = 200; // 200 clients ÷ 10 per API call = 20 API calls ≈ 10-15s
 
-    if (clientIds.length === 0) {
-        console.log('[mb-sync] No new clients to backfill');
-        return { total: 0, apiCalls: 0 };
+    // If already completed (final 'clients' state exists), skip entirely
+    const finalState = await sql`SELECT 1 FROM mb_sync_state WHERE sync_type = 'clients'`;
+    if (finalState.rows.length > 0) {
+        return { total: 0, apiCalls: 0, done: true, chunkLabel: 'Clients backfill already complete' };
     }
 
-    console.log(`[mb-sync] Fetching ${clientIds.length} client records...`);
+    // Get offset from progress tracker
+    const progressResult = await sql`SELECT total_records FROM mb_sync_state WHERE sync_type = 'clients_backfill_progress'`;
+    const offset = progressResult.rows.length > 0 ? Number(progressResult.rows[0].total_records) : 0;
+
+    // Get all unique client IDs from sales + appointments not yet in cache
+    const result = await sql`
+        SELECT DISTINCT client_id FROM (
+            SELECT DISTINCT client_id FROM mb_sales_history
+            UNION
+            SELECT DISTINCT client_id FROM mb_appointments_history
+        ) all_clients
+        WHERE client_id NOT IN (SELECT client_id FROM mb_clients_cache)
+        ORDER BY client_id
+        LIMIT ${CHUNK_SIZE}
+    `;
+    const clientIds = result.rows.map(r => String(r.client_id));
+
+    if (clientIds.length === 0) {
+        // All done — finalize
+        await sql`
+            INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+            VALUES ('clients', ${new Date().toISOString().split('T')[0]}, (SELECT COUNT(*) FROM mb_clients_cache), NOW())
+            ON CONFLICT (sync_type) DO UPDATE SET
+                last_sync_date = ${new Date().toISOString().split('T')[0]},
+                total_records = (SELECT COUNT(*) FROM mb_clients_cache),
+                updated_at = NOW()
+        `;
+        await sql`DELETE FROM mb_sync_state WHERE sync_type = 'clients_backfill_progress'`;
+        console.log('[mb-sync] Client backfill complete');
+        return { total: 0, apiCalls: 0, done: true, chunkLabel: 'Complete' };
+    }
+
+    const chunkLabel = `Clients: batch ${Math.floor(offset / CHUNK_SIZE) + 1} (${clientIds.length} clients)`;
+    console.log(`[mb-sync] ${chunkLabel}`);
+
     const clients = await getClients(clientIds);
     const apiCalls = Math.ceil(clientIds.length / 10);
 
@@ -221,8 +251,18 @@ export async function backfillClients(): Promise<{ total: number; apiCalls: numb
         await upsertClients(clients);
     }
 
-    console.log(`[mb-sync] Client backfill complete: ${clients.length} records, ${apiCalls} API calls`);
-    return { total: clients.length, apiCalls };
+    // Save progress (track total fetched so far for the label)
+    const newTotal = offset + clientIds.length;
+    await sql`
+        INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+        VALUES ('clients_backfill_progress', ${new Date().toISOString().split('T')[0]}, ${newTotal}, NOW())
+        ON CONFLICT (sync_type) DO UPDATE SET
+            total_records = ${newTotal},
+            updated_at = NOW()
+    `;
+
+    console.log(`[mb-sync] Fetched ${clients.length} clients (${newTotal} total so far), ${apiCalls} API calls`);
+    return { total: clients.length, apiCalls, done: false, chunkLabel };
 }
 
 // ---------------------------------------------------------------------------
