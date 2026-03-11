@@ -41,13 +41,15 @@ export async function backfillGhlContacts(): Promise<{
     // Load progress
     const progressRow = await sql`SELECT total_records, cursor_data FROM mb_sync_state WHERE sync_type = 'ghl_backfill_progress'`;
     let locationIndex = 0;
-    let startAfter: string | undefined;
+    let startAfter: number | undefined;    // numeric timestamp from GHL meta
+    let startAfterId: string | undefined;  // contact ID from GHL meta
     let totalSoFar = 0;
 
     if (progressRow.rows.length > 0) {
         const cursor = progressRow.rows[0].cursor_data ? JSON.parse(progressRow.rows[0].cursor_data) : {};
         locationIndex = cursor.locationIndex || 0;
-        startAfter = cursor.startAfter || undefined;
+        startAfter = cursor.startAfter != null ? Number(cursor.startAfter) : undefined;
+        startAfterId = cursor.startAfterId || undefined;
         totalSoFar = progressRow.rows[0].total_records || 0;
     }
 
@@ -74,7 +76,8 @@ export async function backfillGhlContacts(): Promise<{
     for (let page = 0; page < PAGES_PER_CHUNK; page++) {
         const url = new URL(`${GHL_BASE}/contacts/`);
         url.searchParams.set('limit', '100');
-        if (startAfter) url.searchParams.set('startAfter', startAfter);
+        if (startAfter !== undefined) url.searchParams.set('startAfter', String(startAfter));
+        if (startAfterId) url.searchParams.set('startAfterId', startAfterId);
 
         const res = await fetch(url.toString(), {
             headers: { 'Authorization': `Bearer ${loc.apiKey}` },
@@ -116,18 +119,22 @@ export async function backfillGhlContacts(): Promise<{
             chunkInserted++;
         }
 
-        if (contacts.length < 100) { locationDone = true; break; }
-        startAfter = contacts[contacts.length - 1].id;
+        // Use meta pagination cursors from GHL API response
+        const meta = data.meta;
+        if (!meta?.nextPage || contacts.length < 100) { locationDone = true; break; }
+        startAfter = meta.startAfter;
+        startAfterId = meta.startAfterId;
         await new Promise(r => setTimeout(r, 100));
     }
 
     // Advance to next location if this one is done
     const nextLocationIndex = locationDone ? locationIndex + 1 : locationIndex;
     const nextStartAfter = locationDone ? undefined : startAfter;
+    const nextStartAfterId = locationDone ? undefined : startAfterId;
     const newTotal = totalSoFar + chunkInserted;
 
     // Save progress
-    const cursorJson = JSON.stringify({ locationIndex: nextLocationIndex, startAfter: nextStartAfter });
+    const cursorJson = JSON.stringify({ locationIndex: nextLocationIndex, startAfter: nextStartAfter, startAfterId: nextStartAfterId });
     await sql`
         INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, cursor_data, updated_at)
         VALUES ('ghl_backfill_progress', ${new Date().toISOString().split('T')[0]}, ${newTotal}, ${cursorJson}, NOW())
@@ -183,7 +190,8 @@ export async function incrementalGhlSync(): Promise<{ newContacts: number; apiCa
     let apiCalls = 0;
 
     for (const loc of locations) {
-        let startAfter: string | undefined;
+        let pgStartAfter: number | undefined;
+        let pgStartAfterId: string | undefined;
         let locationNew = 0;
         let reachedOldContacts = false;
 
@@ -192,7 +200,8 @@ export async function incrementalGhlSync(): Promise<{ newContacts: number; apiCa
             url.searchParams.set('limit', '100');
             url.searchParams.set('sortBy', 'date_updated');
             url.searchParams.set('order', 'desc');
-            if (startAfter) url.searchParams.set('startAfter', startAfter);
+            if (pgStartAfter !== undefined) url.searchParams.set('startAfter', String(pgStartAfter));
+            if (pgStartAfterId) url.searchParams.set('startAfterId', pgStartAfterId);
 
             const res = await fetch(url.toString(), {
                 headers: { 'Authorization': `Bearer ${loc.apiKey}` },
@@ -234,8 +243,11 @@ export async function incrementalGhlSync(): Promise<{ newContacts: number; apiCa
                 locationNew++;
             }
 
-            if (contacts.length < 100) break;
-            startAfter = contacts[contacts.length - 1].id;
+            // Use meta pagination cursors from GHL API response
+            const meta = data.meta;
+            if (!meta?.nextPage || contacts.length < 100) break;
+            pgStartAfter = meta.startAfter;
+            pgStartAfterId = meta.startAfterId;
             await new Promise(r => setTimeout(r, 100));
         }
 
