@@ -637,9 +637,9 @@ export default function SettingsPage() {
                             {/* Status Cards */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '24px' }}>
                                 {[
-                                    { label: 'MB Sales', value: syncStatus.mindbody?.salesCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.sync_type === 'sales')?.last_sync_date || 'Never synced' },
-                                    { label: 'MB Appointments', value: syncStatus.mindbody?.appointmentsCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.sync_type === 'appointments')?.last_sync_date || 'Never synced' },
-                                    { label: 'MB Clients', value: syncStatus.mindbody?.clientsCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.sync_type === 'clients')?.last_sync_date || 'Never synced' },
+                                    { label: 'MB Sales', value: syncStatus.mindbody?.salesCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.syncType === 'sales')?.lastSyncDate || 'Never synced' },
+                                    { label: 'MB Appointments', value: syncStatus.mindbody?.appointmentsCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.syncType === 'appointments')?.lastSyncDate || 'Never synced' },
+                                    { label: 'MB Clients', value: syncStatus.mindbody?.clientsCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.syncType === 'clients')?.lastSyncDate || 'Never synced' },
                                     { label: 'GHL Contacts', value: syncStatus.ghl?.totalContacts?.toLocaleString() || '0', sub: syncStatus.ghl?.lastSync || 'Never synced' },
                                     { label: 'GHL w/ Phone', value: syncStatus.ghl?.withPhone?.toLocaleString() || '0', sub: `${syncStatus.ghl?.totalContacts ? Math.round((syncStatus.ghl.withPhone / syncStatus.ghl.totalContacts) * 100) : 0}% of total` },
                                     { label: 'GHL w/ Email', value: syncStatus.ghl?.withEmail?.toLocaleString() || '0', sub: `${syncStatus.ghl?.totalContacts ? Math.round((syncStatus.ghl.withEmail / syncStatus.ghl.totalContacts) * 100) : 0}% of total` },

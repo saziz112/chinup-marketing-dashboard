@@ -7,7 +7,6 @@
 import { sql } from '@vercel/postgres';
 import { getSales, getAppointments, getClients, normalizePhone } from './mindbody';
 import type { Sale, StaffAppointment, Client } from './mindbody';
-import type { LocationKey } from './gohighlevel';
 
 // ---------------------------------------------------------------------------
 // Sync State Helpers
@@ -276,6 +275,7 @@ export async function backfillClients(): Promise<{ total: number; apiCalls: numb
 export async function incrementalSync(): Promise<{
     newSales: number;
     newAppts: number;
+    newClients: number;
     apiCalls: number;
 }> {
     const states = await getSyncState();
@@ -284,7 +284,7 @@ export async function incrementalSync(): Promise<{
 
     if (!salesState && !apptsState) {
         console.log('[mb-sync] No sync state found — run backfill first');
-        return { newSales: 0, newAppts: 0, apiCalls: 0 };
+        return { newSales: 0, newAppts: 0, newClients: 0, apiCalls: 0 };
     }
 
     const now = new Date();
@@ -335,8 +335,29 @@ export async function incrementalSync(): Promise<{
         `;
     }
 
-    console.log(`[mb-sync] Incremental sync: ${newSales} new sales, ${newAppts} new appointments, ${apiCalls} API calls`);
-    return { newSales, newAppts, apiCalls };
+    // Sync any new clients not yet in cache (from new sales/appointments)
+    let newClients = 0;
+    const missingResult = await sql`
+        SELECT DISTINCT client_id FROM (
+            SELECT DISTINCT client_id FROM mb_sales_history
+            UNION
+            SELECT DISTINCT client_id FROM mb_appointments_history
+        ) all_clients
+        WHERE client_id NOT IN (SELECT client_id FROM mb_clients_cache)
+        LIMIT 200
+    `;
+    const missingIds = missingResult.rows.map(r => String(r.client_id));
+    if (missingIds.length > 0) {
+        const clients = await getClients(missingIds);
+        apiCalls += Math.ceil(missingIds.length / 10);
+        if (clients.length > 0) {
+            await upsertClients(clients);
+            newClients = clients.length;
+        }
+    }
+
+    console.log(`[mb-sync] Incremental sync: ${newSales} new sales, ${newAppts} new appointments, ${newClients} new clients, ${apiCalls} API calls`);
+    return { newSales, newAppts, newClients, apiCalls };
 }
 
 // ---------------------------------------------------------------------------
@@ -539,50 +560,43 @@ export async function getSyncStats(): Promise<{
 
 async function upsertSales(sales: Sale[]): Promise<number> {
     let inserted = 0;
-    // Process in batches of 50 to avoid query size limits
-    for (let i = 0; i < sales.length; i += 50) {
-        const batch = sales.slice(i, i + 50);
-        for (const sale of batch) {
-            const totalAmount = sale.PurchasedItems?.reduce((s, item) => s + (item.TotalAmount || 0), 0) || 0;
-            const saleDate = (sale.SaleDate || sale.SaleDateTime || '').split('T')[0];
-            if (!saleDate || !sale.ClientId) continue;
+    for (const sale of sales) {
+        const totalAmount = sale.PurchasedItems?.reduce((s, item) => s + (item.TotalAmount || 0), 0) || 0;
+        const saleDate = (sale.SaleDate || sale.SaleDateTime || '').split('T')[0];
+        if (!saleDate || !sale.ClientId) continue;
 
-            await sql`
-                INSERT INTO mb_sales_history (sale_id, client_id, sale_date, location_id, total_amount, items_json, synced_at)
-                VALUES (${sale.Id}, ${sale.ClientId}, ${saleDate}, ${sale.LocationId || 0}, ${totalAmount},
-                        ${JSON.stringify(sale.PurchasedItems || [])}, NOW())
-                ON CONFLICT (sale_id) DO UPDATE SET
-                    total_amount = ${totalAmount},
-                    items_json = ${JSON.stringify(sale.PurchasedItems || [])},
-                    synced_at = NOW()
-            `;
-            inserted++;
-        }
+        await sql`
+            INSERT INTO mb_sales_history (sale_id, client_id, sale_date, location_id, total_amount, items_json, synced_at)
+            VALUES (${sale.Id}, ${sale.ClientId}, ${saleDate}, ${sale.LocationId || 0}, ${totalAmount},
+                    ${JSON.stringify(sale.PurchasedItems || [])}, NOW())
+            ON CONFLICT (sale_id) DO UPDATE SET
+                total_amount = ${totalAmount},
+                items_json = ${JSON.stringify(sale.PurchasedItems || [])},
+                synced_at = NOW()
+        `;
+        inserted++;
     }
     return inserted;
 }
 
 async function upsertAppointments(appts: StaffAppointment[]): Promise<number> {
     let inserted = 0;
-    for (let i = 0; i < appts.length; i += 50) {
-        const batch = appts.slice(i, i + 50);
-        for (const appt of batch) {
-            if (!appt.ClientId) continue;
-            const staffName = appt.Staff?.DisplayName || appt.Staff?.FirstName || '';
+    for (const appt of appts) {
+        if (!appt.ClientId) continue;
+        const staffName = appt.Staff?.DisplayName || appt.Staff?.FirstName || '';
 
-            await sql`
-                INSERT INTO mb_appointments_history
-                    (appointment_id, client_id, start_date, status, session_type_id, session_type_name, location_id, staff_name, synced_at)
-                VALUES (${appt.Id}, ${appt.ClientId}, ${appt.StartDateTime}, ${appt.Status},
-                        ${appt.SessionTypeId || 0}, ${appt.SessionType?.Name || null},
-                        ${appt.LocationId || 0}, ${staffName}, NOW())
-                ON CONFLICT (appointment_id) DO UPDATE SET
-                    status = ${appt.Status},
-                    session_type_name = COALESCE(${appt.SessionType?.Name || null}, mb_appointments_history.session_type_name),
-                    synced_at = NOW()
-            `;
-            inserted++;
-        }
+        await sql`
+            INSERT INTO mb_appointments_history
+                (appointment_id, client_id, start_date, status, session_type_id, session_type_name, location_id, staff_name, synced_at)
+            VALUES (${appt.Id}, ${appt.ClientId}, ${appt.StartDateTime}, ${appt.Status},
+                    ${appt.SessionTypeId || 0}, ${appt.SessionType?.Name || null},
+                    ${appt.LocationId || 0}, ${staffName}, NOW())
+            ON CONFLICT (appointment_id) DO UPDATE SET
+                status = ${appt.Status},
+                session_type_name = COALESCE(${appt.SessionType?.Name || null}, mb_appointments_history.session_type_name),
+                synced_at = NOW()
+        `;
+        inserted++;
     }
     return inserted;
 }

@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
             }
             case 'backfill-clients': {
                 const result = await backfillClients();
-                return NextResponse.json({ action, ...result });
+                return NextResponse.json({ action, ...result, continue: !result.done });
             }
             case 'backfill-mindbody': {
                 // Step through one chunk at a time (Vercel 60s limit).
@@ -124,8 +124,14 @@ export async function POST(req: NextRequest) {
                 const result = await backfillGhlContacts();
                 return NextResponse.json({ action, ...result, continue: !result.done });
             }
+            case 'reset-mindbody': {
+                await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('sales', 'appointments', 'clients', 'sales_backfill_progress', 'appts_backfill_progress', 'clients_backfill_progress')`;
+                await sql`DELETE FROM mb_sales_history`;
+                await sql`DELETE FROM mb_appointments_history`;
+                await sql`DELETE FROM mb_clients_cache`;
+                return NextResponse.json({ action, message: 'MindBody data and sync state cleared. Run backfill again.' });
+            }
             case 'reset-ghl': {
-                // Clear GHL sync state so backfill can re-run from scratch
                 await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('ghl-contacts', 'ghl_backfill_progress')`;
                 await sql`DELETE FROM ghl_contacts_map`;
                 return NextResponse.json({ action, message: 'GHL sync state and contacts cleared. Run backfill again.' });
