@@ -378,6 +378,7 @@ export default function LeadsPipelinePage() {
     const sendSmsCampaign = useCallback(async () => {
         if (!smsData?.contacts || smsSelected.size === 0 || !smsMessage) return;
         setSmsSending(true);
+        setSmsError(null);
         try {
             // Filter to visible contacts (respecting location filter)
             const visibleContacts = smsLocationFilter === 'all'
@@ -385,32 +386,51 @@ export default function LeadsPipelinePage() {
                 : smsData.contacts.filter((c: any) => c.locationKey === smsLocationFilter);
             const selectedContacts = visibleContacts.filter((c: any) => smsSelected.has(c.contactId));
 
+            if (selectedContacts.length === 0) {
+                setSmsError('No contacts matched after filtering. Try changing the location filter.');
+                setSmsSending(false);
+                return;
+            }
+
             // Group by location for sending
             const contactsByLocation = new Map<string, any[]>();
             for (const c of selectedContacts) {
-                const list = contactsByLocation.get(c.locationKey) || [];
+                const locKey = c.locationKey || 'decatur';
+                const list = contactsByLocation.get(locKey) || [];
                 list.push(c);
-                contactsByLocation.set(c.locationKey, list);
+                contactsByLocation.set(locKey, list);
             }
 
             const allResults: any[] = [];
+            const allErrors: string[] = [];
             for (const [locKey, contacts] of contactsByLocation) {
-                const res = await fetch('/api/attribution/ghl-reactivation', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contactIds: contacts.map((c: any) => c.contactId),
-                        contacts,
-                        message: smsMessage,
-                        locationKey: locKey,
-                        channel: smsChannel,
-                        segment: smsSegment,
-                        subject: smsChannel === 'email' ? smsSubject : undefined,
-                    }),
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    allResults.push(data);
+                try {
+                    const res = await fetch('/api/attribution/ghl-reactivation', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contactIds: contacts.map((c: any) => c.contactId),
+                            contacts,
+                            message: smsMessage,
+                            locationKey: locKey,
+                            channel: smsChannel,
+                            segment: smsSegment,
+                            subject: smsChannel === 'email' ? smsSubject : undefined,
+                        }),
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        allResults.push(data);
+                    } else {
+                        const errData = await res.json().catch(() => ({}));
+                        const errMsg = errData.error || `API error ${res.status} for ${locKey}`;
+                        allErrors.push(errMsg);
+                        console.error(`[sendSmsCampaign] ${locKey} failed:`, errMsg);
+                    }
+                } catch (fetchErr: unknown) {
+                    const msg = fetchErr instanceof Error ? fetchErr.message : 'Network error';
+                    allErrors.push(`${locKey}: ${msg}`);
+                    console.error(`[sendSmsCampaign] ${locKey} fetch error:`, fetchErr);
                 }
             }
 
@@ -418,10 +438,16 @@ export default function LeadsPipelinePage() {
             const totalFailed = allResults.reduce((s, r) => s + (r.failed || 0), 0);
             const totalSkipped = allResults.reduce((s, r) => s + (r.skipped || 0), 0);
             const emailCapped = allResults.some(r => r.emailCapped);
-            setSmsResults({ sent: totalSent, failed: totalFailed, skipped: totalSkipped, channel: smsChannel, emailCapped });
+            setSmsResults({
+                sent: totalSent, failed: totalFailed, skipped: totalSkipped,
+                channel: smsChannel, emailCapped,
+                errors: allErrors.length > 0 ? allErrors : undefined,
+            });
             setSmsStep(3);
-        } catch {
-            // Error
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'Campaign send failed';
+            setSmsError(`Send failed: ${msg}`);
+            console.error('[sendSmsCampaign] Error:', err);
         } finally {
             setSmsSending(false);
         }
@@ -1833,6 +1859,15 @@ export default function LeadsPipelinePage() {
                                                             }}>{smsTestResult.message}</div>
                                                         )}
 
+                                                        {/* Send Error Display */}
+                                                        {smsError && !smsLoading && (
+                                                            <div style={{
+                                                                padding: '10px 14px', marginBottom: '12px', borderRadius: '6px',
+                                                                background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)',
+                                                                color: '#F87171', fontSize: '0.8125rem',
+                                                            }}>{smsError}</div>
+                                                        )}
+
                                                         {/* Action Buttons */}
                                                         <div style={{ display: 'flex', gap: '12px', justifyContent: 'space-between' }}>
                                                             <button onClick={() => setSmsStep(1)} style={{ padding: '10px 20px', background: 'transparent', border: '1px solid var(--border-subtle)', borderRadius: '8px', color: 'var(--text-secondary)', cursor: 'pointer' }}>Back</button>
@@ -1887,18 +1922,36 @@ export default function LeadsPipelinePage() {
                                             <div>
                                                 <div style={{
                                                     padding: '20px', textAlign: 'center', marginBottom: '20px',
-                                                    background: smsResults.failed === 0 ? 'rgba(52,211,153,0.1)' : 'rgba(251,191,36,0.1)',
-                                                    border: `1px solid ${smsResults.failed === 0 ? 'rgba(52,211,153,0.3)' : 'rgba(251,191,36,0.3)'}`,
+                                                    background: smsResults.sent > 0 && smsResults.failed === 0 && !smsResults.errors?.length
+                                                        ? 'rgba(52,211,153,0.1)'
+                                                        : smsResults.errors?.length && smsResults.sent === 0
+                                                        ? 'rgba(248,113,113,0.1)'
+                                                        : 'rgba(251,191,36,0.1)',
+                                                    border: `1px solid ${smsResults.sent > 0 && smsResults.failed === 0 && !smsResults.errors?.length
+                                                        ? 'rgba(52,211,153,0.3)'
+                                                        : smsResults.errors?.length && smsResults.sent === 0
+                                                        ? 'rgba(248,113,113,0.3)'
+                                                        : 'rgba(251,191,36,0.3)'}`,
                                                     borderRadius: '8px',
                                                 }}>
-                                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: smsResults.failed === 0 ? '#34D399' : '#FBBF24' }}>
-                                                        {smsResults.channel === 'email' ? 'Emails' : 'Campaign'} Sent
+                                                    <div style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px', color: smsResults.sent > 0 ? '#34D399' : smsResults.errors?.length ? '#F87171' : '#FBBF24' }}>
+                                                        {smsResults.errors?.length && smsResults.sent === 0
+                                                            ? 'Campaign Failed'
+                                                            : smsResults.channel === 'email' ? 'Emails Sent' : 'Campaign Sent'}
                                                     </div>
                                                     <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', fontSize: '0.9375rem', color: 'var(--text-secondary)' }}>
                                                         <span style={{ color: '#34D399' }}>{smsResults.sent} sent</span>
                                                         {smsResults.failed > 0 && <span style={{ color: '#F87171' }}>{smsResults.failed} failed</span>}
                                                         {smsResults.skipped > 0 && <span style={{ color: 'var(--text-muted)' }}>{smsResults.skipped} skipped</span>}
                                                     </div>
+                                                    {smsResults.errors?.length > 0 && (
+                                                        <div style={{ marginTop: '12px', textAlign: 'left', padding: '12px', background: 'rgba(248,113,113,0.08)', borderRadius: '6px', border: '1px solid rgba(248,113,113,0.2)' }}>
+                                                            <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#F87171', marginBottom: '6px' }}>Errors:</div>
+                                                            {smsResults.errors.map((e: string, i: number) => (
+                                                                <div key={i} style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>{e}</div>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                     {smsResults.emailCapped && (
                                                         <div style={{ marginTop: '8px', fontSize: '0.8125rem', color: '#FBBF24' }}>
                                                             Email cap reached (50 per run for domain protection). Run again tomorrow for the next batch.

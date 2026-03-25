@@ -849,6 +849,15 @@ export async function POST(req: NextRequest) {
 
         const selectedContacts = contactsData.filter(c => effectiveContactIds.includes(c.contactId));
 
+        console.log(`[ghl-reactivation] POST: channel=${channel}, location=${locationKey}, segment=${segment}, contactIds=${effectiveContactIds.length}, matched=${selectedContacts.length}`);
+
+        if (selectedContacts.length === 0) {
+            return NextResponse.json({
+                error: `No contacts matched. Sent ${effectiveContactIds.length} IDs but none found in contacts payload.`,
+                sent: 0, failed: 0, skipped: 0, results: [],
+            }, { status: 400 });
+        }
+
         let result;
         if (channel === 'email') {
             result = await sendBulkEmail(
@@ -868,6 +877,12 @@ export async function POST(req: NextRequest) {
                 message,
                 LOCATION_NAMES[locationKey] || 'Chin Up!',
             );
+        }
+
+        console.log(`[ghl-reactivation] Result: sent=${result.sent}, failed=${result.failed}, skipped=${result.skipped}`);
+        if (result.results?.some((r: { success: boolean; error?: string }) => !r.success)) {
+            const errors = result.results.filter((r: { success: boolean; error?: string }) => !r.success).map((r: { contactId: string; error?: string }) => `${r.contactId}: ${r.error}`);
+            console.warn(`[ghl-reactivation] Failed messages:`, errors.slice(0, 5));
         }
 
         // ── Record Campaign History (HIPAA-safe) ──
