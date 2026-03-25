@@ -5,12 +5,13 @@ import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, useCallback } from 'react';
 import { SkeletonKpiCard, SkeletonChart } from '@/components/Skeleton';
 import {
-    LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+    LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid,
     Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import { format, parseISO, getHours } from 'date-fns';
 
 type Period = '7d' | '30d' | '90d';
-type PlatformTab = 'All Platforms' | 'Instagram' | 'Facebook' | 'YouTube';
+type PlatformTab = 'All Platforms' | 'Instagram' | 'Facebook' | 'YouTube' | 'Content';
 
 interface IGData {
     configured: boolean;
@@ -103,6 +104,22 @@ interface YTData {
     videosInPeriod?: number;
 }
 
+interface ContentPost {
+    id: string;
+    platform: 'instagram' | 'youtube';
+    title: string;
+    description: string;
+    publishedAt: string;
+    thumbnailUrl: string;
+    url: string;
+    views: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    engagementRate: number;
+    mediaType?: string;
+}
+
 interface FBData {
     configured: boolean;
     error?: string;
@@ -131,7 +148,7 @@ interface FBData {
     }>;
 }
 
-const PLATFORMS: PlatformTab[] = ['All Platforms', 'Instagram', 'Facebook', 'YouTube'];
+const PLATFORMS: PlatformTab[] = ['All Platforms', 'Instagram', 'Facebook', 'YouTube', 'Content'];
 
 const TOOLTIP_STYLE = {
     background: '#0A225C',
@@ -162,6 +179,7 @@ export default function OrganicPage() {
             instagram: 'Instagram',
             facebook: 'Facebook',
             youtube: 'YouTube',
+            content: 'Content',
         };
         return map[tab || ''] || 'All Platforms';
     };
@@ -173,6 +191,14 @@ export default function OrganicPage() {
     const [igData, setIGData] = useState<IGData | null>(null);
     const [fbData, setFBData] = useState<FBData | null>(null);
     const [ytData, setYTData] = useState<YTData | null>(null);
+
+    // Content tab state
+    const [contentPosts, setContentPosts] = useState<ContentPost[]>([]);
+    const [contentLoading, setContentLoading] = useState(false);
+    const [contentFetched, setContentFetched] = useState(false);
+    const [contentPlatformFilter, setContentPlatformFilter] = useState<'all' | 'instagram' | 'youtube'>('all');
+    const [contentSortKey, setContentSortKey] = useState<keyof ContentPost>('publishedAt');
+    const [contentSortOrder, setContentSortOrder] = useState<'asc' | 'desc'>('desc');
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -192,6 +218,18 @@ export default function OrganicPage() {
     useEffect(() => {
         if (session) fetchData();
     }, [session, fetchData]);
+
+    // Lazy-fetch content data only when Content tab is first selected
+    useEffect(() => {
+        if (activeTab === 'Content' && !contentFetched && !contentLoading) {
+            setContentLoading(true);
+            fetch('/api/content/posts')
+                .then(r => r.json())
+                .then(data => { setContentPosts(data.posts || []); setContentFetched(true); })
+                .catch(() => {})
+                .finally(() => setContentLoading(false));
+        }
+    }, [activeTab, contentFetched, contentLoading]);
 
     const igConfigured = igData?.configured && !igData?.error;
     const fbConfigured = fbData?.configured && !fbData?.error;
@@ -779,6 +817,273 @@ export default function OrganicPage() {
     };
 
 
+    // --- Content Tab ---
+    const renderContent = () => {
+        if (contentLoading) {
+            return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                        <SkeletonKpiCard />
+                        <SkeletonKpiCard />
+                        <SkeletonKpiCard />
+                    </div>
+                    <SkeletonChart height={300} />
+                </div>
+            );
+        }
+
+        // Filter & sort
+        let filtered = [...contentPosts];
+        if (contentPlatformFilter !== 'all') {
+            filtered = filtered.filter(p => p.platform === contentPlatformFilter);
+        }
+
+        const sorted = [...filtered].sort((a, b) => {
+            const aVal = a[contentSortKey];
+            const bVal = b[contentSortKey];
+            if (contentSortKey === 'publishedAt') {
+                const aTime = new Date(aVal as string).getTime();
+                const bTime = new Date(bVal as string).getTime();
+                return contentSortOrder === 'asc' ? aTime - bTime : bTime - aTime;
+            }
+            if (typeof aVal === 'number' && typeof bVal === 'number') {
+                return contentSortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+            }
+            return 0;
+        });
+
+        // Top 3 posts by views
+        const topPosts = [...filtered].sort((a, b) => b.views - a.views).slice(0, 3);
+
+        // KPI calcs
+        let totalEng = 0, totalViews = 0;
+        const platformStats: Record<string, { views: number; count: number }> = { instagram: { views: 0, count: 0 }, youtube: { views: 0, count: 0 } };
+        filtered.forEach(p => {
+            totalEng += p.likes + p.comments + p.shares;
+            totalViews += p.views;
+            if (platformStats[p.platform]) { platformStats[p.platform].views += p.views; platformStats[p.platform].count += 1; }
+        });
+        const avgEngRate = totalViews > 0 ? (totalEng / totalViews) * 100 : 0;
+        let topPlatform = 'None';
+        let highestAvg = 0;
+        Object.entries(platformStats).forEach(([key, stat]) => {
+            if (stat.count > 0 && stat.views / stat.count > highestAvg) { highestAvg = stat.views / stat.count; topPlatform = key; }
+        });
+
+        // Best time to post data
+        const hourBuckets: Record<number, { engRateSum: number; count: number }> = {};
+        filtered.forEach(p => {
+            const h = getHours(parseISO(p.publishedAt));
+            if (!hourBuckets[h]) hourBuckets[h] = { engRateSum: 0, count: 0 };
+            hourBuckets[h].engRateSum += p.engagementRate;
+            hourBuckets[h].count += 1;
+        });
+        const bestTimeData = Array.from({ length: 24 }).map((_, i) => {
+            const bucket = hourBuckets[i];
+            const avgRate = bucket && bucket.count > 0 ? bucket.engRateSum / bucket.count : 0;
+            return { hour: format(new Date().setHours(i), 'ha'), engagementRate: Number(avgRate.toFixed(2)) };
+        });
+
+        const handleContentSort = (key: keyof ContentPost) => {
+            if (contentSortKey === key) {
+                setContentSortOrder(contentSortOrder === 'asc' ? 'desc' : 'asc');
+            } else {
+                setContentSortKey(key);
+                setContentSortOrder('desc');
+            }
+        };
+
+        const getPlatformColor = (p: string) => p === 'instagram' ? '#E1306C' : p === 'youtube' ? '#FF0000' : '#888';
+
+        if (contentPosts.length === 0) {
+            return (
+                <div className="section-card">
+                    <div className="empty-state">
+                        <h3>No content data</h3>
+                        <p>Connect Instagram or YouTube to see cross-platform content performance.</p>
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <>
+                {/* KPIs */}
+                <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                    <div className="metric-card">
+                        <div className="label">Posts Analyzed</div>
+                        <div className="value">{filtered.length}</div>
+                        <div className="change">Across connected platforms</div>
+                    </div>
+                    <div className="metric-card">
+                        <div className="label">Avg Engagement Rate</div>
+                        <div className="value">{avgEngRate.toFixed(2)}%</div>
+                        <div className="change">(Likes + Comments + Shares) / Views</div>
+                    </div>
+                    <div className="metric-card">
+                        <div className="label">Top Platform (Avg Views)</div>
+                        <div className="value" style={{ textTransform: 'capitalize' }}>{topPlatform}</div>
+                        <div className="change">Highest avg views per post</div>
+                    </div>
+                </div>
+
+                {/* Leaderboard + Best Time to Post */}
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
+                    {/* Top Posts Leaderboard */}
+                    <div className="section-card">
+                        <h3 style={{ marginBottom: '16px' }}>Top Posts Leaderboard</h3>
+                        {topPosts.length === 0 ? (
+                            <p style={{ color: 'var(--text-muted)' }}>No posts to display.</p>
+                        ) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+                                {topPosts.map(post => (
+                                    <div key={post.id} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
+                                        <div style={{ height: '140px', background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                                            {post.thumbnailUrl ? (
+                                                <img src={post.thumbnailUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.8 }} />
+                                            ) : (
+                                                <span style={{ fontSize: '2rem', opacity: 0.3 }}>▶</span>
+                                            )}
+                                            <div style={{
+                                                position: 'absolute', top: 8, left: 8, width: 28, height: 28, borderRadius: '50%',
+                                                background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                color: getPlatformColor(post.platform), fontWeight: 700, fontSize: '0.75rem'
+                                            }}>
+                                                {post.platform === 'instagram' ? 'IG' : 'YT'}
+                                            </div>
+                                        </div>
+                                        <div style={{ padding: '12px' }}>
+                                            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                                                {format(parseISO(post.publishedAt), 'MMM d, yyyy')}
+                                            </div>
+                                            <div style={{ fontSize: '0.8125rem', fontWeight: 500, marginBottom: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={post.title || post.description}>
+                                                {post.title || post.description || 'Untitled'}
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                <span>{formatNumber(post.views)} views</span>
+                                                <span>{formatNumber(post.likes)} likes</span>
+                                                <a href={post.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-primary)', textDecoration: 'none' }}>View</a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Best Time to Post */}
+                    <div className="section-card" style={{ display: 'flex', flexDirection: 'column' }}>
+                        <h3 style={{ marginBottom: '4px' }}>Best Time to Post</h3>
+                        <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '16px' }}>Engagement rate by hour</p>
+                        <div style={{ flex: 1, minHeight: '200px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={bestTimeData}>
+                                    <defs>
+                                        <linearGradient id="colorEngContent" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="var(--accent-primary)" stopOpacity={0.8} />
+                                            <stop offset="95%" stopColor="var(--accent-primary)" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
+                                    <XAxis dataKey="hour" tick={{ fill: '#A1A1AA', fontSize: 10 }} tickMargin={6} />
+                                    <YAxis tick={{ fill: '#A1A1AA', fontSize: 10 }} tickFormatter={(v) => `${v}%`} width={35} />
+                                    <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value: any) => [`${value}%`, 'Avg Engagement']} />
+                                    <Area type="monotone" dataKey="engagementRate" stroke="var(--accent-primary)" fillOpacity={1} fill="url(#colorEngContent)" />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Unified Master Table */}
+                <div className="section-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                        <h3 style={{ margin: 0 }}>All Content</h3>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', background: 'rgba(255,255,255,0.05)', padding: '3px', borderRadius: '8px' }}>
+                            {(['all', 'instagram', 'youtube'] as const).map(pf => (
+                                <button key={pf} onClick={() => setContentPlatformFilter(pf)} style={{
+                                    padding: '6px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                                    fontSize: '0.8125rem', transition: 'all 0.2s',
+                                    background: contentPlatformFilter === pf
+                                        ? pf === 'instagram' ? 'rgba(225,48,108,0.15)' : pf === 'youtube' ? 'rgba(255,0,0,0.15)' : 'rgba(255,255,255,0.12)'
+                                        : 'transparent',
+                                    color: contentPlatformFilter === pf
+                                        ? pf === 'instagram' ? '#E1306C' : pf === 'youtube' ? '#FF0000' : '#fff'
+                                        : 'var(--text-muted)',
+                                    fontWeight: contentPlatformFilter === pf ? 600 : 400,
+                                }}>
+                                    {pf === 'all' ? 'All' : pf === 'instagram' ? 'IG' : 'YT'}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="data-table-wrapper"><table className="data-table">
+                        <thead>
+                            <tr>
+                                <th>Post</th>
+                                <th style={{ cursor: 'pointer' }} onClick={() => handleContentSort('platform')}>
+                                    Platform {contentSortKey === 'platform' && (contentSortOrder === 'asc' ? '↑' : '↓')}
+                                </th>
+                                <th style={{ cursor: 'pointer' }} onClick={() => handleContentSort('publishedAt')}>
+                                    Date {contentSortKey === 'publishedAt' && (contentSortOrder === 'asc' ? '↑' : '↓')}
+                                </th>
+                                <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleContentSort('views')}>
+                                    Views {contentSortKey === 'views' && (contentSortOrder === 'asc' ? '↑' : '↓')}
+                                </th>
+                                <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleContentSort('likes')}>
+                                    Likes {contentSortKey === 'likes' && (contentSortOrder === 'asc' ? '↑' : '↓')}
+                                </th>
+                                <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleContentSort('comments')}>
+                                    Comments {contentSortKey === 'comments' && (contentSortOrder === 'asc' ? '↑' : '↓')}
+                                </th>
+                                <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleContentSort('engagementRate')}>
+                                    Eng. Rate {contentSortKey === 'engagementRate' && (contentSortOrder === 'asc' ? '↑' : '↓')}
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {sorted.length === 0 ? (
+                                <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>No posts match the selected filter.</td></tr>
+                            ) : sorted.map(post => (
+                                <tr key={post.id}>
+                                    <td style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        <a href={post.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-primary)', textDecoration: 'none' }}>
+                                            {post.title || post.description || 'Untitled'}
+                                        </a>
+                                        <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                            {post.mediaType === 'VIDEO' || post.mediaType === 'SHORT' ? 'Video' : 'Static'}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <span style={{ color: getPlatformColor(post.platform), fontWeight: 500, textTransform: 'capitalize' }}>
+                                            {post.platform}
+                                        </span>
+                                    </td>
+                                    <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                        {format(parseISO(post.publishedAt), 'MMM d, yyyy')}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>{formatNumber(post.views)}</td>
+                                    <td style={{ textAlign: 'right' }}>{formatNumber(post.likes)}</td>
+                                    <td style={{ textAlign: 'right' }}>{formatNumber(post.comments)}</td>
+                                    <td style={{ textAlign: 'right' }}>
+                                        <span style={{
+                                            padding: '2px 8px', borderRadius: '6px', fontSize: '0.8125rem', fontWeight: 500,
+                                            background: post.engagementRate >= 5 ? 'rgba(34,197,94,0.15)' : post.engagementRate >= 2 ? 'rgba(234,179,8,0.15)' : 'rgba(255,255,255,0.05)',
+                                            color: post.engagementRate >= 5 ? '#22c55e' : post.engagementRate >= 2 ? '#eab308' : 'var(--text-muted)',
+                                        }}>
+                                            {post.engagementRate.toFixed(1)}%
+                                        </span>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table></div>
+                </div>
+            </>
+        );
+    };
+
+
     // --- Render ---
     return (
         <>
@@ -839,6 +1144,7 @@ export default function OrganicPage() {
                     {activeTab === 'Instagram' && renderInstagram()}
                     {activeTab === 'Facebook' && renderFacebook()}
                     {activeTab === 'YouTube' && renderYouTube()}
+                    {activeTab === 'Content' && renderContent()}
                 </>
             )}
         </>

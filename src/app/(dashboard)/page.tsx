@@ -50,7 +50,8 @@ export default function OverviewPage() {
     const [igDataRaw, setIgDataRaw] = useState<any>(null);
     const [fbDataRaw, setFbDataRaw] = useState<any>(null);
     const [socialLoading, setSocialLoading] = useState(true);
-    const [googleRating, setGoogleRating] = useState<{ rating: string; reviews: string; loading: boolean }>({ rating: '--', reviews: '--', loading: true });
+    const [googleRating, setGoogleRating] = useState<{ rating: string; reviews: string; fiveStarRate: string; needsAttention: number; loading: boolean }>({ rating: '--', reviews: '--', fiveStarRate: '--', needsAttention: 0, loading: true });
+    const [searchData, setSearchData] = useState<{ clicks: number; impressions: number; position: number; loading: boolean }>({ clicks: 0, impressions: 0, position: 0, loading: true });
 
     const user = session?.user as Record<string, unknown> | undefined;
     const isAdmin = user?.isAdmin === true;
@@ -80,9 +81,15 @@ export default function OverviewPage() {
                 const res = await fetch('/api/reputation/reviews?location=all');
                 const data = await res.json();
                 if (data.metrics) {
+                    const reviews = data.reviews || [];
+                    const fiveStarCount = reviews.filter((r: any) => r.rating === 5).length;
+                    const fiveStarRate = reviews.length > 0 ? Math.round((fiveStarCount / reviews.length) * 100) : 0;
+                    const needsAttention = reviews.filter((r: any) => r.rating <= 3).length;
                     setGoogleRating({
                         rating: data.metrics.averageRating?.toFixed(1) || '--',
                         reviews: formatNumber(data.metrics.totalReviews || 0),
+                        fiveStarRate: `${fiveStarRate}%`,
+                        needsAttention,
                         loading: false,
                     });
                 } else {
@@ -91,6 +98,20 @@ export default function OverviewPage() {
             } catch (error) {
                 console.error('[Overview] Failed to fetch Google rating:', error);
                 setGoogleRating(prev => ({ ...prev, loading: false }));
+            }
+        };
+
+        const fetchSearchConsole = async () => {
+            try {
+                const res = await fetch('/api/reputation/search?period=30');
+                const data = await res.json();
+                if (data.totals) {
+                    setSearchData({ clicks: data.totals.clicks, impressions: data.totals.impressions, position: data.totals.position, loading: false });
+                } else {
+                    setSearchData(prev => ({ ...prev, loading: false }));
+                }
+            } catch {
+                setSearchData(prev => ({ ...prev, loading: false }));
             }
         };
 
@@ -159,6 +180,7 @@ export default function OverviewPage() {
 
         fetchMetrics();
         fetchGoogleRating();
+        fetchSearchConsole();
         fetchSocial();
     }, [period]);
 
@@ -267,7 +289,7 @@ export default function OverviewPage() {
             </div>
 
             {/* KPI Cards */}
-            <div className="metrics-grid" style={{ gridTemplateColumns: `repeat(4, 1fr)` }}>
+            <div className="metrics-grid" style={{ gridTemplateColumns: `repeat(3, 1fr)` }}>
                 <div className="metric-card">
                     <div className="label">Total Followers</div>
                     <div className="value">{socialLoading ? <Skeleton className="h-9 w-24" /> : totalFollowers}</div>
@@ -292,10 +314,44 @@ export default function OverviewPage() {
                     <div className="value">{metrics.leads.loading ? <Skeleton className="h-9 w-16" /> : metrics.leads.val}</div>
                     <div className="change">From MindBody</div>
                 </div>
-                <div className="metric-card">
-                    <div className="label">Google Rating</div>
-                    <div className="value">{googleRating.loading ? <Skeleton className="h-9 w-16" /> : <>{googleRating.rating} <span style={{ fontSize: '0.75em', color: '#eab308' }}>&#9733;</span></>}</div>
-                    <div className="change">{googleRating.loading ? '' : `${googleRating.reviews} reviews`}</div>
+            </div>
+
+            {/* Reputation & Search */}
+            <div className="section-card">
+                <h3>Reputation &amp; Search</h3>
+                <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
+                    <div className="metric-card" style={{ padding: '16px' }}>
+                        <div className="label">Google Rating</div>
+                        <div className="value" style={{ fontSize: '1.5rem' }}>
+                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : <>{googleRating.rating} <span style={{ fontSize: '0.75em', color: '#eab308' }}>&#9733;</span></>}
+                        </div>
+                    </div>
+                    <div className="metric-card" style={{ padding: '16px' }}>
+                        <div className="label">Total Reviews</div>
+                        <div className="value" style={{ fontSize: '1.5rem' }}>
+                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : googleRating.reviews}
+                        </div>
+                    </div>
+                    <div className="metric-card" style={{ padding: '16px' }}>
+                        <div className="label">5-Star Rate</div>
+                        <div className="value" style={{ fontSize: '1.5rem', color: '#22c55e' }}>
+                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : googleRating.fiveStarRate}
+                        </div>
+                    </div>
+                    <div className="metric-card" style={{ padding: '16px' }}>
+                        <div className="label">Search Clicks</div>
+                        <div className="value" style={{ fontSize: '1.5rem' }}>
+                            {searchData.loading ? <Skeleton className="h-7 w-14" /> : formatNumber(searchData.clicks)}
+                        </div>
+                        <div className="change">Last 30 days</div>
+                    </div>
+                    <div className="metric-card" style={{ padding: '16px' }}>
+                        <div className="label">Avg Position</div>
+                        <div className="value" style={{ fontSize: '1.5rem' }}>
+                            {searchData.loading ? <Skeleton className="h-7 w-14" /> : searchData.position.toFixed(1)}
+                        </div>
+                        <div className="change">Google Search</div>
+                    </div>
                 </div>
             </div>
 
