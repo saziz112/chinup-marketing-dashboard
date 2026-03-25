@@ -132,17 +132,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </div>
 
                     <nav className="sidebar-nav">
-                        {filteredNav.map(item => (
-                            <Link
-                                key={item.id}
-                                href={item.href}
-                                className={`nav-item ${isActive(item.href) ? 'active' : ''}`}
-                                onClick={() => setSidebarOpen(false)}
-                            >
-                                {ICONS[item.icon]}
-                                {item.label}
-                            </Link>
-                        ))}
+                        {filteredNav.map((item, index) => {
+                            const prevItem = index > 0 ? filteredNav[index - 1] : null;
+                            const showGroupHeader = item.group && item.group !== prevItem?.group;
+
+                            return (
+                                <div key={item.id}>
+                                    {showGroupHeader && (
+                                        <div className="nav-group-header">{item.group}</div>
+                                    )}
+                                    <Link
+                                        href={item.href}
+                                        className={`nav-item ${isActive(item.href) ? 'active' : ''}`}
+                                        onClick={() => setSidebarOpen(false)}
+                                    >
+                                        {ICONS[item.icon]}
+                                        {item.label}
+                                    </Link>
+                                </div>
+                            );
+                        })}
                     </nav>
 
                     <div className="sidebar-footer">

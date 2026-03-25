@@ -25,7 +25,7 @@ export interface UserRecord {
 
 export async function getUserByEmail(email: string) {
     const { rows } = await sql`
-        SELECT email, password_hash, staff_id, role, must_change_password, is_active
+        SELECT email, display_name, password_hash, staff_id, role, must_change_password, is_active
         FROM users WHERE LOWER(email) = LOWER(${email}) LIMIT 1
     `;
     return rows[0] || null;
@@ -79,9 +79,9 @@ export async function seedUsers() {
     for (const user of USERS) {
         const hash = user.role === 'admin' ? adminHash : managerHash;
         await sql`
-            INSERT INTO users (email, password_hash, staff_id, role, must_change_password)
-            VALUES (${user.email.toLowerCase()}, ${hash}, ${user.id}, ${user.role}, TRUE)
-            ON CONFLICT (email) DO NOTHING
+            INSERT INTO users (email, display_name, password_hash, staff_id, role, must_change_password)
+            VALUES (${user.email.toLowerCase()}, ${user.displayName}, ${hash}, ${user.id}, ${user.role}, TRUE)
+            ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name
         `;
     }
 }

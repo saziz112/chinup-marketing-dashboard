@@ -266,6 +266,16 @@ body {
   gap: 2px;
 }
 
+.nav-group-header {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 16px 12px 4px;
+  opacity: 0.6;
+}
+
 .nav-item {
   display: flex;
   align-items: center;

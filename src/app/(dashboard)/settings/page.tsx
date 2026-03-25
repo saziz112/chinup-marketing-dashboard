@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 interface UserRow {
     id: number;
     email: string;
+    display_name: string | null;
     staff_id: string;
     role: string;
     last_login_at: string | null;
@@ -418,7 +419,7 @@ export default function SettingsPage() {
                                 <table className="data-table">
                                     <thead>
                                         <tr>
-                                            <th>Email</th>
+                                            <th>User</th>
                                             <th>Role</th>
                                             <th>Last Login</th>
                                             <th>Status</th>
@@ -431,9 +432,14 @@ export default function SettingsPage() {
                                             const isSelf = (user?.staffId as string) === u.staff_id;
                                             return (
                                                 <tr key={u.id}>
-                                                    <td style={{ fontWeight: 600 }}>
-                                                        {u.email}
-                                                        {isSelf && <span style={{ marginLeft: '8px', fontSize: '0.6875rem', color: 'var(--accent)', fontWeight: 700 }}>YOU</span>}
+                                                    <td>
+                                                        <div style={{ fontWeight: 600 }}>
+                                                            {u.display_name || u.email}
+                                                            {isSelf && <span style={{ marginLeft: '8px', fontSize: '0.6875rem', color: 'var(--accent)', fontWeight: 700 }}>YOU</span>}
+                                                        </div>
+                                                        {u.display_name && (
+                                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{u.email}</div>
+                                                        )}
                                                     </td>
                                                     <td>
                                                         <span className={`badge ${u.role === 'admin' ? 'success' : 'info'}`}>

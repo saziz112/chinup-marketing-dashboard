@@ -22,7 +22,7 @@ export async function GET() {
 
     try {
         const { rows } = await sql`
-            SELECT id, email, staff_id, role, last_login_at, is_active, created_at, failed_login_attempts
+            SELECT id, email, display_name, staff_id, role, last_login_at, is_active, created_at, failed_login_attempts
             FROM users
             ORDER BY created_at ASC
         `;

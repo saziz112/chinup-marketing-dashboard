@@ -23,6 +23,7 @@ export async function POST() {
             CREATE TABLE users (
                 id SERIAL PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL,
+                display_name VARCHAR(100),
                 password_hash VARCHAR(255) NOT NULL,
                 staff_id VARCHAR(50) UNIQUE NOT NULL,
                 role VARCHAR(50) NOT NULL,

@@ -60,18 +60,19 @@ export interface NavItem {
     id: string;
     label: string;
     href: string;
-    icon: string; // SVG path or emoji placeholder
+    icon: string;
     adminOnly?: boolean;
+    group?: string;
 }
 
 export const NAV_ITEMS: NavItem[] = [
     { id: 'overview', label: 'Overview', href: '/', icon: 'home' },
-    { id: 'organic', label: 'Organic', href: '/organic', icon: 'trending-up' },
-    { id: 'ads', label: 'Paid Ads', href: '/ads', icon: 'dollar-sign' },
-    { id: 'attribution', label: 'Leads & Pipeline', href: '/attribution', icon: 'git-branch' },
-    { id: 'reputation', label: 'Reputation', href: '/reputation', icon: 'star' },
-    { id: 'content', label: 'Content', href: '/content', icon: 'layout' },
-    { id: 'publish', label: 'Publish', href: '/publish', icon: 'send' },
-    { id: 'creatives', label: 'Creatives', href: '/creatives', icon: 'sparkles' },
+    { id: 'organic', label: 'Organic', href: '/organic', icon: 'trending-up', group: 'Analytics' },
+    { id: 'ads', label: 'Paid Ads', href: '/ads', icon: 'dollar-sign', group: 'Analytics' },
+    { id: 'attribution', label: 'Leads & Pipeline', href: '/attribution', icon: 'git-branch', group: 'Analytics' },
+    { id: 'reputation', label: 'Reputation', href: '/reputation', icon: 'star', group: 'Analytics' },
+    { id: 'content', label: 'Content', href: '/content', icon: 'layout', group: 'Content' },
+    { id: 'publish', label: 'Publish', href: '/publish', icon: 'send', group: 'Content' },
+    { id: 'creatives', label: 'Creatives', href: '/creatives', icon: 'sparkles', group: 'Content' },
     { id: 'settings', label: 'Settings', href: '/settings', icon: 'settings', adminOnly: true },
 ];

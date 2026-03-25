@@ -41,6 +41,7 @@ async function initUsersTable() {
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
             email VARCHAR(255) UNIQUE NOT NULL,
+            display_name VARCHAR(100),
             password_hash VARCHAR(255) NOT NULL,
             staff_id VARCHAR(50) UNIQUE NOT NULL,
             role VARCHAR(30) NOT NULL DEFAULT 'marketing_manager',
@@ -55,6 +56,10 @@ async function initUsersTable() {
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_users_staff_id ON users(staff_id)`;
+    // Self-migration: add display_name for existing DBs + backfill known users
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100)`.catch(() => {});
+    await sql`UPDATE users SET display_name = 'Sam Aziz' WHERE email = 'sam.aziz@chinupaesthetics.com' AND display_name IS NULL`.catch(() => {});
+    await sql`UPDATE users SET display_name = 'Sharia Philadelphia' WHERE email = 'sharia@chinupaesthetics.com' AND display_name IS NULL`.catch(() => {});
 }
 
 async function initSocialAccountsTable() {

@@ -5,7 +5,6 @@
 
 import type { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import { USERS } from '@/lib/config';
 import { getUserByEmail, verifyPassword, recordSuccessfulLogin, recordFailedLogin } from '@/lib/users';
 
 export const authOptions: NextAuthOptions = {
@@ -32,15 +31,19 @@ export const authOptions: NextAuthOptions = {
                         return null;
                     }
 
-                    // Record successful login
-                    await recordSuccessfulLogin(dbUser.staff_id).catch(console.error);
+                    // Record successful login (non-blocking — login still succeeds if recording fails)
+                    try {
+                        await recordSuccessfulLogin(dbUser.staff_id);
+                    } catch (loginRecordErr) {
+                        console.warn('[Auth] Failed to record login for', dbUser.staff_id, loginRecordErr);
+                    }
 
                     return {
                         id: dbUser.staff_id,
                         email: dbUser.email,
-                        name: undefined, // Will be fetched from Mindbody later if needed
+                        name: dbUser.display_name || undefined,
                         image: dbUser.must_change_password ? 'MUST_CHANGE' : null,
-                        role: dbUser.role, // Attach role straight from Postgres
+                        role: dbUser.role,
                     } as any;
                 } catch (error) {
                     console.error('Auth error:', error);
