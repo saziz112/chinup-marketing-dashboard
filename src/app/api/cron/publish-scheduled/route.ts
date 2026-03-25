@@ -6,6 +6,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { publishToMultiplePlatforms } from '@/lib/integrations/meta-publisher';
 import { archiveOldPosts } from '@/lib/content-publisher';
 
@@ -14,9 +16,17 @@ export async function GET(req: NextRequest) {
     const authHeader = req.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
 
-    // In production, verify the cron secret. In dev, allow unauthenticated.
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (cronSecret) {
+        if (authHeader !== `Bearer ${cronSecret}`) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+    } else {
+        // No cron secret: require admin session as fallback
+        const session = await getServerSession(authOptions);
+        const user = session?.user as Record<string, unknown> | undefined;
+        if (!user?.isAdmin) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
     }
 
     try {

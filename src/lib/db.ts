@@ -31,6 +31,9 @@ export async function initAllTables() {
         initMbClientsCacheTable(),
         initGhlContactsMapTable(),
         initApiUsageMonthlyTable(),
+        initResearchTrendsTable(),
+        initResearchCalendarsTable(),
+        initResearchSocialCacheTable(),
     ]);
     // Phase 2: tables with FK dependencies
     await initCampaignContactsTable();
@@ -495,4 +498,48 @@ async function initApiUsageMonthlyTable() {
             PRIMARY KEY (api_name, month_key)
         )
     `;
+}
+
+// --- Phase 28: Research Section Tables ---
+
+async function initResearchTrendsTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS research_trends (
+            id SERIAL PRIMARY KEY,
+            month INT NOT NULL,
+            year INT NOT NULL,
+            focus VARCHAR(50) DEFAULT 'all',
+            trends_data JSONB NOT NULL,
+            created_by VARCHAR(255),
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_research_trends_month ON research_trends(year, month)`;
+}
+
+async function initResearchCalendarsTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS research_calendars (
+            id SERIAL PRIMARY KEY,
+            month INT NOT NULL,
+            year INT NOT NULL,
+            calendar_data JSONB NOT NULL,
+            created_by VARCHAR(255),
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_research_calendars_month ON research_calendars(year, month)`;
+}
+
+async function initResearchSocialCacheTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS research_social_cache (
+            cache_key VARCHAR(100) PRIMARY KEY,
+            source VARCHAR(30) NOT NULL,
+            cache_data JSONB NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_research_social_cache_expires ON research_social_cache(expires_at)`;
 }
