@@ -24,11 +24,20 @@ export interface UserRecord {
 // --- Auth Queries ---
 
 export async function getUserByEmail(email: string) {
-    const { rows } = await sql`
-        SELECT email, display_name, password_hash, staff_id, role, must_change_password, is_active
-        FROM users WHERE LOWER(email) = LOWER(${email}) LIMIT 1
-    `;
-    return rows[0] || null;
+    try {
+        const { rows } = await sql`
+            SELECT email, display_name, password_hash, staff_id, role, must_change_password, is_active
+            FROM users WHERE LOWER(email) = LOWER(${email}) LIMIT 1
+        `;
+        return rows[0] || null;
+    } catch {
+        // Fallback if display_name column doesn't exist yet
+        const { rows } = await sql`
+            SELECT email, password_hash, staff_id, role, must_change_password, is_active
+            FROM users WHERE LOWER(email) = LOWER(${email}) LIMIT 1
+        `;
+        return rows[0] || null;
+    }
 }
 
 export async function verifyPassword(plaintext: string, hash: string): Promise<boolean> {

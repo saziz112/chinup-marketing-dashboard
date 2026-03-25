@@ -21,6 +21,11 @@ export async function GET() {
     }
 
     try {
+        // Self-migration: ensure display_name column exists before querying it
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100)`.catch(() => {});
+        await sql`UPDATE users SET display_name = 'Sam Aziz' WHERE email = 'sam.aziz@chinupaesthetics.com' AND display_name IS NULL`.catch(() => {});
+        await sql`UPDATE users SET display_name = 'Sharia Philadelphia' WHERE email = 'sharia@chinupaesthetics.com' AND display_name IS NULL`.catch(() => {});
+
         const { rows } = await sql`
             SELECT id, email, display_name, staff_id, role, last_login_at, is_active, created_at, failed_login_attempts
             FROM users
