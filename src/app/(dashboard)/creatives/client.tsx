@@ -220,6 +220,10 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
     const [pollCount, setPollCount] = useState(0);
     const [completedCount, setCompletedCount] = useState(0);
 
+    // Research pipeline: caption/platforms to forward to Publish
+    const [researchCaption, setResearchCaption] = useState<string | null>(null);
+    const [researchPlatforms, setResearchPlatforms] = useState<string[] | null>(null);
+
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // Apply prefill from regenerate
@@ -233,6 +237,20 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
             onPrefillConsumed();
         }
     }, [prefill, onPrefillConsumed]);
+
+    // Read Research → Creatives prefill from sessionStorage
+    useEffect(() => {
+        try {
+            const raw = sessionStorage.getItem('research_prefill');
+            if (raw) {
+                const data = JSON.parse(raw);
+                if (data.prompt) setPrompt(data.prompt);
+                if (data.caption) setResearchCaption(data.caption);
+                if (data.platforms) setResearchPlatforms(data.platforms);
+                sessionStorage.removeItem('research_prefill');
+            }
+        } catch { /* ignore parse errors */ }
+    }, []);
 
     // Cleanup polling on unmount
     useEffect(() => {
@@ -367,6 +385,13 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
     };
 
     const handleSendToPublish = (url: string) => {
+        // Forward Research caption/platforms to Publish via sessionStorage
+        if (researchCaption || researchPlatforms) {
+            sessionStorage.setItem('research_prefill', JSON.stringify({
+                caption: researchCaption || undefined,
+                platforms: researchPlatforms || undefined,
+            }));
+        }
         router.push(`/publish?mediaUrl=${encodeURIComponent(url)}`);
     };
 

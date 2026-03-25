@@ -151,8 +151,8 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
     const [caption, setCaption] = useState('');
     const [platforms, setPlatforms] = useState<Platform[]>([]);
     const [postType, setPostType] = useState<PostType>('feed');
-    const [mediaUrl, setMediaUrl] = useState('');
-    const [mediaPreview, setMediaPreview] = useState<string | null>(null);
+    const [mediaUrls, setMediaUrls] = useState<string[]>([]);
+    const [mediaPreviews, setMediaPreviews] = useState<string[]>([]);
     const [mediaType, setMediaType] = useState<'photo' | 'video' | null>(null);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
@@ -173,13 +173,27 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const csvFileRef = useRef<HTMLInputElement>(null);
 
-    // Pre-fill media from query param
+    // Pre-fill from query params (mediaUrl from Creatives) + sessionStorage (from Research)
     useEffect(() => {
         const prefillUrl = searchParams.get('mediaUrl');
         if (prefillUrl) {
-            setMediaUrl(prefillUrl);
-            setMediaPreview(prefillUrl);
+            setMediaUrls([prefillUrl]);
+            setMediaPreviews([prefillUrl]);
             setMediaType(prefillUrl.match(/\.(mp4|mov|webm)$/i) ? 'video' : 'photo');
+        }
+
+        // Read research prefill from sessionStorage
+        try {
+            const prefill = JSON.parse(sessionStorage.getItem('research_prefill') || 'null');
+            if (prefill) {
+                if (prefill.caption) setCaption(prefill.caption);
+                if (prefill.platforms) setPlatforms(prefill.platforms);
+                if (prefill.postType) setPostType(prefill.postType);
+                sessionStorage.removeItem('research_prefill');
+            }
+        } catch { /* ignore parse errors */ }
+
+        if (prefillUrl) {
             window.history.replaceState({}, '', '/publish');
         }
     }, [searchParams]);
@@ -190,9 +204,9 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
             setCaption(editingPost.caption || '');
             setPlatforms(editingPost.platforms || []);
             setPostType((editingPost.postType as PostType) || 'feed');
-            if (editingPost.mediaUrls?.[0]) {
-                setMediaUrl(editingPost.mediaUrls[0]);
-                setMediaPreview(editingPost.mediaUrls[0]);
+            if (editingPost.mediaUrls?.length) {
+                setMediaUrls(editingPost.mediaUrls);
+                setMediaPreviews(editingPost.mediaUrls);
                 setMediaType(editingPost.mediaUrls[0].match(/\.(mp4|mov|webm)$/i) ? 'video' : 'photo');
             }
             if (editingPost.scheduledFor) {
@@ -213,60 +227,96 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
         setPlatforms(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
     };
 
-    const uploadFile = async (file: File) => {
+    const uploadFiles = async (files: File[]) => {
+        const maxImages = 10;
+        const remaining = maxImages - mediaUrls.length;
+        if (remaining <= 0) {
+            setUploadError(`Maximum ${maxImages} images allowed for carousel`);
+            return;
+        }
+        const batch = files.slice(0, remaining);
+
         setUploading(true);
         setUploadError(null);
-        setMediaPreview(URL.createObjectURL(file));
-        setMediaType(file.type.startsWith('video/') ? 'video' : 'photo');
+
+        // Detect type from first file
+        const firstType = batch[0]?.type.startsWith('video/') ? 'video' : 'photo';
+        if (!mediaType) setMediaType(firstType as 'photo' | 'video');
+
+        // Add previews immediately
+        const newPreviews = batch.map(f => URL.createObjectURL(f));
+        setMediaPreviews(prev => [...prev, ...newPreviews]);
 
         try {
-            const ext = file.name.split('.').pop() || 'jpg';
-            const cleanName = file.name
-                .replace(/\.[^/.]+$/, '')
-                .replace(/[^a-zA-Z0-9-_]/g, '_')
-                .substring(0, 50);
-            const filename = `publish/${cleanName}_${Date.now()}.${ext}`;
+            const uploadedUrls: string[] = [];
+            for (const file of batch) {
+                const ext = file.name.split('.').pop() || 'jpg';
+                const cleanName = file.name
+                    .replace(/\.[^/.]+$/, '')
+                    .replace(/[^a-zA-Z0-9-_]/g, '_')
+                    .substring(0, 50);
+                const filename = `publish/${cleanName}_${Date.now()}_${Math.random().toString(36).substr(2, 4)}.${ext}`;
 
-            const blob = await upload(filename, file, {
-                access: 'public',
-                handleUploadUrl: '/api/upload/token',
+                const blob = await upload(filename, file, {
+                    access: 'public',
+                    handleUploadUrl: '/api/upload/token',
+                });
+                uploadedUrls.push(blob.url);
+            }
+
+            setMediaUrls(prev => [...prev, ...uploadedUrls]);
+            // Replace local previews with uploaded URLs
+            setMediaPreviews(prev => {
+                const existing = prev.slice(0, prev.length - newPreviews.length);
+                return [...existing, ...uploadedUrls];
             });
-
-            setMediaUrl(blob.url);
         } catch (err: any) {
             setUploadError(err.message || 'Upload failed');
-            setMediaPreview(null);
-            setMediaType(null);
+            // Remove failed previews
+            setMediaPreviews(prev => prev.slice(0, prev.length - newPreviews.length));
+            newPreviews.forEach(p => URL.revokeObjectURL(p));
         } finally {
             setUploading(false);
         }
     };
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            uploadFile(e.target.files[0]);
+        if (e.target.files && e.target.files.length > 0) {
+            uploadFiles(Array.from(e.target.files));
         }
     };
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         setDragging(false);
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            uploadFile(e.dataTransfer.files[0]);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            uploadFiles(Array.from(e.dataTransfer.files));
+        }
+    };
+
+    const removeMedia = (index: number) => {
+        setMediaUrls(prev => prev.filter((_, i) => i !== index));
+        setMediaPreviews(prev => {
+            const url = prev[index];
+            if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+            return prev.filter((_, i) => i !== index);
+        });
+        if (mediaUrls.length <= 1) {
+            setMediaType(null);
         }
     };
 
     const clearMedia = () => {
-        if (mediaPreview) URL.revokeObjectURL(mediaPreview);
-        setMediaUrl('');
-        setMediaPreview(null);
+        mediaPreviews.forEach(p => { if (p.startsWith('blob:')) URL.revokeObjectURL(p); });
+        setMediaUrls([]);
+        setMediaPreviews([]);
         setMediaType(null);
         setUploadError(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const clearForm = () => {
-        setCaption(''); setPlatforms([]); setPostType('feed'); clearMedia();
+        setCaption(''); setPlatforms([]); setPostType('feed' as PostType); clearMedia();
         setScheduleDate(''); setScheduleTime(''); setFeedback(null); setScheduleError(null);
         setAiSuggestions([]);
         onCancelEdit();
@@ -287,7 +337,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
             setFeedback({ type: 'error', message: 'Reels require a video file (MP4 or MOV).' });
             return;
         }
-        if (postType === 'story' && !mediaUrl) {
+        if (postType === 'story' && mediaUrls.length === 0) {
             setFeedback({ type: 'error', message: 'Stories require a photo or video.' });
             return;
         }
@@ -316,7 +366,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                         platforms,
                         postType,
                         scheduledFor,
-                        mediaUrls: mediaUrl ? [mediaUrl] : [],
+                        mediaUrls,
                         ...(platforms.includes('google-business') && { gbpLocations }),
                     })
                 });
@@ -337,7 +387,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                     body: JSON.stringify({
                         platforms,
                         caption,
-                        mediaUrls: mediaUrl ? [mediaUrl] : [],
+                        mediaUrls,
                         postType,
                         scheduledFor,
                         ...(platforms.includes('google-business') && { gbpLocations }),
@@ -833,43 +883,67 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                         {platforms.includes('instagram') && <span style={{ color: '#E1306C', marginLeft: '8px', fontSize: '0.75rem' }}>Required for Instagram</span>}
                     </label>
 
-                    <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} accept="image/*,video/*" />
+                    <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} accept="image/*,video/*" multiple />
 
-                    {mediaPreview && (
-                        <div style={{ position: 'relative', marginBottom: '12px', display: 'inline-block' }}>
-                            {mediaType === 'video' ? (
-                                <video src={mediaPreview} controls style={{ maxHeight: '200px', maxWidth: '100%', borderRadius: '12px', border: '1px solid var(--border-color)' }} />
-                            ) : (
-                                <img src={mediaPreview} alt="Preview" style={{ maxHeight: '200px', maxWidth: '100%', borderRadius: '12px', border: '1px solid var(--border-color)', objectFit: 'cover' }} />
+                    {/* Media Preview Grid */}
+                    {mediaPreviews.length > 0 && (
+                        <div style={{ marginBottom: '12px' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '8px' }}>
+                                {mediaPreviews.map((preview, idx) => (
+                                    <div key={idx} style={{ position: 'relative', display: 'inline-block' }}>
+                                        {mediaType === 'video' && idx === 0 ? (
+                                            <video src={preview} controls style={{ height: '120px', maxWidth: '200px', borderRadius: '10px', border: '1px solid var(--border-color)' }} />
+                                        ) : (
+                                            <img src={preview} alt={`Media ${idx + 1}`} style={{ height: '120px', width: '120px', borderRadius: '10px', border: '1px solid var(--border-color)', objectFit: 'cover' }} />
+                                        )}
+                                        {/* Upload success badge */}
+                                        {!uploading && mediaUrls[idx] && (
+                                            <div style={{
+                                                position: 'absolute', top: '6px', left: '6px',
+                                                background: 'rgba(34,197,94,0.9)', borderRadius: '50%',
+                                                width: '22px', height: '22px', display: 'flex',
+                                                alignItems: 'center', justifyContent: 'center',
+                                            }}>
+                                                <CheckCircle size={12} style={{ color: '#fff' }} />
+                                            </div>
+                                        )}
+                                        {/* Remove button */}
+                                        {!uploading && (
+                                            <button onClick={() => removeMedia(idx)} style={{
+                                                position: 'absolute', top: '-6px', right: '-6px',
+                                                width: '22px', height: '22px', borderRadius: '50%',
+                                                background: '#ef4444', border: 'none', cursor: 'pointer',
+                                                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                            }}>
+                                                <X size={10} />
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                                {uploading && (
+                                    <div style={{
+                                        height: '120px', width: '120px', borderRadius: '10px',
+                                        background: 'rgba(255,255,255,0.04)', display: 'flex', flexDirection: 'column',
+                                        alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                        border: '1px solid var(--border-color)',
+                                    }}>
+                                        <Loader2 size={20} style={{ color: 'var(--accent)', animation: 'spin 0.8s linear infinite' }} />
+                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.6875rem' }}>Uploading...</span>
+                                    </div>
+                                )}
+                            </div>
+                            {mediaPreviews.length > 1 && (
+                                <p style={{ fontSize: '0.75rem', color: 'var(--accent)', margin: '0 0 4px' }}>
+                                    {mediaPreviews.length} images — will publish as carousel
+                                </p>
                             )}
-                            {uploading && (
-                                <div style={{
-                                    position: 'absolute', inset: 0, borderRadius: '12px',
-                                    background: 'rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column',
-                                    alignItems: 'center', justifyContent: 'center', gap: '8px',
+                            {mediaPreviews.length < 10 && !uploading && (
+                                <button onClick={() => fileInputRef.current?.click()} style={{
+                                    padding: '6px 14px', borderRadius: '8px', fontSize: '0.75rem',
+                                    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                    color: 'var(--text-muted)', cursor: 'pointer',
                                 }}>
-                                    <Loader2 size={24} style={{ color: '#fff', animation: 'spin 0.8s linear infinite' }} />
-                                    <span style={{ color: '#fff', fontSize: '0.8125rem', fontWeight: 500 }}>Uploading...</span>
-                                </div>
-                            )}
-                            {!uploading && mediaUrl && (
-                                <div style={{
-                                    position: 'absolute', top: '8px', left: '8px',
-                                    background: 'rgba(34,197,94,0.9)', borderRadius: '50%',
-                                    width: '28px', height: '28px', display: 'flex',
-                                    alignItems: 'center', justifyContent: 'center',
-                                }}>
-                                    <CheckCircle size={16} style={{ color: '#fff' }} />
-                                </div>
-                            )}
-                            {!uploading && (
-                                <button onClick={clearMedia} style={{
-                                    position: 'absolute', top: '-8px', right: '-8px',
-                                    width: '26px', height: '26px', borderRadius: '50%',
-                                    background: '#ef4444', border: 'none', cursor: 'pointer',
-                                    color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                }}>
-                                    <X size={14} />
+                                    + Add more images
                                 </button>
                             )}
                         </div>
@@ -886,7 +960,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                         </div>
                     )}
 
-                    {!mediaPreview && (
+                    {mediaPreviews.length === 0 && (
                         <div
                             onClick={() => fileInputRef.current?.click()}
                             onDragOver={e => { e.preventDefault(); setDragging(true); }}

@@ -4,7 +4,7 @@
  * Uses Claude Haiku + saved trend topics + historical best-time data.
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@vercel/postgres';
@@ -30,6 +30,39 @@ const KEY_DATES: Record<number, string[]> = {
     11: ['Nov - Black Friday/Cyber Monday deals', 'Nov - Movember / Friendsgiving'],
     12: ['Holiday party season', 'Dec 25 - Christmas', 'Dec 31 - New Year\'s Eve', 'Year-end gift cards'],
 };
+
+// GET /api/research/calendar?month=4&year=2026 — Load saved calendar
+export async function GET(req: NextRequest) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.email) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const month = Number(req.nextUrl.searchParams.get('month'));
+    const year = Number(req.nextUrl.searchParams.get('year'));
+    if (!month || !year) {
+        return NextResponse.json({ error: 'month and year required' }, { status: 400 });
+    }
+
+    try {
+        const result = await sql`
+            SELECT calendar_data, created_at FROM research_calendars
+            WHERE month = ${month} AND year = ${year}
+            ORDER BY created_at DESC LIMIT 1
+        `;
+
+        if (result.rows.length === 0) {
+            return NextResponse.json({ saved: false });
+        }
+
+        const row = result.rows[0];
+        const days = JSON.parse(row.calendar_data || '[]');
+        return NextResponse.json({ saved: true, days, createdAt: row.created_at });
+    } catch (error: any) {
+        console.error('[research/calendar] GET error:', error);
+        return NextResponse.json({ error: 'Failed to load saved calendar' }, { status: 500 });
+    }
+}
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);

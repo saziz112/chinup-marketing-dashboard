@@ -51,7 +51,6 @@ export async function GET(req: NextRequest) {
             const platforms: string[] = JSON.parse(row.platforms || '[]');
             const caption = row.caption || '';
             const mediaUrls: string[] = JSON.parse(row.media_urls || '[]');
-            const mediaUrl = mediaUrls[0] || undefined;
             const metadata = JSON.parse(row.metadata || '{}');
             const gbpLocations: string[] | undefined = metadata.gbpLocations;
 
@@ -59,9 +58,9 @@ export async function GET(req: NextRequest) {
                 // Mark as publishing
                 await sql`UPDATE content_posts SET status = 'PUBLISHING' WHERE id = ${row.id}`;
 
-                // Publish to all platforms — use actual post_type from DB
+                // Publish to all platforms — pass full mediaUrls array for carousel support
                 const postType = row.post_type || 'feed';
-                const results = await publishToMultiplePlatforms(platforms, caption, mediaUrl, undefined, postType, gbpLocations);
+                const results = await publishToMultiplePlatforms(platforms, caption, mediaUrls, undefined, postType, gbpLocations);
 
                 const allSucceeded = results.every(r => r.success);
                 const someSucceeded = results.some(r => r.success);

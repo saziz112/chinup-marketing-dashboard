@@ -467,21 +467,177 @@ export async function publishInstagramStory(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// INSTAGRAM CAROUSEL (up to 10 images)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Instagram Carousel — multi-image post (2-10 images) */
+export async function publishInstagramCarousel(
+    caption: string,
+    imageUrls: string[],
+): Promise<PublishResult> {
+    const igUserId = getOptionalEnv('META_IG_USER_ID');
+    const token = getOptionalEnv('META_PAGE_ACCESS_TOKEN');
+
+    if (!igUserId || !token) {
+        return { success: false, error: 'Instagram not configured.', platform: 'instagram' };
+    }
+    if (imageUrls.length < 2) {
+        return { success: false, error: 'Carousel requires at least 2 images.', platform: 'instagram' };
+    }
+    if (imageUrls.length > 10) {
+        return { success: false, error: 'Carousel supports max 10 images.', platform: 'instagram' };
+    }
+
+    try {
+        // Step 1: Create child containers for each image
+        const childIds: string[] = [];
+        for (const url of imageUrls) {
+            const resizedUrl = await ensureInstagramAspectRatio(url);
+            const childRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    image_url: resizedUrl,
+                    is_carousel_item: true,
+                    access_token: token,
+                }),
+            });
+            const childData = await childRes.json();
+            if (childData.error) {
+                console.error('[Meta Publish IG Carousel] Child container error:', childData.error);
+                return { success: false, error: `Carousel image failed: ${childData.error.message}`, platform: 'instagram' };
+            }
+            if (!childData.id) {
+                return { success: false, error: 'No container ID for carousel image', platform: 'instagram' };
+            }
+            childIds.push(childData.id);
+        }
+
+        // Step 2: Create carousel container
+        const carouselRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                media_type: 'CAROUSEL',
+                children: childIds.join(','),
+                caption,
+                access_token: token,
+            }),
+        });
+        const carouselData = await carouselRes.json();
+
+        if (carouselData.error) {
+            console.error('[Meta Publish IG Carousel] Carousel container error:', carouselData.error);
+            return { success: false, error: carouselData.error.message, platform: 'instagram' };
+        }
+
+        const containerId = carouselData.id;
+        if (!containerId) {
+            return { success: false, error: 'No carousel container ID returned', platform: 'instagram' };
+        }
+
+        // Step 3: Poll container status
+        const status = await pollIGContainer(containerId, token, false);
+        if (status === 'ERROR') return { success: false, error: 'Instagram carousel processing failed.', platform: 'instagram' };
+        if (status === 'IN_PROGRESS') return { success: false, error: 'Instagram carousel still processing.', platform: 'instagram' };
+
+        // Step 4: Publish
+        return publishIGContainer(igUserId, containerId, token);
+    } catch (err: any) {
+        console.error('[Meta Publish IG Carousel] Error:', err);
+        return { success: false, error: err.message, platform: 'instagram' };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FACEBOOK MULTI-PHOTO POST
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Facebook Multi-Photo Post — upload each as unpublished, then combine */
+export async function publishFacebookMultiPhoto(
+    caption: string,
+    imageUrls: string[],
+): Promise<PublishResult> {
+    const pageId = getEnv('META_PAGE_ID');
+    const token = getEnv('META_PAGE_ACCESS_TOKEN');
+
+    if (imageUrls.length < 2) {
+        return { success: false, error: 'Multi-photo post requires at least 2 images.', platform: 'facebook' };
+    }
+
+    try {
+        // Step 1: Upload each photo as unpublished
+        const mediaFbIds: string[] = [];
+        for (const url of imageUrls) {
+            const photoRes = await fetch(`${GRAPH_API_BASE}/${pageId}/photos`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url,
+                    published: false,
+                    access_token: token,
+                }),
+            });
+            const photoData = await photoRes.json();
+            if (photoData.error) {
+                console.error('[Meta Publish FB Multi] Photo upload error:', photoData.error);
+                return { success: false, error: `Photo upload failed: ${photoData.error.message}`, platform: 'facebook' };
+            }
+            if (!photoData.id) {
+                return { success: false, error: 'No photo ID returned from Facebook', platform: 'facebook' };
+            }
+            mediaFbIds.push(photoData.id);
+        }
+
+        // Step 2: Create multi-photo post with attached_media
+        const attachedMedia = mediaFbIds.map(id => ({ media_fbid: id }));
+        const postRes = await fetch(`${GRAPH_API_BASE}/${pageId}/feed`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: caption,
+                attached_media: attachedMedia,
+                access_token: token,
+            }),
+        });
+        const postData = await postRes.json();
+
+        if (postData.error) {
+            console.error('[Meta Publish FB Multi] Post error:', postData.error);
+            return { success: false, error: postData.error.message, platform: 'facebook' };
+        }
+
+        console.log('[Meta Publish FB Multi] Success:', postData.id);
+        return { success: true, postId: postData.id, platform: 'facebook' };
+    } catch (err: any) {
+        console.error('[Meta Publish FB Multi] Error:', err);
+        return { success: false, error: err.message, platform: 'facebook' };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MULTI-PLATFORM PUBLISH
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function publishToMultiplePlatforms(
     platforms: string[],
     caption: string,
-    mediaUrl?: string,
+    mediaUrls?: string | string[],
     mediaType?: 'photo' | 'video',
     postType: PostType = 'feed',
     gbpLocations?: string[],
 ): Promise<PublishResult[]> {
+    // Normalize mediaUrls to array
+    const urls: string[] = Array.isArray(mediaUrls) ? mediaUrls : mediaUrls ? [mediaUrls] : [];
+    const mediaUrl = urls[0] || undefined;
+    const isCarousel = urls.length > 1;
     const results: PublishResult[] = [];
 
     const tasks = platforms.map(async (platform) => {
         if (platform === 'facebook') {
+            if (isCarousel) {
+                return publishFacebookMultiPhoto(caption, urls);
+            }
             if (postType === 'reel') {
                 if (!mediaUrl) return { success: false, error: 'Facebook Reels require a video.', platform: 'facebook' as const };
                 return publishFacebookReel(caption, mediaUrl);
@@ -494,6 +650,9 @@ export async function publishToMultiplePlatforms(
         }
 
         if (platform === 'instagram') {
+            if (isCarousel) {
+                return publishInstagramCarousel(caption, urls);
+            }
             if (!mediaUrl || !mediaUrl.startsWith('http')) {
                 return { success: false, error: 'Instagram requires media. Upload a file first.', platform: 'instagram' as const };
             }

@@ -1,7 +1,8 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 
 type ResearchTab = 'Trend Scout' | 'Content Calendar' | 'Market Intel';
 
@@ -80,8 +81,14 @@ interface MarketData {
     promotionIdeas: Array<{ name: string; offer: string; audience: string; angle: string }>;
 }
 
+const VIDEO_FORMATS = ['reel', 'story', 'video', 'short', 'youtube video', 'youtube short', 'tiktok'];
+function isVideoFormat(format: string): boolean {
+    return VIDEO_FORMATS.some(v => format.toLowerCase().includes(v));
+}
+
 export default function ResearchPage() {
     const { data: session } = useSession();
+    const router = useRouter();
     const [activeTab, setActiveTab] = useState<ResearchTab>('Trend Scout');
 
     // Shared month/year state
@@ -114,6 +121,32 @@ export default function ResearchPage() {
     const [tiktokLoading, setTiktokLoading] = useState(false);
     const [marketLoading, setMarketLoading] = useState(false);
     const [marketFetched, setMarketFetched] = useState(false);
+
+    // --- Calendar Queue state ---
+    const [queueLoading, setQueueLoading] = useState(false);
+    const [queueResult, setQueueResult] = useState<{ created: number; failed: number; replaced: number } | null>(null);
+    const [calendarLoadingFromDB, setCalendarLoadingFromDB] = useState(false);
+
+    // --- Calendar Persistence: auto-load saved calendar on tab switch / month change ---
+    const loadSavedCalendar = useCallback(async (m: number, y: number) => {
+        setCalendarLoadingFromDB(true);
+        try {
+            const res = await fetch(`/api/research/calendar?month=${m}&year=${y}`);
+            const data = await res.json();
+            if (data.saved && data.days?.length) {
+                setCalendarDays(data.days);
+                const dt = new Date(data.createdAt);
+                setCalendarLastGenerated(dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString());
+            }
+        } catch { /* no saved calendar */ }
+        setCalendarLoadingFromDB(false);
+    }, []);
+
+    useEffect(() => {
+        if (activeTab === 'Content Calendar' && calendarDays.length === 0) {
+            loadSavedCalendar(selectedMonth, selectedYear);
+        }
+    }, [activeTab, selectedMonth, selectedYear, loadSavedCalendar]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // --- Trend Scout ---
     const generateTrends = async () => {
@@ -325,7 +358,7 @@ export default function ResearchPage() {
                                 </span>
                             </div>
 
-                            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                                 <span style={badgeStyle(CATEGORY_COLORS[topic.category] || '#888')}>
                                     {topic.category}
                                 </span>
@@ -335,21 +368,57 @@ export default function ResearchPage() {
                                 <span style={badgeStyle('#888')}>
                                     {topic.format}
                                 </span>
+                                <span style={{
+                                    fontSize: '0.5625rem', fontWeight: 700, padding: '2px 6px', borderRadius: 6,
+                                    background: isVideoFormat(topic.format) ? 'rgba(239,68,68,0.12)' : 'rgba(56,189,248,0.12)',
+                                    color: isVideoFormat(topic.format) ? '#ef4444' : '#38bdf8',
+                                    textTransform: 'uppercase', letterSpacing: '0.05em',
+                                }}>
+                                    {isVideoFormat(topic.format) ? 'Video' : 'Image'}
+                                </span>
                             </div>
 
                             <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', margin: '0 0 12px', lineHeight: 1.5 }}>
                                 {topic.rationale}
                             </p>
 
-                            <button
-                                style={{ ...smallBtnStyle, width: '100%' }}
-                                onClick={() => {
-                                    // Will be wired up later to save to calendar or send to publish
-                                    alert('Coming soon: Save to Calendar / Send to Publish');
-                                }}
-                            >
-                                Use This
-                            </button>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                    style={{ ...smallBtnStyle, flex: 1 }}
+                                    onClick={() => {
+                                        const platformMap: Record<string, string> = { 'IG': 'instagram', 'FB': 'facebook', 'YT': 'youtube' };
+                                        const postTypeMap: Record<string, string> = {
+                                            'Reel': 'reel', 'Story': 'story', 'Post': 'feed', 'Carousel': 'feed',
+                                            'Image': 'feed', 'Video': 'feed', 'Short': 'reel',
+                                        };
+                                        sessionStorage.setItem('research_prefill', JSON.stringify({
+                                            caption: `${topic.title}\n\n${topic.rationale}`,
+                                            platforms: [platformMap[topic.platform] || 'instagram'],
+                                            postType: postTypeMap[topic.format] || 'feed',
+                                            source: 'research',
+                                        }));
+                                        router.push('/publish');
+                                    }}
+                                >
+                                    Use This
+                                </button>
+                                {!isVideoFormat(topic.format) && (
+                                    <button
+                                        style={{ ...smallBtnStyle, flex: 1, background: 'rgba(216,180,29,0.1)', color: 'var(--accent-primary)', borderColor: 'rgba(216,180,29,0.3)' }}
+                                        onClick={() => {
+                                            const platformMap: Record<string, string> = { 'IG': 'instagram', 'FB': 'facebook', 'YT': 'youtube' };
+                                            sessionStorage.setItem('research_prefill', JSON.stringify({
+                                                prompt: topic.title,
+                                                caption: `${topic.title}\n\n${topic.rationale}`,
+                                                platforms: [platformMap[topic.platform] || 'instagram'],
+                                            }));
+                                            router.push('/creatives');
+                                        }}
+                                    >
+                                        Generate Visual
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     ))}
                 </div>
@@ -386,17 +455,40 @@ export default function ResearchPage() {
                     <button onClick={() => goMonth(1)} style={navArrowStyle}>&gt;</button>
                 </div>
 
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={generateCalendar} disabled={calendarLoading} style={primaryBtnStyle}>
-                        {calendarLoading ? 'Generating...' : calendarDays.length > 0 ? 'Regenerate' : 'Generate Calendar'}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button onClick={generateCalendar} disabled={calendarLoading || calendarLoadingFromDB} style={primaryBtnStyle}>
+                        {calendarLoading ? 'Generating...' : calendarLoadingFromDB ? 'Loading...' : calendarDays.length > 0 ? 'Regenerate' : 'Generate Calendar'}
                     </button>
                     {calendarDays.length > 0 && (
                         <button
                             style={smallBtnStyle}
-                            onClick={() => alert('Coming soon: Send all posts to Publish queue as drafts')}
+                            disabled={queueLoading}
+                            onClick={async () => {
+                                setQueueLoading(true);
+                                setQueueResult(null);
+                                try {
+                                    const res = await fetch('/api/research/calendar/queue', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ days: calendarDays, month: selectedMonth, year: selectedYear }),
+                                    });
+                                    const data = await res.json();
+                                    if (!res.ok) throw new Error(data.error || 'Failed');
+                                    setQueueResult(data);
+                                } catch (e: any) {
+                                    setCalendarError(e.message);
+                                } finally {
+                                    setQueueLoading(false);
+                                }
+                            }}
                         >
-                            Send to Queue
+                            {queueLoading ? 'Sending...' : 'Send to Queue'}
                         </button>
+                    )}
+                    {queueResult && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>
+                            {queueResult.created} drafts created{queueResult.replaced > 0 ? `, ${queueResult.replaced} replaced` : ''}{queueResult.failed > 0 ? `, ${queueResult.failed} failed` : ''}
+                        </span>
                     )}
                 </div>
             </div>
@@ -548,7 +640,7 @@ export default function ResearchPage() {
                         </div>
                     )}
                 </div>
-            ) : !calendarLoading && (
+            ) : !calendarLoading && !calendarLoadingFromDB && (
                 <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
                     <div style={{ fontSize: '2rem', marginBottom: 12 }}>
                         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

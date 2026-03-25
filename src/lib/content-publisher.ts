@@ -116,8 +116,7 @@ export async function createPost(req: PublishRequest): Promise<PostRecord> {
 
     // If not scheduled, publish immediately
     if (!isScheduled) {
-        const mediaUrl = req.mediaUrls?.[0] || undefined;
-        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, mediaUrl, req.mediaType, req.postType || 'feed', req.gbpLocations);
+        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, req.mediaUrls || [], req.mediaType, req.postType || 'feed', req.gbpLocations);
 
         const allSucceeded = publishResults.every(r => r.success);
         const someSucceeded = publishResults.some(r => r.success);
