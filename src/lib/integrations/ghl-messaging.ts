@@ -403,6 +403,10 @@ export const SMS_TEMPLATES: Record<string, { label: string; template: string }> 
         label: 'Quick Follow-Up',
         template: "Hi {{firstName}}, following up on your inquiry with Chin Up! We offer Cherry financing for any treatment, plus HydraFacials starting at $199. Reply YES to learn more. Reply STOP to opt out.",
     },
+    'vip-winback-offer': {
+        label: 'VIP Win-Back Offer',
+        template: "Hi {{firstName}}, it's Sam from Chin Up! Aesthetics - {{locationName}}.\nReal talk — we're reaching out to a small group of past clients we'd love to see again \u2764\uFE0F\nSpecial Offer: Complimentary add-on (dermaplaning, B12 shot, or light chemical peel) with any booking OR $75 OFF any service — offers can scale based on what you are interested in!\nReply BOOK to claim yours!\nReply STOP to opt out",
+    },
 };
 
 /* ── Email Templates (6 campaigns) ───────────────────────── */
@@ -489,6 +493,29 @@ Just following up on your inquiry with Chin Up! We wanted to make sure you know 
 We'd love to help you take the next step. Reply to this email or call us to learn more.
 
 Best,
+Chin Up! Aesthetics {{locationName}}`,
+    },
+    'vip-winback-offer': {
+        label: 'VIP Win-Back Offer',
+        subject: "We'd love to see you again, {{firstName}}!",
+        template: `Hi {{firstName}},
+
+It's Sam from Chin Up! Aesthetics — {{locationName}}.
+
+Real talk — we're reaching out to a small group of past clients we'd love to see again ❤️
+
+As a special offer for you:
+
+✨ Complimentary add-on (dermaplaning, B12 shot, or light chemical peel) with any booking
+— OR —
+💰 $75 OFF any service
+
+Offers can scale based on what you're interested in!
+
+Reply to this email or call us to claim yours.
+
+Warmly,
+Sam
 Chin Up! Aesthetics {{locationName}}`,
     },
 };
