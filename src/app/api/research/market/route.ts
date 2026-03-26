@@ -67,8 +67,9 @@ export async function GET(req: NextRequest) {
             sql`
                 SELECT
                     COALESCE(
-                        (tags->0)::text,
-                        'Unknown'
+                        NULLIF(TRIM(BOTH '"' FROM (tags->0)::text), ''),
+                        source,
+                        'Untagged'
                     ) AS source,
                     COUNT(*)::int AS count
                 FROM ghl_contacts_map

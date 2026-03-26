@@ -22,6 +22,16 @@ import {
     incrementalGhlSync,
     getGhlSyncStats,
 } from '@/lib/integrations/ghl-contacts-sync';
+import {
+    backfillSocialPosts,
+    incrementalSocialSync,
+    getSocialPostsStats,
+} from '@/lib/integrations/social-posts-sync';
+import {
+    backfillSearchConsole,
+    incrementalSearchConsoleSync,
+    getSearchConsoleStats,
+} from '@/lib/integrations/search-console-sync';
 
 export const maxDuration = 60; // Vercel Hobby limit
 
@@ -44,9 +54,11 @@ export async function GET(req: NextRequest) {
     }
 
     // Return full sync status
-    const [mbStats, ghlStats] = await Promise.all([
+    const [mbStats, ghlStats, socialStats, gscStats] = await Promise.all([
         getSyncStats(),
         getGhlSyncStats(),
+        getSocialPostsStats().catch(() => ({ totalPosts: 0, lastSync: null, platforms: [] })),
+        getSearchConsoleStats().catch(() => ({ totalRows: 0, lastSync: null, dateRange: { earliest: null, latest: null } })),
     ]);
 
     return NextResponse.json({
@@ -63,6 +75,8 @@ export async function GET(req: NextRequest) {
             withEmail: ghlStats.withEmail,
             lastSync: ghlStats.lastSync,
         },
+        socialPosts: socialStats,
+        searchConsole: gscStats,
     });
 }
 
@@ -157,13 +171,41 @@ export async function POST(req: NextRequest) {
                 const result = await incrementalGhlSync();
                 return NextResponse.json({ action, ...result });
             }
+            case 'backfill-social': {
+                const result = await backfillSocialPosts();
+                return NextResponse.json({ action, ...result, continue: !result.done });
+            }
+            case 'backfill-search-console': {
+                const result = await backfillSearchConsole();
+                return NextResponse.json({ action, ...result, continue: !result.done });
+            }
+            case 'sync-social': {
+                const result = await incrementalSocialSync();
+                return NextResponse.json({ action, ...result });
+            }
+            case 'sync-search-console': {
+                const result = await incrementalSearchConsoleSync();
+                return NextResponse.json({ action, ...result });
+            }
+            case 'reset-social': {
+                await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('social_posts', 'social_posts_backfill_progress')`;
+                await sql`DELETE FROM social_posts`;
+                return NextResponse.json({ action, message: 'Social posts data and sync state cleared.' });
+            }
+            case 'reset-search-console': {
+                await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('search_console', 'search_console_backfill_progress')`;
+                await sql`DELETE FROM search_console_daily`;
+                return NextResponse.json({ action, message: 'Search console data and sync state cleared.' });
+            }
             default:
                 return NextResponse.json({
                     error: `Unknown action: ${action}`,
                     validActions: [
                         'backfill-sales', 'backfill-appointments', 'backfill-clients',
                         'backfill-mindbody', 'backfill-ghl', 'reset-ghl',
-                        'sync', 'sync-mindbody', 'sync-ghl',
+                        'backfill-social', 'backfill-search-console',
+                        'sync', 'sync-mindbody', 'sync-ghl', 'sync-social', 'sync-search-console',
+                        'reset-social', 'reset-search-console',
                     ],
                 }, { status: 400 });
         }

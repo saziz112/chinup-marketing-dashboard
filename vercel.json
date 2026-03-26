@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/analyze-conversations",
       "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/sync-research",
+      "schedule": "0 9 * * *"
     }
   ]
 }

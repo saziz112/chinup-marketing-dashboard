@@ -779,7 +779,7 @@ export default function ResearchPage() {
                                 </div>
                             </div>
                         ) : !contentAnalysisLoading && (
-                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>No post data available</div>
+                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>No post data from the last 90 days. Posts will appear here once your social content syncs.</div>
                         )}
                     </div>
 
@@ -792,7 +792,7 @@ export default function ResearchPage() {
                                     <div style={sectionLabelStyle}>Sessions by Source (30d)</div>
                                     {trafficData.sourceBreakdown.slice(0, 6).map((s, i) => (
                                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '0.8125rem' }}>
-                                            <span style={{ color: 'var(--text-primary)' }}>{s.source} / {s.medium}</span>
+                                            <span style={{ color: 'var(--text-primary)' }}>{s.source === '(direct)' ? 'Direct Visits' : s.source}{s.medium && s.medium !== '(none)' ? ` / ${s.medium}` : ''}</span>
                                             <span style={{ fontWeight: 600, color: s.source.toLowerCase().includes('instagram') ? '#E130A4' : 'var(--text-primary)' }}>{s.sessions.toLocaleString()}</span>
                                         </div>
                                     ))}
@@ -872,7 +872,7 @@ export default function ResearchPage() {
                                     )}
                                     {competitorData.contentGaps.length > 0 && (
                                         <div>
-                                            <div style={sectionLabelStyle}>Treatments They Cover That You Don&apos;t</div>
+                                            <div style={sectionLabelStyle}>Treatments Not Mentioned in Your Recent Posts</div>
                                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                                 {competitorData.contentGaps.slice(0, 8).map((g, i) => (
                                                     <span key={i} style={{ fontSize: '0.6875rem', padding: '3px 8px', borderRadius: 8, background: 'rgba(225,48,164,0.08)', color: '#E130A4', border: '1px solid rgba(225,48,164,0.2)' }}>
@@ -907,7 +907,7 @@ export default function ResearchPage() {
                                     <div style={sectionLabelStyle}>Top Lead Sources</div>
                                     {(marketData.topSources || []).slice(0, 5).map((s, i) => (
                                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '0.8125rem' }}>
-                                            <span style={{ color: 'var(--text-primary)' }}>{s.source}</span>
+                                            <span style={{ color: 'var(--text-primary)' }}>{s.source === 'Unknown' ? 'Untagged Contacts' : s.source}</span>
                                             <span style={{ fontWeight: 600, color: s.trend === 'up' ? 'var(--success)' : s.trend === 'down' ? 'var(--danger)' : 'var(--text-muted)' }}>
                                                 {s.count} {s.trend === 'up' ? '\u2191' : s.trend === 'down' ? '\u2193' : ''}
                                             </span>
@@ -959,7 +959,7 @@ export default function ResearchPage() {
                                 </div>
                             </div>
                         ) : !marketLoading && (
-                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>No search data available</div>
+                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>No search data available. This requires Google Search Console data to be synced.</div>
                         )}
                     </div>
 
