@@ -702,6 +702,8 @@ export default function SettingsPage() {
                                     {[
                                         { action: 'backfill-mindbody', label: 'Backfill MindBody (All)', est: '~500 API calls' },
                                         { action: 'backfill-ghl', label: 'Backfill GHL Contacts', est: '~320 API calls' },
+                                        { action: 'backfill-social', label: 'Backfill Social Posts (IG)', est: '~50 API calls' },
+                                        { action: 'backfill-search-console', label: 'Backfill Search Console', est: '6 API calls' },
                                     ].map(btn => (
                                         <button
                                             key={btn.action}
@@ -725,6 +727,8 @@ export default function SettingsPage() {
                                         { action: 'sync', label: 'Sync All (MB + GHL)', est: '~10 calls' },
                                         { action: 'sync-mindbody', label: 'Sync MindBody Only', est: '~5 calls' },
                                         { action: 'sync-ghl', label: 'Sync GHL Only', est: '~5 calls' },
+                                        { action: 'sync-social', label: 'Sync Social Posts', est: '~50 calls' },
+                                        { action: 'sync-search-console', label: 'Sync Search Console', est: '1 call' },
                                     ].map(btn => (
                                         <button
                                             key={btn.action}
