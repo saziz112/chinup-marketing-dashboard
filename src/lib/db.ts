@@ -133,6 +133,7 @@ async function initSocialPostsTable() {
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_social_posts_platform ON social_posts(platform)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_social_posts_posted_at ON social_posts(posted_at)`;
+    await sql`ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS media_url TEXT`.catch(() => {});
 }
 
 async function initAdCampaignsTable() {

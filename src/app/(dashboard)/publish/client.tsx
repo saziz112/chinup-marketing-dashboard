@@ -1194,6 +1194,8 @@ function HistoryList({ posts, showArchived, onToggleArchived }: {
     showArchived: boolean;
     onToggleArchived: () => void;
 }) {
+    const [statusFilter, setStatusFilter] = useState<string>('ALL');
+
     const statusStyles: Record<string, { bg: string; color: string; label: string }> = {
         PUBLISHED: { bg: 'rgba(34,197,94,0.1)', color: '#22c55e', label: 'Live' },
         FAILED: { bg: 'rgba(239,68,68,0.1)', color: '#ef4444', label: 'Failed' },
@@ -1201,6 +1203,16 @@ function HistoryList({ posts, showArchived, onToggleArchived }: {
         PUBLISHING: { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6', label: 'Sending' },
         DRAFT: { bg: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', label: 'Draft' },
     };
+
+    const filterOptions = [
+        { key: 'ALL', label: 'All', color: '#fff' },
+        { key: 'PUBLISHED', label: 'Live', color: '#22c55e' },
+        { key: 'FAILED', label: 'Failed', color: '#ef4444' },
+        { key: 'PARTIAL', label: 'Partial', color: '#eab308' },
+        { key: 'PUBLISHING', label: 'Sending', color: '#3b82f6' },
+    ];
+
+    const filteredPosts = statusFilter === 'ALL' ? posts : posts.filter(p => p.status === statusFilter);
 
     if (posts.length === 0) {
         return (
@@ -1220,8 +1232,43 @@ function HistoryList({ posts, showArchived, onToggleArchived }: {
 
     return (
         <div>
+            {/* Status Filter Pills */}
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                {filterOptions.map(opt => {
+                    const count = opt.key === 'ALL' ? posts.length : posts.filter(p => p.status === opt.key).length;
+                    if (opt.key !== 'ALL' && count === 0) return null;
+                    const isActive = statusFilter === opt.key;
+                    return (
+                        <button
+                            key={opt.key}
+                            onClick={() => setStatusFilter(opt.key)}
+                            style={{
+                                padding: '5px 12px',
+                                borderRadius: '20px',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                border: `1px solid ${isActive ? opt.color : 'rgba(255,255,255,0.08)'}`,
+                                background: isActive ? `${opt.color}15` : 'transparent',
+                                color: isActive ? opt.color : 'var(--text-muted)',
+                                transition: 'all 0.15s ease',
+                            }}
+                        >
+                            {opt.label} ({count})
+                        </button>
+                    );
+                })}
+            </div>
+
+            {filteredPosts.length === 0 ? (
+                <div className="section-card" style={{ padding: '40px 32px', textAlign: 'center' }}>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                        No {filterOptions.find(o => o.key === statusFilter)?.label.toLowerCase()} posts.
+                    </p>
+                </div>
+            ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {posts.map(post => {
+                {filteredPosts.map(post => {
                     const st = statusStyles[post.status] || statusStyles.DRAFT;
                     const meta = post.metadata as any;
                     const gbpLocs: string[] = meta?.gbpLocations || [];
@@ -1311,6 +1358,7 @@ function HistoryList({ posts, showArchived, onToggleArchived }: {
                     );
                 })}
             </div>
+            )}
 
             {/* Show Archived Toggle */}
             <div style={{ textAlign: 'center', marginTop: '16px' }}>

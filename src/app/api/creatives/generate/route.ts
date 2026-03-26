@@ -10,6 +10,7 @@ import { authOptions } from '@/lib/auth';
 import { createImageTask, getTaskStatus, isKieAiConfigured, type GenerateRequest } from '@/lib/integrations/kie-ai';
 import { sql } from '@vercel/postgres';
 import { put } from '@vercel/blob';
+import { pgCacheGet } from '@/lib/pg-cache';
 
 async function ensureCreativeImagesTable() {
     try {
@@ -58,30 +59,42 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { prompt, style, aspectRatio, resolution, referenceImageUrl, variations = 1, tags = [] } = body;
+    const { prompt, style, aspectRatio, resolution, referenceImageUrl, referenceImageUrls, variations = 1, tags = [] } = body;
 
     if (!prompt || !style || !aspectRatio || !resolution) {
         return NextResponse.json({ error: 'Missing required fields: prompt, style, aspectRatio, resolution' }, { status: 400 });
     }
+
+    // Support both legacy single URL and new multi-URL array
+    const refUrls: string[] = referenceImageUrls?.length ? referenceImageUrls : (referenceImageUrl ? [referenceImageUrl] : []);
 
     const numVariations = Math.min(Math.max(1, Number(variations)), 3);
 
     try {
         await ensureCreativeImagesTable();
 
+        // Fetch brand context from cached IG analysis
+        let brandContext: string | undefined;
+        try {
+            const profile = await pgCacheGet<{ promptEnhancement: string }>('brand_profile');
+            if (profile?.promptEnhancement) {
+                brandContext = profile.promptEnhancement;
+            }
+        } catch { /* no brand profile yet */ }
+
         const groupId = numVariations > 1 ? `group_${Date.now()}_${Math.random().toString(36).substr(2, 6)}` : null;
         const tasks: { id: string; taskId: string; enhancedPrompt: string }[] = [];
 
         for (let i = 0; i < numVariations; i++) {
             const varPrompt = i === 0 ? prompt : prompt + VARIATION_SUFFIXES[i];
-            const generateReq: GenerateRequest = { prompt: varPrompt, style, aspectRatio, resolution, referenceImageUrl };
+            const generateReq: GenerateRequest = { prompt: varPrompt, style, aspectRatio, resolution, referenceImageUrls: refUrls, brandContext };
 
             const { taskId, enhancedPrompt } = await createImageTask(generateReq);
             const id = `creative_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
 
             await sql`
                 INSERT INTO creative_images (id, prompt, enhanced_prompt, style, aspect_ratio, resolution, reference_image_url, task_id, status, created_by, group_id, variation_index)
-                VALUES (${id}, ${prompt}, ${enhancedPrompt}, ${style}, ${aspectRatio}, ${resolution}, ${referenceImageUrl || null}, ${taskId}, 'pending', ${session.user.email}, ${groupId}, ${i})
+                VALUES (${id}, ${prompt}, ${enhancedPrompt}, ${style}, ${aspectRatio}, ${resolution}, ${refUrls.length > 0 ? JSON.stringify(refUrls) : null}, ${taskId}, 'pending', ${session.user.email}, ${groupId}, ${i})
             `;
 
             // Insert tags

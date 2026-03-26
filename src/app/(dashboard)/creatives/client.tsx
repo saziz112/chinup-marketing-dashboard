@@ -207,8 +207,7 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
     const [variations, setVariations] = useState<number>(1);
     const [tags, setTags] = useState<string[]>([]);
     const [tagInput, setTagInput] = useState('');
-    const [referenceUrl, setReferenceUrl] = useState('');
-    const [refPreview, setRefPreview] = useState<string | null>(null);
+    const [referenceImages, setReferenceImages] = useState<Array<{ url: string; preview: string; isLogo: boolean }>>([]);
     const [uploading, setUploading] = useState(false);
     const refInputRef = useRef<HTMLInputElement>(null);
 
@@ -225,6 +224,25 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
     const [researchPlatforms, setResearchPlatforms] = useState<string[] | null>(null);
 
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // Brand profile state
+    const [brandProfile, setBrandProfile] = useState<{ brandVoice: string; visualThemes: string[]; topTreatments: string[]; contentPillars: string[]; promptEnhancement: string; generatedAt: string; basedOnPosts: number } | null>(null);
+    const [brandExpanded, setBrandExpanded] = useState(false);
+    const [brandLoading, setBrandLoading] = useState(false);
+
+    // Pre-populate logo as default reference image
+    useEffect(() => {
+        const logoUrl = `${window.location.origin}/logo.png`;
+        setReferenceImages([{ url: logoUrl, preview: logoUrl, isLogo: true }]);
+    }, []);
+
+    // Fetch brand profile on mount
+    useEffect(() => {
+        fetch('/api/creatives/brand-profile')
+            .then(r => r.json())
+            .then(data => { if (data.profile) setBrandProfile(data.profile); })
+            .catch(() => {});
+    }, []);
 
     // Apply prefill from regenerate
     useEffect(() => {
@@ -341,7 +359,7 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
                     resolution,
                     variations,
                     tags,
-                    referenceImageUrl: referenceUrl || undefined,
+                    referenceImageUrls: referenceImages.map(r => r.url).filter(Boolean),
                 }),
             });
 
@@ -360,6 +378,10 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
     };
 
     const handleRefUpload = async (file: File) => {
+        if (referenceImages.length >= 3) {
+            setError('Maximum 3 reference images allowed');
+            return;
+        }
         setUploading(true);
         try {
             const ext = file.name.split('.').pop() || 'jpg';
@@ -368,20 +390,21 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
                 access: 'public',
                 handleUploadUrl: '/api/upload/token',
             });
-            setReferenceUrl(blob.url);
-            setRefPreview(URL.createObjectURL(file));
+            setReferenceImages(prev => [...prev, { url: blob.url, preview: URL.createObjectURL(file), isLogo: false }]);
         } catch {
             setError('Reference image upload failed');
         } finally {
             setUploading(false);
+            if (refInputRef.current) refInputRef.current.value = '';
         }
     };
 
-    const clearRef = () => {
-        if (refPreview) URL.revokeObjectURL(refPreview);
-        setReferenceUrl('');
-        setRefPreview(null);
-        if (refInputRef.current) refInputRef.current.value = '';
+    const removeRef = (index: number) => {
+        setReferenceImages(prev => {
+            const img = prev[index];
+            if (img && !img.isLogo) URL.revokeObjectURL(img.preview);
+            return prev.filter((_, i) => i !== index);
+        });
     };
 
     const handleSendToPublish = (url: string) => {
@@ -419,10 +442,78 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
         setCompletedCount(0);
         setTags([]);
         setVariations(1);
+        const logoUrl = `${window.location.origin}/logo.png`;
+        setReferenceImages([{ url: logoUrl, preview: logoUrl, isLogo: true }]);
+    };
+
+    const refreshBrandProfile = async () => {
+        setBrandLoading(true);
+        try {
+            const res = await fetch('/api/creatives/brand-profile', { method: 'POST' });
+            const data = await res.json();
+            if (data.profile) setBrandProfile(data.profile);
+        } catch { /* ignore */ }
+        setBrandLoading(false);
     };
 
     return (
         <div style={{ display: 'grid', gap: '20px', maxWidth: '720px' }}>
+            {/* Brand Guidelines */}
+            {brandProfile && (
+                <div style={{ ...cardStyle, padding: '16px 20px' }}>
+                    <button
+                        onClick={() => setBrandExpanded(!brandExpanded)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#fff', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 0 }}
+                    >
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <Instagram size={14} style={{ color: '#E1306C' }} /> Brand Guidelines
+                            <span style={{ fontSize: '0.625rem', fontWeight: 400, color: 'var(--text-muted)' }}>from top {brandProfile.basedOnPosts} IG posts</span>
+                        </span>
+                        {brandExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    {brandExpanded && (
+                        <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            <div>
+                                <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Brand Voice</span>
+                                <p style={{ margin: '4px 0 0', fontSize: '0.8125rem', color: '#ccc', lineHeight: 1.5 }}>{brandProfile.brandVoice}</p>
+                            </div>
+                            <div>
+                                <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Visual Themes</span>
+                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+                                    {brandProfile.visualThemes.map((t, i) => (
+                                        <span key={i} style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '0.6875rem', background: 'rgba(255,255,255,0.06)', color: '#ccc' }}>{t}</span>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Content Pillars</span>
+                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+                                    {brandProfile.contentPillars.map((p, i) => (
+                                        <span key={i} style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '0.6875rem', background: 'rgba(234,179,8,0.1)', color: '#eab308' }}>{p}</span>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Top Treatments</span>
+                                <p style={{ margin: '4px 0 0', fontSize: '0.8125rem', color: '#ccc' }}>{brandProfile.topTreatments.join(' · ')}</p>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                                <span style={{ fontSize: '0.625rem', color: 'var(--text-muted)' }}>
+                                    Auto-applied to all generations · Updated {new Date(brandProfile.generatedAt).toLocaleDateString()}
+                                </span>
+                                <button
+                                    onClick={refreshBrandProfile}
+                                    disabled={brandLoading}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.6875rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                    <RefreshCw size={10} style={brandLoading ? { animation: 'spin 0.8s linear infinite' } : undefined} /> Refresh
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Prompt */}
             <div style={cardStyle}>
                 <label style={labelStyle}>What do you want to create?</label>
@@ -557,36 +648,44 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
                         ))}
                     </div>
 
-                    {/* Reference Image */}
+                    {/* Reference Images (up to 3) */}
                     <div style={{ marginTop: '16px' }}>
-                        <label style={labelStyle}>Reference Image (optional)</label>
-                        {refPreview ? (
-                            <div style={{ position: 'relative', display: 'inline-block' }}>
-                                <img src={refPreview} alt="Reference" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }} />
-                                <button onClick={clearRef} style={{
-                                    position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%',
-                                    background: '#ef4444', border: 'none', color: '#fff', cursor: 'pointer',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px',
-                                }}>
-                                    <X size={10} />
-                                </button>
-                            </div>
-                        ) : (
-                            <>
-                                <input type="file" ref={refInputRef} accept="image/*" onChange={e => e.target.files?.[0] && handleRefUpload(e.target.files[0])} style={{ display: 'none' }} />
-                                <button
-                                    onClick={() => refInputRef.current?.click()}
-                                    disabled={uploading || generating}
-                                    style={{
-                                        ...pillStyle(false),
-                                        display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center',
-                                    }}
-                                >
-                                    {uploading ? <Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Upload size={14} />}
-                                    {uploading ? 'Uploading...' : 'Upload'}
-                                </button>
-                            </>
-                        )}
+                        <label style={labelStyle}>Reference Images (up to 3)</label>
+                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            {referenceImages.map((img, idx) => (
+                                <div key={idx} style={{ position: 'relative', display: 'inline-block' }}>
+                                    <img src={img.preview} alt={img.isLogo ? 'Logo' : 'Reference'} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }} />
+                                    {img.isLogo && (
+                                        <span style={{ position: 'absolute', bottom: 2, left: 2, fontSize: '0.5rem', fontWeight: 700, background: 'rgba(0,0,0,0.7)', color: 'var(--accent)', padding: '1px 4px', borderRadius: '3px' }}>LOGO</span>
+                                    )}
+                                    <button onClick={() => removeRef(idx)} style={{
+                                        position: 'absolute', top: -6, right: -6, width: 18, height: 18, borderRadius: '50%',
+                                        background: '#ef4444', border: 'none', color: '#fff', cursor: 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    }}>
+                                        <X size={9} />
+                                    </button>
+                                </div>
+                            ))}
+                            {referenceImages.length < 3 && (
+                                <>
+                                    <input type="file" ref={refInputRef} accept="image/*" onChange={e => e.target.files?.[0] && handleRefUpload(e.target.files[0])} style={{ display: 'none' }} />
+                                    <button
+                                        onClick={() => refInputRef.current?.click()}
+                                        disabled={uploading || generating}
+                                        style={{
+                                            width: 64, height: 64, borderRadius: '8px', cursor: 'pointer',
+                                            border: '1px dashed rgba(255,255,255,0.15)', background: 'transparent',
+                                            color: 'var(--text-muted)', display: 'flex', flexDirection: 'column',
+                                            alignItems: 'center', justifyContent: 'center', gap: '2px', fontSize: '0.625rem',
+                                        }}
+                                    >
+                                        {uploading ? <Loader2 size={16} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Upload size={16} />}
+                                        {uploading ? '...' : 'Add'}
+                                    </button>
+                                </>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>

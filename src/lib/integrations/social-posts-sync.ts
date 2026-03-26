@@ -127,7 +127,7 @@ async function upsertPosts(posts: IGMedia[]): Promise<number> {
         const engagementRate = (likes + comments + shares + saves) / denominator;
 
         await sql`
-            INSERT INTO social_posts (platform, post_id, post_type, posted_at, caption, permalink, likes, comments, shares, saves, views, reach, impressions, engagement_rate, updated_at)
+            INSERT INTO social_posts (platform, post_id, post_type, posted_at, caption, permalink, media_url, likes, comments, shares, saves, views, reach, impressions, engagement_rate, updated_at)
             VALUES (
                 'instagram',
                 ${p.id},
@@ -135,6 +135,7 @@ async function upsertPosts(posts: IGMedia[]): Promise<number> {
                 ${p.timestamp},
                 ${p.caption},
                 ${p.permalink},
+                ${p.mediaUrl || null},
                 ${likes},
                 ${comments},
                 ${shares},
@@ -154,6 +155,7 @@ async function upsertPosts(posts: IGMedia[]): Promise<number> {
                 reach = EXCLUDED.reach,
                 impressions = EXCLUDED.impressions,
                 engagement_rate = EXCLUDED.engagement_rate,
+                media_url = COALESCE(EXCLUDED.media_url, social_posts.media_url),
                 updated_at = NOW()
         `;
         inserted++;

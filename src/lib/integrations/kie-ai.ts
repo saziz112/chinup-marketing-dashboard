@@ -19,7 +19,9 @@ export interface GenerateRequest {
     style: CreativeStyle;
     aspectRatio: AspectRatio;
     resolution: Resolution;
-    referenceImageUrl?: string;
+    referenceImageUrl?: string;       // legacy single URL
+    referenceImageUrls?: string[];    // multiple reference images (up to 3)
+    brandContext?: string;            // brand prompt enhancement from IG analysis
 }
 
 export interface GenerateResult {
@@ -84,11 +86,12 @@ function getResolutionForAspect(resolution: Resolution, aspectRatio: AspectRatio
 
 // --- Prompt Enhancement ---
 
-export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRatio: AspectRatio): string {
+export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRatio: AspectRatio, brandContext?: string): string {
     const prefix = STYLE_PREFIXES[style];
     const arContext = ASPECT_RATIO_CONTEXT[aspectRatio];
+    const brand = brandContext ? ` ${brandContext}.` : '';
     const suffix = '8K resolution, professional quality, sharp focus, vibrant colors';
-    return `${prefix}, ${arContext}. ${userPrompt}. ${suffix}`;
+    return `${prefix}, ${arContext}.${brand} ${userPrompt}. ${suffix}`;
 }
 
 // --- API Calls ---
@@ -101,7 +104,12 @@ const RESOLUTION_LABEL: Record<Resolution, string> = {
 
 export async function createImageTask(req: GenerateRequest): Promise<GenerateResult> {
     const apiKey = getEnv('KIE_AI_API_KEY');
-    const enhancedPrompt = enhancePrompt(req.prompt, req.style, req.aspectRatio);
+    const enhancedPrompt = enhancePrompt(req.prompt, req.style, req.aspectRatio, req.brandContext);
+
+    // Support both legacy single URL and new multi-URL array
+    const refImages = req.referenceImageUrls?.length
+        ? req.referenceImageUrls
+        : req.referenceImageUrl ? [req.referenceImageUrl] : [];
 
     const input: Record<string, unknown> = {
         prompt: enhancedPrompt,
@@ -109,7 +117,7 @@ export async function createImageTask(req: GenerateRequest): Promise<GenerateRes
         resolution: RESOLUTION_LABEL[req.resolution],
         output_format: 'png',
         google_search: false,
-        image_input: req.referenceImageUrl ? [req.referenceImageUrl] : [],
+        image_input: refImages,
     };
 
     const body = {
