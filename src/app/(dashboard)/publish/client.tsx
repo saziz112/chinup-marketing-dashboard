@@ -70,7 +70,7 @@ export default function PublishDashboardClient() {
     useEffect(() => { fetchData(); }, [fetchData]);
 
     const scheduled = posts.filter(p => p.status === 'SCHEDULED');
-    const history = posts.filter(p => p.status !== 'SCHEDULED');
+    const history = posts.filter(p => p.status !== 'SCHEDULED' && p.status !== 'DRAFT');
 
     const handleEditPost = (post: PostRecord) => {
         setEditingPost(post);
