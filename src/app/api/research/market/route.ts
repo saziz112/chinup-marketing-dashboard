@@ -53,16 +53,18 @@ export async function GET(req: NextRequest) {
                 ORDER BY SUM(clicks) DESC
                 LIMIT 15
             `,
-            // Most-booked treatments (from MindBody appointments)
+            // Most-booked treatments (from MindBody sales items)
             sql`
                 SELECT
-                    session_type_name AS name,
+                    item->>'Description' AS name,
                     COUNT(*)::int AS count
-                FROM mb_appointments_history
-                WHERE start_date > NOW() - INTERVAL '90 days'
-                AND status IN ('Completed', 'Confirmed')
-                AND session_type_name IS NOT NULL
-                GROUP BY session_type_name
+                FROM mb_sales_history,
+                    jsonb_array_elements(items_json) AS item
+                WHERE sale_date > NOW() - INTERVAL '90 days'
+                AND item->>'IsService' = 'true'
+                AND item->>'Description' IS NOT NULL
+                AND item->>'Description' != ''
+                GROUP BY item->>'Description'
                 ORDER BY count DESC
                 LIMIT 10
             `,
