@@ -29,7 +29,10 @@ export async function GET(req: NextRequest) {
                     engagement_rate,
                     views,
                     likes,
-                    comments
+                    comments,
+                    shares,
+                    saves,
+                    permalink
                 FROM social_posts
                 WHERE posted_at > NOW() - INTERVAL '90 days'
                 AND engagement_rate IS NOT NULL
@@ -86,6 +89,11 @@ export async function GET(req: NextRequest) {
                 platform: p.platform,
                 engagementRate: Number(p.engagement_rate) || 0,
                 views: Number(p.views) || 0,
+                likes: Number(p.likes) || 0,
+                comments: Number(p.comments) || 0,
+                shares: Number(p.shares) || 0,
+                saves: Number(p.saves) || 0,
+                permalink: p.permalink || '',
             }))
             : [];
 

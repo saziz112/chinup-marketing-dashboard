@@ -92,7 +92,7 @@ interface SocialTrendYT {
 }
 
 interface MarketData {
-    topPosts: Array<{ title: string; platform: string; engagementRate: number; views: number }>;
+    topPosts: Array<{ title: string; platform: string; engagementRate: number; views: number; likes: number; comments: number; shares: number; saves: number; permalink: string }>;
     bestTimes: Array<{ hour: number; avgEngagement: number }>;
     topSources: Array<{ source: string; count: number; trend: 'up' | 'down' | 'flat' }>;
     topTreatments: Array<{ name: string; count: number }>;
@@ -742,6 +742,7 @@ export default function ResearchPage() {
                             <div>
                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 12 }}>
                                     {contentAnalysis.totalPosts} posts analyzed &middot; Overall avg: {(contentAnalysis.overallAvgEngagement * 100).toFixed(1)}% engagement, {contentAnalysis.overallAvgViews.toLocaleString()} views
+                                    <br /><span style={{ fontSize: '0.6875rem', opacity: 0.7 }}>Engagement rate = (likes + comments + shares + saves) &divide; views</span>
                                 </div>
                                 <div style={{ overflowX: 'auto' }}>
                                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
@@ -751,6 +752,7 @@ export default function ResearchPage() {
                                                 <th style={{ ...thStyle, textAlign: 'right' }}>Posts</th>
                                                 <th style={{ ...thStyle, textAlign: 'right' }}>Avg Views</th>
                                                 <th style={{ ...thStyle, textAlign: 'right' }}>Avg Engagement</th>
+                                                <th style={{ ...thStyle, textAlign: 'right' }}>Avg Likes</th>
                                                 <th style={{ ...thStyle, textAlign: 'right' }}>Avg Comments</th>
                                                 <th style={thStyle}>Best Post</th>
                                             </tr>
@@ -763,7 +765,11 @@ export default function ResearchPage() {
                                                     <td style={{ ...tdStyle, textAlign: 'right' }}>{cat.avgViews.toLocaleString()}</td>
                                                     <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600, color: cat.avgEngagement >= contentAnalysis.overallAvgEngagement ? 'var(--success)' : 'var(--text-muted)' }}>
                                                         {(cat.avgEngagement * 100).toFixed(1)}%
+                                                        <div style={{ fontSize: '0.625rem', fontWeight: 400, color: 'var(--text-muted)' }}>
+                                                            ~{Math.round(cat.avgLikes + cat.avgComments)} interactions/post
+                                                        </div>
                                                     </td>
+                                                    <td style={{ ...tdStyle, textAlign: 'right' }}>{cat.avgLikes}</td>
                                                     <td style={{ ...tdStyle, textAlign: 'right' }}>{cat.avgComments}</td>
                                                     <td style={tdStyle}>
                                                         {cat.bestPost ? (
@@ -836,8 +842,8 @@ export default function ResearchPage() {
                                         <div key={i} style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 10, padding: 14, border: '1px solid var(--border-subtle)' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                                                 <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>@{c.username}</span>
-                                                <span style={{ fontSize: '0.6875rem', color: c.engagementTrend === 'growing' ? 'var(--success)' : c.engagementTrend === 'declining' ? 'var(--danger)' : 'var(--text-muted)' }}>
-                                                    {c.engagementTrend === 'growing' ? '\u2191' : c.engagementTrend === 'declining' ? '\u2193' : '\u2192'} {c.engagementTrend}
+                                                <span title={c.engagementTrend === 'growing' ? 'Engagement rate increasing over recent posts' : c.engagementTrend === 'declining' ? 'Engagement rate decreasing over recent posts' : 'Engagement rate is steady'} style={{ fontSize: '0.6875rem', padding: '2px 8px', borderRadius: 6, background: c.engagementTrend === 'growing' ? 'rgba(34,197,94,0.1)' : c.engagementTrend === 'declining' ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.05)', color: c.engagementTrend === 'growing' ? 'var(--success)' : c.engagementTrend === 'declining' ? 'var(--danger)' : 'var(--text-muted)' }}>
+                                                    {c.engagementTrend === 'growing' ? '\u2191 Growing' : c.engagementTrend === 'declining' ? '\u2193 Declining' : '\u2192 Steady'}
                                                 </span>
                                             </div>
                                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 6 }}>
@@ -897,10 +903,15 @@ export default function ResearchPage() {
                                 <div>
                                     <div style={sectionLabelStyle}>Top Posts by Engagement</div>
                                     {(marketData.topPosts || []).slice(0, 5).map((p, i) => (
-                                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '0.8125rem' }}>
-                                            <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '65%' }}>{p.title}</span>
-                                            <span style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>{(p.engagementRate * 100).toFixed(1)}%</span>
-                                        </div>
+                                        <a key={i} href={p.permalink || '#'} target="_blank" rel="noopener noreferrer" style={{ display: 'block', padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '0.8125rem', textDecoration: 'none', color: 'inherit' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>{p.title}</span>
+                                                <span style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>{(p.engagementRate * 100).toFixed(1)}%</span>
+                                            </div>
+                                            <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                                {p.views?.toLocaleString() || 0} views &middot; {p.likes || 0} likes &middot; {p.comments || 0} comments{p.shares ? ` \u00B7 ${p.shares} shares` : ''}
+                                            </div>
+                                        </a>
                                     ))}
                                 </div>
                                 <div>
@@ -915,13 +926,23 @@ export default function ResearchPage() {
                                     ))}
                                 </div>
                                 <div>
-                                    <div style={sectionLabelStyle}>Most-Booked Treatments</div>
-                                    {(marketData.topTreatments || []).slice(0, 5).map((t, i) => (
-                                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '0.8125rem' }}>
-                                            <span style={{ color: 'var(--text-primary)' }}>{t.name}</span>
-                                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.count}</span>
-                                        </div>
-                                    ))}
+                                    <div style={sectionLabelStyle}>Most-Booked Treatments (90d)</div>
+                                    {(marketData.topTreatments || []).length > 0 ? (marketData.topTreatments || []).slice(0, 5).map((t, i) => {
+                                        const maxCount = marketData.topTreatments[0]?.count || 1;
+                                        return (
+                                            <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '0.8125rem' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                                                    <span style={{ color: 'var(--text-primary)' }}>{t.name}</span>
+                                                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.count} bookings</span>
+                                                </div>
+                                                <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.05)', overflow: 'hidden' }}>
+                                                    <div style={{ width: `${(t.count / maxCount) * 100}%`, height: '100%', borderRadius: 2, background: 'var(--accent-primary)' }} />
+                                                </div>
+                                            </div>
+                                        );
+                                    }) : (
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Requires MindBody appointment data. Run backfill in Settings.</div>
+                                    )}
                                 </div>
                             </div>
                         ) : (
