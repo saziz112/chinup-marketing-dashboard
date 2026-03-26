@@ -210,9 +210,12 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                 setMediaType(editingPost.mediaUrls[0].match(/\.(mp4|mov|webm)$/i) ? 'video' : 'photo');
             }
             if (editingPost.scheduledFor) {
+                // Display in Eastern Time
                 const d = new Date(editingPost.scheduledFor);
-                setScheduleDate(format(d, 'yyyy-MM-dd'));
-                setScheduleTime(format(d, 'HH:mm'));
+                const etDate = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // yyyy-MM-dd
+                const etTime = d.toLocaleTimeString('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }); // HH:mm
+                setScheduleDate(etDate);
+                setScheduleTime(etTime);
             }
             const meta = editingPost.metadata as any;
             if (meta?.gbpLocations) {
@@ -352,7 +355,20 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
         try {
             let scheduledFor = undefined;
             if (scheduleDate && scheduleTime) {
-                scheduledFor = new Date(`${scheduleDate}T${scheduleTime}`).toISOString();
+                // Interpret schedule as Eastern Time (America/New_York handles EST/EDT automatically)
+                // Create a date formatter that tells us the UTC offset for ET on this date
+                const probe = new Date(`${scheduleDate}T${scheduleTime}:00Z`);
+                const etParts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/New_York',
+                    timeZoneName: 'shortOffset',
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', hour12: false,
+                }).formatToParts(probe);
+                const tzPart = etParts.find(p => p.type === 'timeZoneName')?.value || 'GMT-5';
+                const offsetMatch = tzPart.match(/GMT([+-]\d+)/);
+                const offsetHours = offsetMatch ? parseInt(offsetMatch[1]) : -5;
+                const offset = `${offsetHours >= 0 ? '+' : '-'}${String(Math.abs(offsetHours)).padStart(2, '0')}:00`;
+                scheduledFor = new Date(`${scheduleDate}T${scheduleTime}:00${offset}`).toISOString();
             }
 
             if (editingPost) {
@@ -421,7 +437,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                     } else if (post.status === 'SCHEDULED') {
                         setFeedback({
                             type: 'success',
-                            message: `Scheduled for ${format(new Date(scheduledFor!), 'MMM d, h:mm a')}`,
+                            message: `Scheduled for ${new Date(scheduledFor!).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })} ET`,
                         });
                         clearForm();
                     } else {
@@ -576,7 +592,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                 </div>
 
                 <p style={{ fontSize: '0.75rem', color: '#eab308', margin: '0 0 16px' }}>
-                    Note: Scheduled posts are published daily at ~7 AM UTC (3 AM ET) on the Hobby plan.
+                    All times are Eastern Time (ET). Posts publish within 15 minutes of scheduled time.
                 </p>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -986,8 +1002,8 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
 
                 {/* Schedule */}
                 <div>
-                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Schedule (optional)</label>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Schedule (optional — Eastern Time)</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
                         <input
                             type="date"
                             value={scheduleDate}
@@ -1006,13 +1022,14 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                                 ...(scheduleError && !scheduleTime ? { outline: '1px solid #ef4444' } : {}),
                             }}
                         />
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>ET</span>
                     </div>
                     {scheduleError ? (
                         <p style={{ fontSize: '0.75rem', color: '#ef4444', marginTop: '6px' }}>{scheduleError}</p>
                     ) : (
                         <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px' }}>
                             Leave blank to publish immediately.
-                            {(scheduleDate || scheduleTime) && ' Note: Posts publish daily at ~7 AM UTC (3 AM ET).'}
+                            {(scheduleDate || scheduleTime) && ' All times are Eastern Time (ET).'}
                         </p>
                     )}
                 </div>
@@ -1070,7 +1087,7 @@ function QueueList({ posts, onUpdate, onEdit }: { posts: PostRecord[], onUpdate:
                 <Clock size={40} style={{ color: 'var(--text-muted)', margin: '0 auto 12px', opacity: 0.4 }} />
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.9375rem' }}>No scheduled posts.</p>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '4px' }}>
-                    Note: Posts publish daily at ~7 AM UTC (3 AM ET).
+                    Posts publish within 15 minutes of their scheduled time (ET).
                 </p>
             </div>
         );
@@ -1078,8 +1095,8 @@ function QueueList({ posts, onUpdate, onEdit }: { posts: PostRecord[], onUpdate:
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <p style={{ fontSize: '0.75rem', color: '#eab308', margin: '0 0 4px' }}>
-                Scheduled posts publish daily at ~7 AM UTC (3 AM ET).
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 4px' }}>
+                Posts publish within 15 minutes of their scheduled time. All times shown in Eastern Time (ET).
             </p>
             {posts.map(post => {
                 const meta = post.metadata as any;
@@ -1136,7 +1153,7 @@ function QueueList({ posts, onUpdate, onEdit }: { posts: PostRecord[], onUpdate:
                                         </span>
                                     )}
                                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                        {post.scheduledFor ? format(new Date(post.scheduledFor), 'MMM d, h:mm a') : ''}
+                                        {post.scheduledFor ? new Date(post.scheduledFor).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) + ' ET' : ''}
                                         {timeLabel && ` (${timeLabel})`}
                                     </span>
                                     {gbpLocs.length > 0 && (
