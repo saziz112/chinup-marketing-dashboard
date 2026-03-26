@@ -180,6 +180,8 @@ export default function ResearchPage() {
     const [expandedDay, setExpandedDay] = useState<string | null>(null);
     const [queueLoading, setQueueLoading] = useState(false);
     const [queueResult, setQueueResult] = useState<{ created: number; failed: number; replaced: number } | null>(null);
+    const [scheduledDates, setScheduledDates] = useState<Set<string>>(new Set());
+    const [dayScheduleLoading, setDayScheduleLoading] = useState<string | null>(null);
     const [calendarLoadingFromDB, setCalendarLoadingFromDB] = useState(false);
 
     // --- Market Intel state ---
@@ -217,6 +219,25 @@ export default function ResearchPage() {
             loadSavedCalendar(selectedMonth, selectedYear);
         }
     }, [activeTab, selectedMonth, selectedYear, loadSavedCalendar]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Fetch scheduled dates for calendar overlap indicators
+    useEffect(() => {
+        if (activeTab === 'Content Calendar') {
+            fetch('/api/content/publish?type=posts')
+                .then(r => r.json())
+                .then(data => {
+                    const dates = new Set<string>();
+                    for (const post of (data.posts || [])) {
+                        if (post.status === 'SCHEDULED' && post.scheduledFor) {
+                            const d = new Date(post.scheduledFor);
+                            dates.add(d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }));
+                        }
+                    }
+                    setScheduledDates(dates);
+                })
+                .catch(() => {});
+        }
+    }, [activeTab, selectedMonth, selectedYear]);
 
     // --- Trend Scout ---
     const generateTrends = async () => {
@@ -596,12 +617,12 @@ export default function ResearchPage() {
                                 }
                             }}
                         >
-                            {queueLoading ? 'Sending...' : 'Send to Queue'}
+                            {queueLoading ? 'Scheduling...' : 'Schedule All to Queue'}
                         </button>
                     )}
                     {queueResult && (
                         <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>
-                            {queueResult.created} drafts created{queueResult.replaced > 0 ? `, ${queueResult.replaced} replaced` : ''}{queueResult.failed > 0 ? `, ${queueResult.failed} failed` : ''}
+                            {queueResult.created} scheduled{queueResult.replaced > 0 ? `, ${queueResult.replaced} replaced` : ''}{queueResult.failed > 0 ? `, ${queueResult.failed} failed` : ''}
                         </span>
                     )}
                 </div>
@@ -627,7 +648,12 @@ export default function ResearchPage() {
                                     }}>
                                         {dayNum > 0 && dayNum <= new Date(selectedYear, selectedMonth, 0).getDate() && (
                                             <>
-                                                <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>{dayNum}</div>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>{dayNum}</span>
+                                                    {day && scheduledDates.has(day.date) && (
+                                                        <span style={{ fontSize: '0.5rem', padding: '1px 4px', borderRadius: 4, background: 'rgba(34,197,94,0.12)', color: '#22c55e', fontWeight: 700 }}>Queued</span>
+                                                    )}
+                                                </div>
                                                 {day && (
                                                     <>
                                                         <div style={{ fontSize: '0.6875rem', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1.3, marginBottom: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{day.topic}</div>
@@ -667,6 +693,29 @@ export default function ResearchPage() {
                                         </div>
                                     )}
                                     {day.hashtags && <div style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--accent-primary)' }}>{day.hashtags}</div>}
+                                    <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                                        <button
+                                            style={{ ...smallBtnStyle, background: scheduledDates.has(day.date) ? 'rgba(34,197,94,0.1)' : undefined, color: scheduledDates.has(day.date) ? '#22c55e' : undefined }}
+                                            disabled={dayScheduleLoading === day.date || scheduledDates.has(day.date)}
+                                            onClick={async (e) => {
+                                                e.stopPropagation();
+                                                setDayScheduleLoading(day.date);
+                                                try {
+                                                    const res = await fetch('/api/research/calendar/queue', {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ days: [day], month: selectedMonth, year: selectedYear }),
+                                                    });
+                                                    if (res.ok) {
+                                                        setScheduledDates(prev => new Set([...prev, day.date]));
+                                                    }
+                                                } catch { /* ignore */ }
+                                                setDayScheduleLoading(null);
+                                            }}
+                                        >
+                                            {scheduledDates.has(day.date) ? 'Scheduled' : dayScheduleLoading === day.date ? 'Scheduling...' : 'Schedule This Post'}
+                                        </button>
+                                    </div>
                                 </div>
                             );
                         })()}

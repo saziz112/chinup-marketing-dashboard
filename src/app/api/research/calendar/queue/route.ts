@@ -1,7 +1,7 @@
 /**
  * POST /api/research/calendar/queue
- * Bulk-create DRAFT content_posts from a generated content calendar.
- * Includes duplicate detection — replaces existing DRAFT calendar posts for the same month.
+ * Bulk-schedule content_posts from a generated content calendar.
+ * Includes duplicate detection — replaces existing calendar posts for the same month.
  */
 
 import { NextResponse } from 'next/server';
@@ -39,10 +39,10 @@ export async function POST(req: Request) {
 
         const calendarMonth = `${year}-${String(month).padStart(2, '0')}`;
 
-        // Check for existing DRAFT calendar posts for this month and delete them
+        // Check for existing SCHEDULED calendar posts for this month and delete them
         const existing = await sql`
             SELECT id FROM content_posts
-            WHERE status = 'DRAFT'
+            WHERE status = 'SCHEDULED'
             AND metadata::text LIKE ${`%"calendarMonth":"${calendarMonth}"%`}
         `;
         const replaced = existing.rows.length;
@@ -50,7 +50,7 @@ export async function POST(req: Request) {
         if (replaced > 0) {
             const ids = existing.rows.map(r => r.id);
             for (const id of ids) {
-                await sql`DELETE FROM content_posts WHERE id = ${id} AND status = 'DRAFT'`;
+                await sql`DELETE FROM content_posts WHERE id = ${id} AND status = 'SCHEDULED'`;
             }
         }
 
@@ -84,7 +84,7 @@ export async function POST(req: Request) {
                         ${JSON.stringify([platform])},
                         ${caption},
                         ${'[]'},
-                        ${'DRAFT'},
+                        ${'SCHEDULED'},
                         ${scheduledFor},
                         ${new Date().toISOString()},
                         ${postType},

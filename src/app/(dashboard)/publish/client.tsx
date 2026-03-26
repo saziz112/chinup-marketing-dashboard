@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { upload } from '@vercel/blob/client';
 import { PostRecord, Platform } from '@/lib/content-publisher';
@@ -11,6 +11,7 @@ import {
     Instagram, Facebook, Youtube, Send, Loader2, MapPin,
     Image as ImageIcon, Target, AlertTriangle, XCircle, Zap,
     Upload, Film, X, Edit3, Sparkles, FileText, ChevronDown, ChevronUp,
+    ChevronLeft, ChevronRight, Plus,
     Archive, Eye, User
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -125,7 +126,7 @@ export default function PublishDashboardClient() {
                     />
                 )}
                 {activeTab === 'scheduled' && (
-                    <QueueList posts={scheduled} onUpdate={fetchData} onEdit={handleEditPost} />
+                    <QueueCalendar posts={scheduled} onUpdate={fetchData} onEdit={handleEditPost} />
                 )}
                 {activeTab === 'history' && (
                     <HistoryList
@@ -169,6 +170,18 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
     const [csvLoading, setCsvLoading] = useState(false);
     const [aiLoading, setAiLoading] = useState(false);
     const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+
+    // Creatives bridge state
+    const [showAiGenerate, setShowAiGenerate] = useState(false);
+    const [showGalleryPicker, setShowGalleryPicker] = useState(false);
+    const [genPrompt, setGenPrompt] = useState('');
+    const [genStyle, setGenStyle] = useState('photorealistic');
+    const [genGenerating, setGenGenerating] = useState(false);
+    const [genError, setGenError] = useState<string | null>(null);
+    const [galleryImages, setGalleryImages] = useState<Array<{ id: string; blobUrl: string; prompt: string; style: string; tags: string[] }>>([]);
+    const [gallerySearch, setGallerySearch] = useState('');
+    const [galleryLoading, setGalleryLoading] = useState(false);
+    const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const csvFileRef = useRef<HTMLInputElement>(null);
@@ -321,8 +334,75 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
     const clearForm = () => {
         setCaption(''); setPlatforms([]); setPostType('feed' as PostType); clearMedia();
         setScheduleDate(''); setScheduleTime(''); setFeedback(null); setScheduleError(null);
-        setAiSuggestions([]);
+        setAiSuggestions([]); setShowAiGenerate(false); setShowGalleryPicker(false);
+        setGenPrompt(''); setGenError(null);
         onCancelEdit();
+    };
+
+    // Cleanup generate polling on unmount
+    useEffect(() => {
+        return () => { if (genPollRef.current) clearInterval(genPollRef.current); };
+    }, []);
+
+    const handleInlineGenerate = async () => {
+        if (!genPrompt.trim()) return;
+        setGenGenerating(true);
+        setGenError(null);
+        try {
+            const ar = (postType === 'story' || postType === 'reel') ? '9:16' : '1:1';
+            const res = await fetch('/api/creatives/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: genPrompt.trim(), style: genStyle, aspectRatio: ar, resolution: '2048', variations: 1, tags: [] }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+
+            const task = data.tasks?.[0] || { taskId: data.taskId, id: data.id };
+
+            // Start polling
+            genPollRef.current = setInterval(async () => {
+                try {
+                    const pollRes = await fetch(`/api/creatives/generate?taskId=${task.taskId}&id=${task.id}`);
+                    const pollData = await pollRes.json();
+                    if (pollData.status === 'success' && pollData.blobUrl) {
+                        if (genPollRef.current) clearInterval(genPollRef.current);
+                        setMediaUrls(prev => [...prev, pollData.blobUrl]);
+                        setMediaPreviews(prev => [...prev, pollData.blobUrl]);
+                        setMediaType('photo');
+                        setGenGenerating(false);
+                        setShowAiGenerate(false);
+                        setGenPrompt('');
+                    } else if (pollData.status === 'failed') {
+                        if (genPollRef.current) clearInterval(genPollRef.current);
+                        setGenError(pollData.failMsg || 'Generation failed');
+                        setGenGenerating(false);
+                    }
+                } catch { /* continue polling */ }
+            }, 5000);
+        } catch (err: unknown) {
+            setGenGenerating(false);
+            setGenError(err instanceof Error ? err.message : 'Generation failed');
+        }
+    };
+
+    const fetchGallery = async (search?: string) => {
+        setGalleryLoading(true);
+        try {
+            const params = new URLSearchParams();
+            if (search) params.set('search', search);
+            const res = await fetch(`/api/creatives/history?${params}`);
+            const data = await res.json();
+            setGalleryImages((data.images || []).filter((img: any) => img.blobUrl));
+        } catch { /* ignore */ }
+        setGalleryLoading(false);
+    };
+
+    const selectGalleryImage = (blobUrl: string) => {
+        setMediaUrls(prev => [...prev, blobUrl]);
+        setMediaPreviews(prev => [...prev, blobUrl]);
+        setMediaType('photo');
+        setShowGalleryPicker(false);
     };
 
     const handleCreate = async () => {
@@ -371,7 +451,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                 scheduledFor = new Date(`${scheduleDate}T${scheduleTime}:00${offset}`).toISOString();
             }
 
-            if (editingPost) {
+            if (editingPost && editingPost.id) {
                 // Edit existing scheduled post
                 const res = await fetch('/api/content/publish', {
                     method: 'PUT',
@@ -1000,6 +1080,152 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                     )}
                 </div>
 
+                {/* Creative Options */}
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                        onClick={() => { setShowAiGenerate(!showAiGenerate); setShowGalleryPicker(false); }}
+                        style={{
+                            padding: '7px 14px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 500,
+                            background: showAiGenerate ? 'rgba(234,179,8,0.1)' : 'rgba(255,255,255,0.04)',
+                            border: `1px solid ${showAiGenerate ? 'var(--accent)' : 'rgba(255,255,255,0.08)'}`,
+                            color: showAiGenerate ? 'var(--accent)' : 'var(--text-muted)',
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                        }}
+                    >
+                        <Sparkles size={13} /> AI Generate Image
+                    </button>
+                    <button
+                        onClick={() => { setShowGalleryPicker(true); setShowAiGenerate(false); fetchGallery(); }}
+                        style={{
+                            padding: '7px 14px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 500,
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
+                        }}
+                    >
+                        <ImageIcon size={13} /> Browse Gallery
+                    </button>
+                </div>
+
+                {/* Inline AI Generate */}
+                {showAiGenerate && (
+                    <div style={{ padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                            <input
+                                type="text"
+                                value={genPrompt}
+                                onChange={e => setGenPrompt(e.target.value)}
+                                placeholder="Describe the image you want..."
+                                disabled={genGenerating}
+                                style={{
+                                    flex: 1, padding: '10px 14px', borderRadius: '8px', fontSize: '0.8125rem',
+                                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                                    color: '#fff', outline: 'none',
+                                }}
+                                onKeyDown={e => e.key === 'Enter' && handleInlineGenerate()}
+                            />
+                            <select
+                                value={genStyle}
+                                onChange={e => setGenStyle(e.target.value)}
+                                disabled={genGenerating}
+                                style={{
+                                    padding: '10px 12px', borderRadius: '8px', fontSize: '0.75rem',
+                                    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                    color: '#ccc', outline: 'none',
+                                }}
+                            >
+                                <option value="photorealistic">Photorealistic</option>
+                                <option value="cinematic">Cinematic</option>
+                                <option value="product-shot">Product Shot</option>
+                                <option value="fashion">Fashion</option>
+                                <option value="beauty-closeup">Beauty Close-up</option>
+                                <option value="logo-design">Logo Design</option>
+                            </select>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <button
+                                onClick={handleInlineGenerate}
+                                disabled={genGenerating || !genPrompt.trim()}
+                                style={{
+                                    padding: '8px 18px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 600,
+                                    background: 'var(--accent)', border: 'none', color: '#000', cursor: 'pointer',
+                                    opacity: genGenerating || !genPrompt.trim() ? 0.5 : 1,
+                                    display: 'flex', alignItems: 'center', gap: '6px',
+                                }}
+                            >
+                                {genGenerating ? <Loader2 size={13} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Sparkles size={13} />}
+                                {genGenerating ? 'Generating...' : 'Generate'}
+                            </button>
+                            <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                                Auto: {(postType === 'story' || postType === 'reel') ? '9:16' : '1:1'} · 2K resolution
+                            </span>
+                        </div>
+                        {genError && <p style={{ margin: '8px 0 0', fontSize: '0.75rem', color: '#ef4444' }}>{genError}</p>}
+                    </div>
+                )}
+
+                {/* Gallery Picker Overlay */}
+                {showGalleryPicker && (
+                    <div style={{
+                        position: 'fixed', inset: 0, zIndex: 100,
+                        background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+                        display: 'flex', flexDirection: 'column', padding: '24px',
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                            <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600 }}>Select from Gallery</h3>
+                            <button onClick={() => setShowGalleryPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div style={{ marginBottom: '16px' }}>
+                            <input
+                                type="text"
+                                value={gallerySearch}
+                                onChange={e => { setGallerySearch(e.target.value); fetchGallery(e.target.value); }}
+                                placeholder="Search by prompt..."
+                                style={{
+                                    width: '100%', maxWidth: '400px', padding: '10px 14px', borderRadius: '8px',
+                                    fontSize: '0.8125rem', background: 'rgba(255,255,255,0.06)',
+                                    border: '1px solid rgba(255,255,255,0.1)', color: '#fff', outline: 'none',
+                                }}
+                            />
+                        </div>
+                        <div style={{ flex: 1, overflow: 'auto' }}>
+                            {galleryLoading ? (
+                                <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                                    <Loader2 size={24} style={{ color: 'var(--accent)', animation: 'spin 0.8s linear infinite', margin: '0 auto' }} />
+                                </div>
+                            ) : galleryImages.length === 0 ? (
+                                <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 0' }}>No images found. Generate some on the Creatives page first.</p>
+                            ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px' }}>
+                                    {galleryImages.map(img => (
+                                        <div
+                                            key={img.id}
+                                            onClick={() => selectGalleryImage(img.blobUrl)}
+                                            style={{
+                                                cursor: 'pointer', borderRadius: '10px', overflow: 'hidden',
+                                                border: '1px solid rgba(255,255,255,0.06)', transition: 'border-color 0.15s',
+                                            }}
+                                            onMouseOver={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                                            onMouseOut={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)')}
+                                        >
+                                            <img src={img.blobUrl} alt="" style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
+                                            <div style={{ padding: '8px' }}>
+                                                <p style={{ margin: 0, fontSize: '0.6875rem', color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    {img.prompt}
+                                                </p>
+                                                <span style={{ fontSize: '0.5625rem', color: 'var(--text-muted)' }}>{img.style}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {/* Schedule */}
                 <div>
                     <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-muted)', display: 'block', marginBottom: '12px' }}>Schedule (optional — Eastern Time)</label>
@@ -1069,7 +1295,165 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
     );
 }
 
-// ─── Queue List (Rich Cards) ────────────────────────────────────────────────
+// ─── Queue Calendar View ────────────────────────────────────────────────────
+
+function QueueCalendar({ posts, onUpdate, onEdit }: { posts: PostRecord[], onUpdate: () => void, onEdit: (post: PostRecord) => void }) {
+    const now = new Date();
+    const [currentMonth, setCurrentMonth] = useState(now.getMonth() + 1);
+    const [currentYear, setCurrentYear] = useState(now.getFullYear());
+
+    const handleCancel = async (id: string) => {
+        try {
+            await fetch(`/api/content/publish?id=${id}`, { method: 'DELETE' });
+            onUpdate();
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    // Group posts by ET date
+    const postsByDate = useMemo(() => {
+        const map = new Map<string, PostRecord[]>();
+        for (const post of posts) {
+            if (!post.scheduledFor) continue;
+            const dateStr = new Date(post.scheduledFor).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+            if (!map.has(dateStr)) map.set(dateStr, []);
+            map.get(dateStr)!.push(post);
+        }
+        return map;
+    }, [posts]);
+
+    const goMonth = (delta: number) => {
+        let m = currentMonth + delta;
+        let y = currentYear;
+        if (m > 12) { m = 1; y++; }
+        if (m < 1) { m = 12; y--; }
+        setCurrentMonth(m);
+        setCurrentYear(y);
+    };
+
+    const firstDayOfWeek = new Date(currentYear, currentMonth - 1, 1).getDay();
+    const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+    const totalCells = firstDayOfWeek + daysInMonth;
+    const rows = Math.ceil(totalCells / 7);
+    const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const monthLabel = new Date(currentYear, currentMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+    const handleDayClick = (dateStr: string, dayPosts: PostRecord[]) => {
+        if (dayPosts.length === 0) {
+            // Create new post for this day at 10 AM ET
+            const newPost: PostRecord = {
+                id: '',
+                platforms: [],
+                caption: '',
+                mediaUrls: [],
+                status: 'DRAFT' as any,
+                createdAt: new Date().toISOString(),
+                scheduledFor: `${dateStr}T10:00:00-05:00`,
+            };
+            onEdit(newPost);
+        }
+    };
+
+    return (
+        <div>
+            {/* Month Navigation */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <button onClick={() => goMonth(-1)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '4px 8px' }}>
+                    <ChevronLeft size={18} />
+                </button>
+                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>{monthLabel}</h3>
+                <button onClick={() => goMonth(1)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '4px 8px' }}>
+                    <ChevronRight size={18} />
+                </button>
+            </div>
+
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+                Posts publish automatically at their scheduled time. All times shown in Eastern Time (ET).
+            </p>
+
+            {/* Calendar Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+                {/* Day headers */}
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                    <div key={d} style={{ textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', padding: '8px 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{d}</div>
+                ))}
+
+                {/* Day cells */}
+                {Array.from({ length: rows * 7 }, (_, i) => {
+                    const dayNum = i - firstDayOfWeek + 1;
+                    const isValid = dayNum >= 1 && dayNum <= daysInMonth;
+                    if (!isValid) return <div key={i} style={{ minHeight: 90 }} />;
+
+                    const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+                    const dayPosts = postsByDate.get(dateStr) || [];
+                    const isToday = dateStr === todayStr;
+                    const hasPosts = dayPosts.length > 0;
+
+                    return (
+                        <div
+                            key={i}
+                            onClick={() => handleDayClick(dateStr, dayPosts)}
+                            style={{
+                                minHeight: 90,
+                                background: 'rgba(255,255,255,0.02)',
+                                border: isToday ? '1px solid var(--accent)' : hasPosts ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.03)',
+                                borderLeft: hasPosts ? '3px solid var(--accent)' : undefined,
+                                borderRadius: 6,
+                                padding: '6px',
+                                cursor: 'pointer',
+                                transition: 'border-color 0.15s',
+                            }}
+                        >
+                            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: isToday ? 'var(--accent)' : 'var(--text-muted)', marginBottom: 4 }}>
+                                {dayNum}
+                            </div>
+
+                            {dayPosts.slice(0, 3).map(post => {
+                                const pm = platformMeta[post.platforms[0]];
+                                const time = post.scheduledFor
+                                    ? new Date(post.scheduledFor).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })
+                                    : '';
+                                return (
+                                    <div
+                                        key={post.id}
+                                        onClick={(e) => { e.stopPropagation(); onEdit(post); }}
+                                        style={{
+                                            padding: '3px 5px', borderRadius: 4, marginBottom: 2,
+                                            background: 'rgba(255,255,255,0.04)', cursor: 'pointer',
+                                            fontSize: '0.625rem', lineHeight: 1.3,
+                                            display: 'flex', alignItems: 'center', gap: 3,
+                                        }}
+                                    >
+                                        {pm && <pm.icon size={9} style={{ color: pm.color, flexShrink: 0 }} />}
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#ccc', flex: 1 }}>
+                                            {post.caption?.substring(0, 30) || 'No caption'}
+                                        </span>
+                                        <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{time}</span>
+                                    </div>
+                                );
+                            })}
+
+                            {dayPosts.length > 3 && (
+                                <div style={{ fontSize: '0.5625rem', color: 'var(--accent)', fontWeight: 600, marginTop: 2 }}>
+                                    +{dayPosts.length - 3} more
+                                </div>
+                            )}
+
+                            {dayPosts.length === 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50px', opacity: 0 }}>
+                                    <Plus size={14} style={{ color: 'var(--text-muted)' }} />
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+// ─── Queue List (Rich Cards) — kept as fallback ─────────────────────────────
 
 function QueueList({ posts, onUpdate, onEdit }: { posts: PostRecord[], onUpdate: () => void, onEdit: (post: PostRecord) => void }) {
     const handleCancel = async (id: string) => {
