@@ -592,7 +592,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                 </div>
 
                 <p style={{ fontSize: '0.75rem', color: '#eab308', margin: '0 0 16px' }}>
-                    All times are Eastern Time (ET). Posts publish within 15 minutes of scheduled time.
+                    All times are Eastern Time (ET). Posts publish automatically at their scheduled time.
                 </p>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -1087,7 +1087,7 @@ function QueueList({ posts, onUpdate, onEdit }: { posts: PostRecord[], onUpdate:
                 <Clock size={40} style={{ color: 'var(--text-muted)', margin: '0 auto 12px', opacity: 0.4 }} />
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.9375rem' }}>No scheduled posts.</p>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '4px' }}>
-                    Posts publish within 15 minutes of their scheduled time (ET).
+                    Posts publish automatically at their scheduled time (ET).
                 </p>
             </div>
         );
@@ -1096,7 +1096,7 @@ function QueueList({ posts, onUpdate, onEdit }: { posts: PostRecord[], onUpdate:
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 4px' }}>
-                Posts publish within 15 minutes of their scheduled time. All times shown in Eastern Time (ET).
+                Posts publish automatically at their scheduled time. All times shown in Eastern Time (ET).
             </p>
             {posts.map(post => {
                 const meta = post.metadata as any;
