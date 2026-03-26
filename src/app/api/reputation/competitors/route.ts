@@ -117,7 +117,16 @@ export async function GET(request: Request) {
                 weaknesses: compInsight.weaknesses,
                 instagramHandle: comp.username,
                 followersCount: comp.followersCount,
-                mediaCount: comp.mediaCount
+                mediaCount: comp.mediaCount,
+                // Engagement data (Phase 1 expansion)
+                avgEngagementRate: comp.avgEngagementRate,
+                postingFrequency: comp.postingFrequency,
+                contentMix: comp.contentMix,
+                topHashtags: comp.topHashtags,
+                bestPost: comp.bestPost,
+                engagementTrend: comp.engagementTrend,
+                viralPosts: comp.viralPosts,
+                recentPosts: comp.recentPosts,
             };
         });
 

@@ -589,10 +589,28 @@ export async function getFBReviews(locationId?: LocationId): Promise<FBBusinessD
 
 // --- Instagram Competitor Tracking ---
 
+export interface IGCompetitorPost {
+    caption: string;
+    likeCount: number;
+    commentsCount: number;
+    mediaType: 'IMAGE' | 'VIDEO' | 'CAROUSEL_ALBUM';
+    permalink: string;
+    timestamp: string;
+}
+
 export interface IGCompetitorMetrics {
     username: string;
     followersCount: number;
     mediaCount: number;
+    // Engagement data (from recent 12 posts)
+    recentPosts?: IGCompetitorPost[];
+    avgEngagementRate?: number;
+    postingFrequency?: number; // posts per week
+    contentMix?: { images: number; videos: number; carousels: number };
+    topHashtags?: { tag: string; count: number }[];
+    bestPost?: IGCompetitorPost & { engagementRate: number };
+    engagementTrend?: 'growing' | 'declining' | 'stable';
+    viralPosts?: (IGCompetitorPost & { engagementRate: number; multiplier: number })[];
 }
 
 function getMockCompetitors(locationId?: LocationId): IGCompetitorMetrics[] {
@@ -629,7 +647,90 @@ function getMockCompetitors(locationId?: LocationId): IGCompetitorMetrics[] {
 }
 
 /**
+ * Compute engagement metrics from a competitor's recent posts.
+ */
+function computeCompetitorEngagement(
+    username: string,
+    followersCount: number,
+    posts: IGCompetitorPost[]
+): Partial<IGCompetitorMetrics> {
+    if (!posts.length) return {};
+
+    // Avg engagement rate
+    const engagementRates = posts.map(p =>
+        followersCount > 0 ? (p.likeCount + p.commentsCount) / followersCount : 0
+    );
+    const avgEngagementRate = engagementRates.reduce((a, b) => a + b, 0) / engagementRates.length;
+
+    // Posting frequency (posts per week)
+    const timestamps = posts.map(p => new Date(p.timestamp).getTime()).sort((a, b) => a - b);
+    const spanDays = timestamps.length > 1
+        ? (timestamps[timestamps.length - 1] - timestamps[0]) / (1000 * 60 * 60 * 24)
+        : 7;
+    const postingFrequency = spanDays > 0 ? (posts.length / spanDays) * 7 : posts.length;
+
+    // Content mix
+    const contentMix = { images: 0, videos: 0, carousels: 0 };
+    for (const p of posts) {
+        if (p.mediaType === 'IMAGE') contentMix.images++;
+        else if (p.mediaType === 'VIDEO') contentMix.videos++;
+        else if (p.mediaType === 'CAROUSEL_ALBUM') contentMix.carousels++;
+    }
+
+    // Top hashtags from captions
+    const hashtagCounts = new Map<string, number>();
+    for (const p of posts) {
+        const tags = p.caption.match(/#\w+/g) || [];
+        for (const tag of tags) {
+            const lower = tag.toLowerCase();
+            hashtagCounts.set(lower, (hashtagCounts.get(lower) || 0) + 1);
+        }
+    }
+    const topHashtags = Array.from(hashtagCounts.entries())
+        .map(([tag, count]) => ({ tag, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10);
+
+    // Best performing post
+    const postsWithEngagement = posts.map(p => ({
+        ...p,
+        engagementRate: followersCount > 0 ? (p.likeCount + p.commentsCount) / followersCount : 0,
+    }));
+    const bestPost = postsWithEngagement.reduce((best, p) =>
+        (p.likeCount + p.commentsCount) > (best.likeCount + best.commentsCount) ? p : best
+    );
+
+    // Engagement trend (first half vs second half by time)
+    const sorted = [...postsWithEngagement].sort((a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    const half = Math.floor(sorted.length / 2);
+    const olderAvg = half > 0 ? sorted.slice(0, half).reduce((s, p) => s + p.engagementRate, 0) / half : 0;
+    const newerAvg = half > 0 ? sorted.slice(half).reduce((s, p) => s + p.engagementRate, 0) / (sorted.length - half) : 0;
+    const trendDiff = olderAvg > 0 ? (newerAvg - olderAvg) / olderAvg : 0;
+    const engagementTrend: 'growing' | 'declining' | 'stable' =
+        trendDiff > 0.15 ? 'growing' : trendDiff < -0.15 ? 'declining' : 'stable';
+
+    // Viral posts: engagement > 3x average AND likes+comments > 100
+    const viralPosts = postsWithEngagement
+        .filter(p => p.engagementRate > avgEngagementRate * 3 && (p.likeCount + p.commentsCount) > 100)
+        .map(p => ({ ...p, multiplier: Math.round(p.engagementRate / avgEngagementRate * 10) / 10 }))
+        .sort((a, b) => b.multiplier - a.multiplier);
+
+    return {
+        avgEngagementRate,
+        postingFrequency: Math.round(postingFrequency * 10) / 10,
+        contentMix,
+        topHashtags,
+        bestPost,
+        engagementTrend,
+        viralPosts: viralPosts.length > 0 ? viralPosts : undefined,
+    };
+}
+
+/**
  * Fetches Competitor Metrics using Instagram Business Discovery API.
+ * Now includes recent 12 posts with engagement data, content mix, and viral detection.
  */
 export async function getIGCompetitorMetrics(locationId?: LocationId): Promise<IGCompetitorMetrics[]> {
     const igUserId = process.env.META_IG_USER_ID;
@@ -655,25 +756,42 @@ export async function getIGCompetitorMetrics(locationId?: LocationId): Promise<I
 
     const results: IGCompetitorMetrics[] = [];
 
-    console.log(`[Meta] Fetching live IG Competitors for ${usernamesToFetch.length} profiles...`);
+    console.log(`[Meta] Fetching live IG Competitors (with engagement) for ${usernamesToFetch.length} profiles...`);
 
     // Fetch sequentially to handle errors gracefully per competitor
     for (const username of usernamesToFetch) {
         try {
-            const url = `https://graph.facebook.com/v19.0/${igUserId}?fields=business_discovery.username(${username}){username,followers_count,media_count}&access_token=${pageToken}`;
+            // Expanded query: profile + recent 12 posts with engagement data
+            const fields = `business_discovery.username(${username}){username,followers_count,media_count,media.limit(12){caption,like_count,comments_count,media_type,permalink,timestamp}}`;
+            const url = `${GRAPH_BASE}/${igUserId}?fields=${fields}&access_token=${pageToken}`;
             const res = await fetch(url);
 
             if (res.ok) {
                 const data = await res.json();
-                if (data.business_discovery) {
+                const bd = data.business_discovery;
+                if (bd) {
+                    const recentPosts: IGCompetitorPost[] = (bd.media?.data || []).map((m: any) => ({
+                        caption: m.caption || '',
+                        likeCount: m.like_count || 0,
+                        commentsCount: m.comments_count || 0,
+                        mediaType: m.media_type as IGCompetitorPost['mediaType'],
+                        permalink: m.permalink || '',
+                        timestamp: m.timestamp || '',
+                    }));
+
+                    const engagement = computeCompetitorEngagement(
+                        bd.username, bd.followers_count, recentPosts
+                    );
+
                     results.push({
-                        username: data.business_discovery.username,
-                        followersCount: data.business_discovery.followers_count,
-                        mediaCount: data.business_discovery.media_count
+                        username: bd.username,
+                        followersCount: bd.followers_count,
+                        mediaCount: bd.media_count,
+                        recentPosts,
+                        ...engagement,
                     });
                 }
             } else {
-                // If a specific username fails (e.g. invalid account), log and fallback to the mock data for that specific account
                 console.warn(`[Meta] Failed to fetch competitor ${username}. Falling back to mock data for this user.`);
                 const mockFallback = targetMocks.find(m => m.username === username);
                 if (mockFallback) results.push(mockFallback);

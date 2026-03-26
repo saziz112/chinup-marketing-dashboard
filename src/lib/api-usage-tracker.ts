@@ -3,7 +3,7 @@
 
 import { sql } from '@vercel/postgres';
 
-type ApiName = 'mindbody' | 'meta' | 'metaAds' | 'youtube' | 'googleAds' | 'googleBusiness' | 'ghl' | 'yelp' | 'realself' | 'googleSearchConsole' | 'kieAi';
+type ApiName = 'mindbody' | 'meta' | 'metaAds' | 'youtube' | 'googleAds' | 'googleBusiness' | 'ghl' | 'yelp' | 'realself' | 'googleSearchConsole' | 'kieAi' | 'apify';
 
 interface CallRecord {
   timestamp: number;
@@ -108,6 +108,12 @@ const API_CONFIGS: Record<ApiName, {
     displayName: 'Kie.ai (Creatives)',
     quotaLimit: null,
     quotaUnit: 'generations',
+    quotaPeriod: 'day',
+  },
+  apify: {
+    displayName: 'Apify (TikTok)',
+    quotaLimit: null,
+    quotaUnit: 'runs',
     quotaPeriod: 'day',
   }
 };

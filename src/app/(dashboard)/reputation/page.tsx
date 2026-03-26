@@ -628,13 +628,19 @@ export default function ReputationPage() {
         const maxReviews = Math.max(...comps.map((c: any) => c.reviewCount || 0));
         const maxFollowers = Math.max(...comps.map((c: any) => c.followersCount || 0));
         const maxMedia = Math.max(...comps.map((c: any) => c.mediaCount || 0));
+        const maxEngagement = Math.max(...comps.map((c: any) => c.avgEngagementRate || 0));
 
         return comps.map((c: any) => {
             const ratingScore = ((c.averageRating || 0) / 5) * 100;
             const reviewScore = maxReviews > 0 ? ((c.reviewCount || 0) / maxReviews) * 100 : 0;
             const followerScore = maxFollowers > 0 ? ((c.followersCount || 0) / maxFollowers) * 100 : 0;
             const contentScore = maxMedia > 0 ? ((c.mediaCount || 0) / maxMedia) * 100 : 0;
-            const score = Math.round(ratingScore * 0.4 + reviewScore * 0.2 + followerScore * 0.2 + contentScore * 0.2);
+            const engagementScore = maxEngagement > 0 ? ((c.avgEngagementRate || 0) / maxEngagement) * 100 : 0;
+            // Include engagement in score if available
+            const hasEngagement = maxEngagement > 0;
+            const score = hasEngagement
+                ? Math.round(ratingScore * 0.3 + reviewScore * 0.15 + followerScore * 0.15 + contentScore * 0.15 + engagementScore * 0.25)
+                : Math.round(ratingScore * 0.4 + reviewScore * 0.2 + followerScore * 0.2 + contentScore * 0.2);
             return { ...c, calculatedScore: score };
         });
     }, [compData]);
@@ -645,11 +651,16 @@ export default function ReputationPage() {
         const maxFollowers = Math.max(...competitorScores.map((c: any) => c.followersCount || 0));
         const maxMedia = Math.max(...competitorScores.map((c: any) => c.mediaCount || 0));
 
+        const maxEngagement = Math.max(...competitorScores.map((c: any) => c.avgEngagementRate || 0));
+        const maxPostFreq = Math.max(...competitorScores.map((c: any) => c.postingFrequency || 0));
+
         const metrics = [
             { label: 'Rating', getValue: (c: any) => Math.round(((c.averageRating || 0) / 5) * 100) },
             { label: 'Reviews', getValue: (c: any) => maxReviews > 0 ? Math.round(((c.reviewCount || 0) / maxReviews) * 100) : 0 },
             { label: 'Followers', getValue: (c: any) => maxFollowers > 0 ? Math.round(((c.followersCount || 0) / maxFollowers) * 100) : 0 },
             { label: 'Content', getValue: (c: any) => maxMedia > 0 ? Math.round(((c.mediaCount || 0) / maxMedia) * 100) : 0 },
+            ...(maxEngagement > 0 ? [{ label: 'Engagement', getValue: (c: any) => maxEngagement > 0 ? Math.round(((c.avgEngagementRate || 0) / maxEngagement) * 100) : 0 }] : []),
+            ...(maxPostFreq > 0 ? [{ label: 'Post Frequency', getValue: (c: any) => maxPostFreq > 0 ? Math.round(((c.postingFrequency || 0) / maxPostFreq) * 100) : 0 }] : []),
         ];
 
         return metrics.map(m => {
@@ -774,6 +785,117 @@ export default function ReputationPage() {
                                             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Followers</div>
                                         </div>
                                     </div>
+
+                                    {/* Engagement Metrics (if available) */}
+                                    {c.avgEngagementRate != null && (
+                                        <div style={{ marginBottom: '1.5rem' }}>
+                                            <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>Engagement</div>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                                                <div style={{ textAlign: 'center', padding: '0.5rem', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                                                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: c.avgEngagementRate > 0.03 ? '#4ade80' : c.avgEngagementRate > 0.01 ? '#fbbf24' : '#f87171' }}>
+                                                        {(c.avgEngagementRate * 100).toFixed(1)}%
+                                                    </div>
+                                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Eng. Rate</div>
+                                                </div>
+                                                <div style={{ textAlign: 'center', padding: '0.5rem', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                                                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                                                        {c.postingFrequency?.toFixed(1) ?? '—'}/wk
+                                                    </div>
+                                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Post Freq</div>
+                                                </div>
+                                                <div style={{ textAlign: 'center', padding: '0.5rem', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                                                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: c.engagementTrend === 'growing' ? '#4ade80' : c.engagementTrend === 'declining' ? '#f87171' : '#fbbf24' }}>
+                                                        {c.engagementTrend === 'growing' ? 'Up' : c.engagementTrend === 'declining' ? 'Down' : 'Flat'}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Trend</div>
+                                                </div>
+                                            </div>
+                                            {/* Content Mix */}
+                                            {c.contentMix && (
+                                                <div style={{ marginBottom: '0.75rem' }}>
+                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Content Mix</div>
+                                                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                                        {c.contentMix.videos > 0 && (
+                                                            <span style={{ fontSize: '0.7rem', color: '#c084fc', background: 'rgba(192, 132, 252, 0.1)', padding: '2px 8px', borderRadius: '12px', border: '1px solid rgba(192, 132, 252, 0.2)' }}>
+                                                                Reels {Math.round((c.contentMix.videos / (c.contentMix.images + c.contentMix.videos + c.contentMix.carousels)) * 100)}%
+                                                            </span>
+                                                        )}
+                                                        {c.contentMix.images > 0 && (
+                                                            <span style={{ fontSize: '0.7rem', color: '#60a5fa', background: 'rgba(96, 165, 250, 0.1)', padding: '2px 8px', borderRadius: '12px', border: '1px solid rgba(96, 165, 250, 0.2)' }}>
+                                                                Images {Math.round((c.contentMix.images / (c.contentMix.images + c.contentMix.videos + c.contentMix.carousels)) * 100)}%
+                                                            </span>
+                                                        )}
+                                                        {c.contentMix.carousels > 0 && (
+                                                            <span style={{ fontSize: '0.7rem', color: '#fbbf24', background: 'rgba(251, 191, 36, 0.1)', padding: '2px 8px', borderRadius: '12px', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
+                                                                Carousels {Math.round((c.contentMix.carousels / (c.contentMix.images + c.contentMix.videos + c.contentMix.carousels)) * 100)}%
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {/* Top Hashtags */}
+                                            {c.topHashtags?.length > 0 && (
+                                                <div style={{ marginBottom: '0.75rem' }}>
+                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Top Hashtags</div>
+                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                                                        {c.topHashtags.slice(0, 6).map((ht: any, i: number) => (
+                                                            <span key={i} style={{ fontSize: '0.68rem', color: '#38bdf8', background: 'rgba(56, 189, 248, 0.08)', padding: '2px 6px', borderRadius: '10px' }}>
+                                                                {ht.tag} ({ht.count})
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {/* Best Post */}
+                                            {c.bestPost && (
+                                                <div style={{ padding: '0.5rem', backgroundColor: 'rgba(255,215,0,0.05)', borderRadius: '8px', border: '1px solid rgba(255,215,0,0.15)' }}>
+                                                    <div style={{ fontSize: '0.7rem', color: 'var(--accent-color)', fontWeight: 600, marginBottom: '3px' }}>Best Performing Post</div>
+                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>
+                                                        {c.bestPost.caption?.substring(0, 100)}{c.bestPost.caption?.length > 100 ? '...' : ''}
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: '0.75rem', marginTop: '4px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                                        <span>{formatNumber(c.bestPost.likeCount)} likes</span>
+                                                        <span>{formatNumber(c.bestPost.commentsCount)} comments</span>
+                                                        <span style={{ color: '#4ade80' }}>{(c.bestPost.engagementRate * 100).toFixed(1)}% eng</span>
+                                                    </div>
+                                                    {c.bestPost.permalink && (
+                                                        <a href={c.bestPost.permalink} target="_blank" rel="noopener noreferrer"
+                                                            style={{ fontSize: '0.68rem', color: '#60a5fa', textDecoration: 'none', marginTop: '4px', display: 'inline-block' }}>
+                                                            View on Instagram →
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Viral Posts Alert */}
+                                    {c.viralPosts?.length > 0 && (
+                                        <div style={{ marginBottom: '1.5rem', padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.06)', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#f87171', marginBottom: '0.5rem' }}>
+                                                Viral Content ({c.viralPosts.length} post{c.viralPosts.length > 1 ? 's' : ''})
+                                            </div>
+                                            {c.viralPosts.slice(0, 2).map((vp: any, i: number) => (
+                                                <div key={i} style={{ marginBottom: i < c.viralPosts.length - 1 ? '0.5rem' : 0, paddingBottom: i < c.viralPosts.length - 1 ? '0.5rem' : 0, borderBottom: i < c.viralPosts.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.3 }}>
+                                                        {vp.caption?.substring(0, 80)}{vp.caption?.length > 80 ? '...' : ''}
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '3px', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                                        <span>{formatNumber(vp.likeCount)} likes</span>
+                                                        <span>{formatNumber(vp.commentsCount)} comments</span>
+                                                        <span style={{ color: '#f87171', fontWeight: 600 }}>{vp.multiplier}x avg</span>
+                                                        <span>{vp.mediaType === 'VIDEO' ? 'Reel' : vp.mediaType === 'CAROUSEL_ALBUM' ? 'Carousel' : 'Image'}</span>
+                                                    </div>
+                                                    {vp.permalink && (
+                                                        <a href={vp.permalink} target="_blank" rel="noopener noreferrer"
+                                                            style={{ fontSize: '0.65rem', color: '#60a5fa', textDecoration: 'none', marginTop: '2px', display: 'inline-block' }}>
+                                                            View →
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
 
                                     {/* Strengths */}
                                     <div style={{ marginBottom: '1rem' }}>

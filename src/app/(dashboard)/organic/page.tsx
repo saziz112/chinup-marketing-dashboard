@@ -11,7 +11,7 @@ import {
 import { format, parseISO, getHours } from 'date-fns';
 
 type Period = '7d' | '30d' | '90d';
-type PlatformTab = 'All Platforms' | 'Instagram' | 'Facebook' | 'YouTube' | 'Content';
+type PlatformTab = 'All Platforms' | 'Instagram' | 'Facebook' | 'YouTube' | 'TikTok' | 'Content';
 
 interface IGData {
     configured: boolean;
@@ -148,7 +148,7 @@ interface FBData {
     }>;
 }
 
-const PLATFORMS: PlatformTab[] = ['All Platforms', 'Instagram', 'Facebook', 'YouTube', 'Content'];
+const PLATFORMS: PlatformTab[] = ['All Platforms', 'Instagram', 'Facebook', 'YouTube', 'TikTok', 'Content'];
 
 const TOOLTIP_STYLE = {
     background: '#0A225C',
@@ -179,6 +179,7 @@ export default function OrganicPage() {
             instagram: 'Instagram',
             facebook: 'Facebook',
             youtube: 'YouTube',
+            tiktok: 'TikTok',
             content: 'Content',
         };
         return map[tab || ''] || 'All Platforms';
@@ -191,6 +192,7 @@ export default function OrganicPage() {
     const [igData, setIGData] = useState<IGData | null>(null);
     const [fbData, setFBData] = useState<FBData | null>(null);
     const [ytData, setYTData] = useState<YTData | null>(null);
+    const [ttData, setTTData] = useState<any | null>(null);
 
     // Content tab state
     const [contentPosts, setContentPosts] = useState<ContentPost[]>([]);
@@ -203,15 +205,17 @@ export default function OrganicPage() {
     const fetchData = useCallback(async () => {
         setLoading(true);
 
-        const [igRes, fbRes, ytRes] = await Promise.allSettled([
+        const [igRes, fbRes, ytRes, ttRes] = await Promise.allSettled([
             fetch(`/api/organic/instagram?period=${period}`).then(r => r.json()),
             fetch(`/api/organic/facebook?period=${period}`).then(r => r.json()),
             fetch(`/api/organic/youtube?period=${period}`).then(r => r.json()),
+            fetch(`/api/organic/tiktok?period=${period}`).then(r => r.json()),
         ]);
 
         setIGData(igRes.status === 'fulfilled' ? igRes.value : null);
         setFBData(fbRes.status === 'fulfilled' ? fbRes.value : null);
         setYTData(ytRes.status === 'fulfilled' ? ytRes.value : null);
+        setTTData(ttRes.status === 'fulfilled' ? ttRes.value : null);
         setLoading(false);
     }, [period]);
 
@@ -234,6 +238,7 @@ export default function OrganicPage() {
     const igConfigured = igData?.configured && !igData?.error;
     const fbConfigured = fbData?.configured && !fbData?.error;
     const ytConfigured = ytData?.configured && !ytData?.error;
+    const ttConfigured = ttData?.configured && !ttData?.error;
 
     // Combined daily data for "All Platforms" view
     const combinedDaily = (() => {
@@ -419,6 +424,32 @@ export default function OrganicPage() {
                                 <div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Engagement</div>
                                     <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{ytData.summary.engagementRate}%</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {ttConfigured && ttData?.summary && (
+                        <div className={`section-card ${activeTab === 'TikTok' ? 'active-tab-card' : ''}`} style={{ cursor: 'pointer', borderColor: activeTab === 'TikTok' ? 'var(--accent-primary)' : 'var(--border)' }} onClick={() => setActiveTab('TikTok')}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(0, 0, 0, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '1rem', color: '#fff', backgroundImage: 'linear-gradient(135deg, #25F4EE, #FE2C55)' }}>T</div>
+                                <div>
+                                    <div style={{ fontWeight: 600 }}>TikTok</div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>@{ttData.profile?.username}</div>
+                                </div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                                <div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Followers</div>
+                                    <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{formatNumber(ttData.summary.followers)}</div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Avg Views</div>
+                                    <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{formatNumber(ttData.summary.avgViews)}</div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Engagement</div>
+                                    <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{(ttData.summary.engagementRate * 100).toFixed(1)}%</div>
                                 </div>
                             </div>
                         </div>
@@ -817,6 +848,175 @@ export default function OrganicPage() {
     };
 
 
+    // --- TikTok Tab ---
+    const renderTikTok = () => {
+        if (ttData?.error) return renderError('TikTok', ttData.error);
+        if (!ttConfigured) {
+            return (
+                <div className="section-card">
+                    <div className="empty-state">
+                        <h3>TikTok not connected</h3>
+                        <p>Add APIFY_API_TOKEN and TIKTOK_USERNAME to environment variables.</p>
+                    </div>
+                </div>
+            );
+        }
+        const s = ttData!.summary!;
+        const videos = ttData!.videos || [];
+
+        return (
+            <>
+                {/* KPI Cards */}
+                <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
+                    <div className="metric-card">
+                        <div className="label">Followers</div>
+                        <div className="value">{formatNumber(s.followers)}</div>
+                        <div className="change">{formatNumber(s.totalLikes)} total likes</div>
+                    </div>
+                    <div className="metric-card">
+                        <div className="label">Avg Views</div>
+                        <div className="value">{formatNumber(s.avgViews)}</div>
+                        <div className="change">{videos.length} videos in period</div>
+                    </div>
+                    <div className="metric-card">
+                        <div className="label">Engagement Rate</div>
+                        <div className="value">{(s.engagementRate * 100).toFixed(1)}%</div>
+                        <div className="change">(Likes+Comments+Shares)/Views</div>
+                    </div>
+                    <div className="metric-card">
+                        <div className="label">Saves Rate</div>
+                        <div className="value">{(s.savesRate * 100).toFixed(2)}%</div>
+                        <div className="change">Bookmarks / Views</div>
+                    </div>
+                    <div className="metric-card">
+                        <div className="label">Post Cadence</div>
+                        <div className="value">{s.postingCadence}/wk</div>
+                        <div className="change">{formatNumber(s.videoCount)} total videos</div>
+                    </div>
+                </div>
+
+                {/* Breakout Videos */}
+                {s.breakoutVideos?.length > 0 && (
+                    <div className="section-card" style={{ borderColor: 'rgba(254, 44, 85, 0.3)', backgroundColor: 'rgba(254, 44, 85, 0.03)' }}>
+                        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            Breakout Videos
+                            <span style={{ fontSize: '0.7rem', background: 'rgba(254, 44, 85, 0.15)', color: '#FE2C55', padding: '2px 8px', borderRadius: '10px' }}>
+                                {s.breakoutVideos.length} hit{s.breakoutVideos.length > 1 ? 's' : ''}
+                            </span>
+                        </h3>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                            {s.breakoutVideos.map((v: any, i: number) => (
+                                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {v.description || 'Untitled'}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                            <span>{formatNumber(v.views)} views</span>
+                                            <span>{formatNumber(v.likes)} likes</span>
+                                            <span>{formatNumber(v.comments)} comments</span>
+                                            {v.musicTitle && <span>Sound: {v.musicTitle}</span>}
+                                        </div>
+                                    </div>
+                                    <div style={{ textAlign: 'right', marginLeft: '1rem', flexShrink: 0 }}>
+                                        <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#FE2C55' }}>{v.viewMultiplier}x</div>
+                                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>vs avg</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Top Sounds + Top Hashtags side by side */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    {s.topSounds?.length > 0 && (
+                        <div className="section-card">
+                            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>Top Sounds</h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                {s.topSounds.map((sound: any, i: number) => (
+                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: i < s.topSounds.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+                                        <div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>{sound.title}</div>
+                                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{sound.author} ({sound.count}x used)</div>
+                                        </div>
+                                        <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{formatNumber(sound.avgViews)} avg views</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {s.topHashtags?.length > 0 && (
+                        <div className="section-card">
+                            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>Top Hashtags</h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                {s.topHashtags.map((ht: any, i: number) => (
+                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: i < s.topHashtags.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+                                        <div style={{ fontSize: '0.85rem', color: '#25F4EE' }}>{ht.tag} <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>({ht.count}x)</span></div>
+                                        <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{formatNumber(ht.avgViews)} avg views</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Recent Videos Table */}
+                {videos.length > 0 && (
+                    <div className="section-card">
+                        <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>Recent Videos</h3>
+                        <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                        <th style={{ textAlign: 'left', padding: '0.5rem', color: 'var(--text-muted)', fontWeight: 500 }}>Description</th>
+                                        <th style={{ textAlign: 'right', padding: '0.5rem', color: 'var(--text-muted)', fontWeight: 500 }}>Views</th>
+                                        <th style={{ textAlign: 'right', padding: '0.5rem', color: 'var(--text-muted)', fontWeight: 500 }}>Likes</th>
+                                        <th style={{ textAlign: 'right', padding: '0.5rem', color: 'var(--text-muted)', fontWeight: 500 }}>Comments</th>
+                                        <th style={{ textAlign: 'right', padding: '0.5rem', color: 'var(--text-muted)', fontWeight: 500 }}>Shares</th>
+                                        <th style={{ textAlign: 'right', padding: '0.5rem', color: 'var(--text-muted)', fontWeight: 500 }}>Saves</th>
+                                        <th style={{ textAlign: 'left', padding: '0.5rem', color: 'var(--text-muted)', fontWeight: 500 }}>Sound</th>
+                                        <th style={{ textAlign: 'left', padding: '0.5rem', color: 'var(--text-muted)', fontWeight: 500 }}>Date</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {videos.slice(0, 20).map((v: any, i: number) => (
+                                        <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                            <td style={{ padding: '0.5rem', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                <a href={v.videoUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-primary)', textDecoration: 'none' }}>
+                                                    {v.description?.substring(0, 50) || 'Untitled'}{v.description?.length > 50 ? '...' : ''}
+                                                </a>
+                                            </td>
+                                            <td style={{ textAlign: 'right', padding: '0.5rem', fontWeight: 600 }}>{formatNumber(v.views)}</td>
+                                            <td style={{ textAlign: 'right', padding: '0.5rem' }}>{formatNumber(v.likes)}</td>
+                                            <td style={{ textAlign: 'right', padding: '0.5rem' }}>{formatNumber(v.comments)}</td>
+                                            <td style={{ textAlign: 'right', padding: '0.5rem' }}>{formatNumber(v.shares)}</td>
+                                            <td style={{ textAlign: 'right', padding: '0.5rem' }}>{formatNumber(v.saves)}</td>
+                                            <td style={{ padding: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {v.musicTitle || '—'}
+                                            </td>
+                                            <td style={{ padding: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                                {v.createTime ? new Date(v.createTime * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* Scraped timestamp */}
+                {ttData?.scrapedAt && (
+                    <div style={{ textAlign: 'right', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                        Data scraped: {new Date(ttData.scrapedAt).toLocaleString()}
+                    </div>
+                )}
+            </>
+        );
+    };
+
     // --- Content Tab ---
     const renderContent = () => {
         if (contentLoading) {
@@ -1144,6 +1344,7 @@ export default function OrganicPage() {
                     {activeTab === 'Instagram' && renderInstagram()}
                     {activeTab === 'Facebook' && renderFacebook()}
                     {activeTab === 'YouTube' && renderYouTube()}
+                    {activeTab === 'TikTok' && renderTikTok()}
                     {activeTab === 'Content' && renderContent()}
                 </>
             )}
