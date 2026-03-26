@@ -933,7 +933,7 @@ export default function ResearchPage() {
                                             <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '0.8125rem' }}>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
                                                     <span style={{ color: 'var(--text-primary)' }}>{t.name}</span>
-                                                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.count} bookings</span>
+                                                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.count} appointments</span>
                                                 </div>
                                                 <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.05)', overflow: 'hidden' }}>
                                                     <div style={{ width: `${(t.count / maxCount) * 100}%`, height: '100%', borderRadius: 2, background: 'var(--accent-primary)' }} />

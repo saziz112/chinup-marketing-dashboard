@@ -110,7 +110,7 @@ export async function GET(req: NextRequest) {
 
         const topTreatments = treatmentsRes.status === 'fulfilled'
             ? treatmentsRes.value.rows.map(t => ({
-                name: t.name,
+                name: String(t.name).replace(/\s*-\s*Service\s*$/i, ''),
                 count: Number(t.count) || 0,
             }))
             : [];
