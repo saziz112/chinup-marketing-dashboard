@@ -1,33 +1,37 @@
 /**
  * POST /api/research/trends
  * Generate AI-powered trending topic ideas for content planning.
- * Uses Claude Haiku + 8 real data sources from Postgres for maximum context.
+ * Uses Claude Haiku + 10 real data sources from Postgres + competitor IG data.
  *
- * Data Sources (all Postgres, $0 API cost):
+ * Data Sources ($0 API cost, all cached/Postgres):
  *   1. Top 10 posts by engagement (social_posts)
  *   2. Top 15 Search Console queries (search_console_daily)
  *   3. Treatment booking trends — this month vs last month (mb_appointments_history)
- *   4. Patient review themes — recent 5-star reviews (reviews)
+ *   4. Patient review themes — recent reviews (reviews)
  *   5. Conversion-qualified lead sources — GHL→MindBody match (3-table join)
  *   6. Content gap analysis — 40 service keywords (social_posts)
  *   7. Format performance breakdown — avg engagement by post_type (social_posts)
  *   8. Top ad campaign themes (ad_campaigns + ad_metrics_daily)
+ *   9. Competitor content intelligence — 7 Atlanta-area med spas (IG Business Discovery, 4h cache)
+ *  10. Treatment revenue flags — top earners from MindBody sales (mb_sales_history)
+ *  11. Performance feedback — how past suggested topics performed (content_posts + social_posts)
  */
 
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@vercel/postgres';
+import { getIGCompetitorMetrics, type IGCompetitorMetrics } from '@/lib/integrations/meta-organic';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-const MONTH_NAMES = [
+export const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
 // Seasonal context per month
-const SEASONAL_CONTEXT: Record<number, string> = {
+export const SEASONAL_CONTEXT: Record<number, string> = {
     1: 'New Year resolutions, fresh start, "New Year New You" promotions, dry winter skin',
     2: 'Valentine\'s Day (Feb 14), self-love, couples treatments, winter skincare',
     3: 'Spring renewal, Women\'s History Month, spring break prep, daylight savings',
@@ -42,58 +46,213 @@ const SEASONAL_CONTEXT: Record<number, string> = {
     12: 'Holiday parties, year-end gift cards, New Year prep, winter hydration, holiday specials',
 };
 
-// Full service keyword map from MindBody product catalog ($2.1M revenue)
-const SERVICE_KEYWORDS = [
-    // Neurotoxins ($797K)
-    { keyword: 'botox', label: 'Botox ($172K)' },
-    { keyword: 'dysport', label: 'Dysport ($625K — #1 revenue)' },
+// Full service keyword map from MindBody product catalog
+export const SERVICE_KEYWORDS = [
+    // Neurotoxins
+    { keyword: 'botox', label: 'Botox' },
+    { keyword: 'dysport', label: 'Dysport' },
     { keyword: 'hyperhidrosis', label: 'Hyperhidrosis' },
-    // Dermal Fillers — Restylane ($687K)
-    { keyword: 'restylane', label: 'Restylane ($687K)' },
-    { keyword: 'lip filler', label: 'Lip Filler ($101K)' },
-    { keyword: 'midface', label: 'Midface ($291K)' },
-    { keyword: 'chin filler', label: 'Chin Filler ($135K)' },
-    { keyword: 'cheek filler', label: 'Cheek Filler ($113K)' },
-    { keyword: 'under eye filler', label: 'Under-Eye Filler ($21K)' },
+    // Dermal Fillers — Restylane
+    { keyword: 'restylane', label: 'Restylane' },
+    { keyword: 'lip filler', label: 'Lip Filler' },
+    { keyword: 'midface', label: 'Midface' },
+    { keyword: 'chin filler', label: 'Chin Filler' },
+    { keyword: 'cheek filler', label: 'Cheek Filler' },
+    { keyword: 'under eye filler', label: 'Under-Eye Filler' },
     { keyword: 'profile balancing', label: 'Profile Balancing' },
-    { keyword: 'sculptra', label: 'Sculptra ($159K)' },
+    { keyword: 'sculptra', label: 'Sculptra' },
     { keyword: 'juvederm', label: 'Juvederm' },
     // Dissolving / Contouring
-    { keyword: 'kybella', label: 'Kybella ($16K)' },
-    { keyword: 'hylenex', label: 'Filler Dissolving ($8K)' },
+    { keyword: 'kybella', label: 'Kybella' },
+    { keyword: 'hylenex', label: 'Filler Dissolving' },
     { keyword: 'double chin', label: 'Double Chin' },
     { keyword: 'platysmal', label: 'Platysmal Bands' },
     // PRP & Growth Factors
-    { keyword: 'prp', label: 'PRP ($3.4K)' },
-    { keyword: 'pdgf', label: 'PDGF ($10K)' },
+    { keyword: 'prp', label: 'PRP' },
+    { keyword: 'pdgf', label: 'PDGF' },
     { keyword: 'exosome', label: 'Exosomes' },
     { keyword: 'hair rejuvenation', label: 'Hair Rejuvenation' },
     // Skin Treatments
-    { keyword: 'hydrafacial', label: 'HydraFacial ($21K)' },
+    { keyword: 'hydrafacial', label: 'HydraFacial' },
     { keyword: 'keravive', label: 'Keravive (Scalp)' },
-    { keyword: 'microneedling', label: 'Microneedling ($37K)' },
-    { keyword: 'rf microneedling', label: 'RF Microneedling ($3.4K)' },
-    { keyword: 'vi peel', label: 'VI Peel ($24K)' },
-    { keyword: 'cool peel', label: 'Cool Peel ($11K)' },
+    { keyword: 'microneedling', label: 'Microneedling' },
+    { keyword: 'rf microneedling', label: 'RF Microneedling' },
+    { keyword: 'vi peel', label: 'VI Peel' },
+    { keyword: 'cool peel', label: 'Cool Peel' },
     { keyword: 'chemical peel', label: 'Chemical Peel' },
-    { keyword: 'dermaplaning', label: 'Dermaplaning ($3.6K)' },
+    { keyword: 'dermaplaning', label: 'Dermaplaning' },
     // Body
-    { keyword: 'emsculpt', label: 'Emsculpt Neo ($91K)' },
-    { keyword: 'emsella', label: 'Emsella ($4.3K)' },
+    { keyword: 'emsculpt', label: 'Emsculpt Neo' },
+    { keyword: 'emsella', label: 'Emsella' },
     { keyword: 'body sculpt', label: 'Body Sculpting' },
-    { keyword: 'hair removal', label: 'Laser Hair Removal ($37K)' },
+    { keyword: 'hair removal', label: 'Laser Hair Removal' },
     // Weight Loss / Wellness
-    { keyword: 'semaglutide', label: 'Semaglutide ($12.6K)' },
-    { keyword: 'tirzepatide', label: 'Tirzepatide ($5.7K)' },
+    { keyword: 'semaglutide', label: 'Semaglutide' },
+    { keyword: 'tirzepatide', label: 'Tirzepatide' },
     { keyword: 'weight loss', label: 'Weight Loss' },
-    { keyword: 'b12', label: 'MIC B12 ($1.5K)' },
-    { keyword: 'iv therapy', label: 'IV Therapy ($1.7K)' },
+    { keyword: 'b12', label: 'MIC B12' },
+    { keyword: 'iv therapy', label: 'IV Therapy' },
     // Retail / Skincare
-    { keyword: 'skinbetter', label: 'SkinBetter ($25K+)' },
-    { keyword: 'hydrinity', label: 'Hydrinity ($22K+)' },
-    { keyword: 'plated', label: 'Plated Skin Science ($33K+)' },
+    { keyword: 'skinbetter', label: 'SkinBetter' },
+    { keyword: 'hydrinity', label: 'Hydrinity' },
+    { keyword: 'plated', label: 'Plated Skin Science' },
     { keyword: 'zo skin', label: 'ZO Skin Health' },
 ];
+
+// MindBody booking links per treatment category
+// TODO: Sam to provide actual MindBody direct booking URLs
+const BOOKING_LINKS: Record<string, string> = {
+    '_default': 'https://www.chinupaesthetics.com/book',
+};
+
+// ── Opportunity Score computation ──
+
+interface OpportunityInputs {
+    searchDemandMap: Map<string, { clicks: number; impressions: number }>;
+    contentGapMap: Map<string, number>; // keyword → days since last post
+    neverPostedSet: Set<string>;
+    formatPerfMap: Map<string, number>; // format → avg engagement rate
+    competitorTopicSet: Set<string>; // keywords competitors are posting about
+    revenueMap: Map<string, number>; // keyword → annual revenue
+    topRevenueKeywords: Set<string>; // top 10 revenue keywords
+}
+
+function computeOpportunityScore(
+    topic: { title: string; format: string },
+    inputs: OpportunityInputs,
+): number {
+    const titleLower = topic.title.toLowerCase();
+    const matchedKeyword = SERVICE_KEYWORDS.find(sk => titleLower.includes(sk.keyword));
+    const kw = matchedKeyword?.keyword || '';
+    let score = 0;
+
+    // 1. Search demand (0-30 pts)
+    const search = inputs.searchDemandMap.get(kw);
+    if (search) {
+        // More clicks = higher demand. 50+ clicks = max points
+        score += Math.min(30, Math.round((search.clicks / 50) * 20 + (search.impressions / 500) * 10));
+    }
+
+    // 2. Engagement potential based on format (0-25 pts)
+    const formatKey = topic.format.toLowerCase();
+    const formatEng = inputs.formatPerfMap.get(formatKey) || inputs.formatPerfMap.get('reel') || 0;
+    score += Math.min(25, Math.round(formatEng * 100 * 6));
+
+    // 3. Content freshness gap (0-25 pts)
+    if (kw && inputs.neverPostedSet.has(kw)) {
+        score += 25;
+    } else if (kw) {
+        const gapDays = inputs.contentGapMap.get(kw) || 0;
+        if (gapDays >= 90) score += 25;
+        else if (gapDays >= 60) score += 20;
+        else if (gapDays >= 30) score += 15;
+        else if (gapDays >= 14) score += 8;
+    }
+
+    // 4. Competitor activity (0-20 pts)
+    if (kw && inputs.competitorTopicSet.has(kw)) {
+        score += 20; // Competitors are posting about this = proven demand we're missing
+    }
+
+    return Math.min(100, Math.max(0, score));
+}
+
+function computeMoneyMakerAlert(
+    topic: { title: string },
+    inputs: OpportunityInputs,
+): { active: boolean; message: string } | null {
+    const titleLower = topic.title.toLowerCase();
+    const matchedKeyword = SERVICE_KEYWORDS.find(sk => titleLower.includes(sk.keyword));
+    if (!matchedKeyword) return null;
+
+    const kw = matchedKeyword.keyword;
+    if (!inputs.topRevenueKeywords.has(kw)) return null;
+
+    const gapDays = inputs.contentGapMap.get(kw);
+    const neverPosted = inputs.neverPostedSet.has(kw);
+
+    if (neverPosted) {
+        return { active: true, message: `Top revenue service — never posted about` };
+    }
+    if (gapDays && gapDays >= 30) {
+        return { active: true, message: `Top revenue service — no post in ${gapDays} days` };
+    }
+    return null;
+}
+
+function findBookingUrl(topic: { title: string }): string {
+    const titleLower = topic.title.toLowerCase();
+    for (const sk of SERVICE_KEYWORDS) {
+        if (titleLower.includes(sk.keyword) && BOOKING_LINKS[sk.keyword]) {
+            return BOOKING_LINKS[sk.keyword];
+        }
+    }
+    return BOOKING_LINKS['_default'];
+}
+
+// ── Build competitor context from IG data ──
+
+function buildCompetitorContext(
+    competitors: IGCompetitorMetrics[],
+    contentGapMap: Map<string, number>,
+    neverPostedSet: Set<string>,
+): { context: string; competitorTopicSet: Set<string> } {
+    const competitorTopicSet = new Set<string>();
+
+    if (competitors.length === 0) {
+        return { context: '', competitorTopicSet };
+    }
+
+    const lines: string[] = ['COMPETITOR CONTENT INTELLIGENCE (Atlanta-area med spas):'];
+
+    for (const c of competitors.slice(0, 5)) {
+        const engStr = c.avgEngagementRate ? `${(c.avgEngagementRate * 100).toFixed(1)}% avg engagement` : '';
+        const freqStr = c.postingFrequency ? `${c.postingFrequency.toFixed(1)} posts/week` : '';
+        const trendStr = c.engagementTrend ? `trend: ${c.engagementTrend}` : '';
+        const details = [engStr, freqStr, trendStr].filter(Boolean).join(', ');
+        lines.push(`- @${c.username}: ${c.followersCount.toLocaleString()} followers${details ? ` (${details})` : ''}`);
+
+        if (c.topHashtags?.length) {
+            lines.push(`  Top hashtags: ${c.topHashtags.slice(0, 5).map(h => `#${h.tag}`).join(', ')}`);
+        }
+        if (c.bestPost) {
+            lines.push(`  Best post: "${c.bestPost.caption.slice(0, 60)}..." (${(c.bestPost.engagementRate * 100).toFixed(1)}% engagement)`);
+        }
+
+        // Extract treatment keywords from competitor posts
+        if (c.recentPosts) {
+            for (const post of c.recentPosts) {
+                const captionLower = (post.caption || '').toLowerCase();
+                for (const sk of SERVICE_KEYWORDS) {
+                    if (captionLower.includes(sk.keyword)) {
+                        competitorTopicSet.add(sk.keyword);
+                    }
+                }
+            }
+        }
+    }
+
+    // Compute gaps vs competitors
+    const competitorGaps: string[] = [];
+    for (const kw of competitorTopicSet) {
+        const label = SERVICE_KEYWORDS.find(s => s.keyword === kw)?.label || kw;
+        if (neverPostedSet.has(kw)) {
+            competitorGaps.push(`${label} (competitors post about this, you NEVER have)`);
+        } else {
+            const days = contentGapMap.get(kw);
+            if (days && days >= 30) {
+                competitorGaps.push(`${label} (competitors post about this, your last post was ${days}d ago)`);
+            }
+        }
+    }
+
+    if (competitorGaps.length > 0) {
+        lines.push(`\nCONTENT GAPS VS COMPETITORS (they cover these, you don't):`);
+        competitorGaps.forEach(g => lines.push(`- ${g}`));
+    }
+
+    return { context: lines.join('\n'), competitorTopicSet };
+}
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
@@ -113,7 +272,7 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'month and year are required' }, { status: 400 });
         }
 
-        // ── Fetch ALL 8 data sources in parallel ──
+        // ── Fetch ALL data sources in parallel ──
         const keywordArray = SERVICE_KEYWORDS.map(s => s.keyword);
 
         const [
@@ -125,8 +284,11 @@ export async function POST(req: Request) {
             contentGapsRes,
             formatPerfRes,
             adThemesRes,
+            revenueRes,
+            feedbackRes,
+            competitorsResult,
         ] = await Promise.allSettled([
-            // 1. Top posts by engagement (existing)
+            // 1. Top posts by engagement
             sql`
                 SELECT caption, platform, likes, comments, shares, views, engagement_rate
                 FROM social_posts
@@ -134,7 +296,7 @@ export async function POST(req: Request) {
                 ORDER BY engagement_rate DESC NULLS LAST
                 LIMIT 10
             `,
-            // 2. Search Console queries (existing)
+            // 2. Search Console queries
             sql`
                 SELECT query, SUM(clicks)::int as total_clicks, SUM(impressions)::int as total_impressions
                 FROM search_console_daily
@@ -154,7 +316,7 @@ export async function POST(req: Request) {
                     AND status IN ('Completed', 'Confirmed') AND session_type_name IS NOT NULL
                 GROUP BY session_type_name ORDER BY this_month DESC LIMIT 15
             `,
-            // 4. Patient review themes — recent substantive reviews
+            // 4. Patient review themes
             sql`
                 SELECT rating, SUBSTRING(review_text FROM 1 FOR 200) AS excerpt
                 FROM reviews
@@ -194,7 +356,6 @@ export async function POST(req: Request) {
                 GROUP BY cm.source ORDER BY leads_who_booked DESC LIMIT 10
             `,
             // 6. Content gap analysis — days since last post per service keyword
-            // Pass keywords as comma-separated string → string_to_array for Postgres
             sql`
                 SELECT kw AS keyword,
                     MAX(posted_at) AS last_posted,
@@ -224,6 +385,42 @@ export async function POST(req: Request) {
                 WHERE m.metric_date > CURRENT_DATE - 30 AND m.leads > 0
                 GROUP BY c.campaign_name, c.objective ORDER BY total_leads DESC LIMIT 5
             `,
+            // 9. Treatment revenue — top earners from MindBody sales (for revenue flags)
+            sql`
+                SELECT
+                    item->>'Description' AS treatment_name,
+                    SUM((item->>'TotalAmount')::numeric)::numeric(10,2) AS total_revenue,
+                    COUNT(DISTINCT sale_id)::int AS sale_count
+                FROM mb_sales_history,
+                    jsonb_array_elements(items_json) AS item
+                WHERE sale_date >= CURRENT_DATE - 365
+                    AND (item->>'TotalAmount')::numeric > 0
+                GROUP BY treatment_name
+                ORDER BY total_revenue DESC
+                LIMIT 20
+            `,
+            // 10. Performance feedback — how past suggested topics performed
+            sql`
+                SELECT
+                    cp.metadata::json->>'topic' AS topic,
+                    cp.published_at,
+                    sp.engagement_rate,
+                    sp.likes,
+                    sp.comments,
+                    sp.views
+                FROM content_posts cp
+                LEFT JOIN social_posts sp
+                    ON sp.caption ILIKE '%' || LEFT(cp.caption, 40) || '%'
+                    AND sp.posted_at > cp.published_at - INTERVAL '2 days'
+                    AND sp.posted_at < cp.published_at + INTERVAL '2 days'
+                WHERE cp.metadata::text LIKE '%research_calendar%'
+                    AND cp.status = 'PUBLISHED'
+                    AND cp.published_at > NOW() - INTERVAL '60 days'
+                ORDER BY sp.engagement_rate DESC NULLS LAST
+                LIMIT 20
+            `,
+            // 11. Competitor IG data (4h cache, 0 API cost when warm)
+            getIGCompetitorMetrics(),
         ]);
 
         // ── Build context strings from each source ──
@@ -243,6 +440,20 @@ export async function POST(req: Request) {
                 `- "${q.query}" (${q.total_clicks} clicks, ${q.total_impressions} impressions)`
             ).join('\n')}`
             : '';
+
+        // Build search demand map for scoring
+        const searchDemandMap = new Map<string, { clicks: number; impressions: number }>();
+        for (const q of searchQueries) {
+            const queryLower = (q.query || '').toLowerCase();
+            for (const sk of SERVICE_KEYWORDS) {
+                if (queryLower.includes(sk.keyword)) {
+                    const existing = searchDemandMap.get(sk.keyword) || { clicks: 0, impressions: 0 };
+                    existing.clicks += Number(q.total_clicks) || 0;
+                    existing.impressions += Number(q.total_impressions) || 0;
+                    searchDemandMap.set(sk.keyword, existing);
+                }
+            }
+        }
 
         // 3. Treatment booking trends
         const treatments = treatmentTrendsRes.status === 'fulfilled' ? treatmentTrendsRes.value.rows : [];
@@ -275,8 +486,11 @@ export async function POST(req: Request) {
         // 6. Content gaps
         const contentGaps = contentGapsRes.status === 'fulfilled' ? contentGapsRes.value.rows : [];
         const postedKeywords = new Set(contentGaps.map(g => g.keyword));
+        const neverPostedSet = new Set(
+            SERVICE_KEYWORDS.filter(s => !postedKeywords.has(s.keyword)).map(s => s.keyword)
+        );
         const neverPosted = SERVICE_KEYWORDS
-            .filter(s => !postedKeywords.has(s.keyword))
+            .filter(s => neverPostedSet.has(s.keyword))
             .map(s => s.label);
         const staleKeywords = contentGaps
             .filter(g => Number(g.days_since) >= 60)
@@ -290,6 +504,12 @@ export async function POST(req: Request) {
             }${staleKeywords.length > 0 ? `Not posted in 60+ days: ${staleKeywords.join(', ')}` : ''}`
             : '';
 
+        // Build content gap map for scoring
+        const contentGapMap = new Map<string, number>();
+        for (const g of contentGaps) {
+            contentGapMap.set(g.keyword, Number(g.days_since) || 0);
+        }
+
         // 7. Format performance
         const formatPerf = formatPerfRes.status === 'fulfilled' ? formatPerfRes.value.rows : [];
         const formatContext = formatPerf.length > 0
@@ -298,6 +518,12 @@ export async function POST(req: Request) {
             ).join('\n')}`
             : '';
 
+        // Build format perf map for scoring
+        const formatPerfMap = new Map<string, number>();
+        for (const f of formatPerf) {
+            formatPerfMap.set((f.post_type || '').toLowerCase(), Number(f.avg_engagement) || 0);
+        }
+
         // 8. Ad campaign themes
         const adThemes = adThemesRes.status === 'fulfilled' ? adThemesRes.value.rows : [];
         const adContext = adThemes.length > 0
@@ -305,6 +531,60 @@ export async function POST(req: Request) {
                 `- "${a.campaign_name}" (${a.total_leads} leads, $${a.avg_cpl} CPL)`
             ).join('\n')}`
             : '';
+
+        // 9. Revenue data — build map for flags only (not for AI context)
+        const revenueRows = revenueRes.status === 'fulfilled' ? revenueRes.value.rows : [];
+        const revenueMap = new Map<string, number>();
+        const topRevenueKeywords = new Set<string>();
+        for (const r of revenueRows) {
+            const name = (r.treatment_name || '').toLowerCase();
+            for (const sk of SERVICE_KEYWORDS) {
+                if (name.includes(sk.keyword)) {
+                    const existing = revenueMap.get(sk.keyword) || 0;
+                    revenueMap.set(sk.keyword, existing + Number(r.total_revenue));
+                }
+            }
+        }
+        // Top 10 by revenue
+        const sortedRevenue = [...revenueMap.entries()].sort((a, b) => b[1] - a[1]);
+        for (const [kw] of sortedRevenue.slice(0, 10)) {
+            topRevenueKeywords.add(kw);
+        }
+
+        // 10. Performance feedback
+        const feedbackRows = feedbackRes.status === 'fulfilled' ? feedbackRes.value.rows : [];
+        const publishedFromTrends = feedbackRows.filter(r => r.topic);
+        const withEngagement = publishedFromTrends.filter(r => r.engagement_rate != null);
+        const avgEngagement = withEngagement.length > 0
+            ? withEngagement.reduce((sum, r) => sum + Number(r.engagement_rate), 0) / withEngagement.length
+            : 0;
+        const topPerformer = withEngagement.length > 0 ? withEngagement[0] : null; // already sorted DESC
+        const feedbackSummary = {
+            publishedCount: publishedFromTrends.length,
+            totalSuggested: 10,
+            topPerformer: topPerformer ? {
+                topic: topPerformer.topic,
+                engagement: Number(topPerformer.engagement_rate) || 0,
+                views: Number(topPerformer.views) || 0,
+            } : null,
+            avgEngagement,
+        };
+
+        const feedbackContext = publishedFromTrends.length > 0
+            ? `FEEDBACK FROM PREVIOUS SUGGESTIONS (learn from what worked):\n${
+                withEngagement.slice(0, 5).map(r =>
+                    `- "${r.topic}" → ${(Number(r.engagement_rate) * 100).toFixed(1)}% engagement, ${r.views} views`
+                ).join('\n')
+            }\n${publishedFromTrends.length} of your last batch were published.${
+                topPerformer ? ` Top performer: "${topPerformer.topic}"` : ''
+            }`
+            : '';
+
+        // 11. Competitor data
+        const competitors = competitorsResult.status === 'fulfilled' ? competitorsResult.value : [];
+        const { context: competitorContext, competitorTopicSet } = buildCompetitorContext(
+            competitors, contentGapMap, neverPostedSet
+        );
 
         // ── Build the enhanced prompt ──
 
@@ -324,20 +604,21 @@ export async function POST(req: Request) {
             gapContext,
             formatContext,
             adContext,
+            competitorContext,
+            feedbackContext,
         ].filter(Boolean).join('\n\n');
 
         const prompt = `You are a social media strategist for Chin Up Aesthetics, a premium medical spa in Atlanta, GA.
 
 BUSINESS CONTEXT:
-- #1 revenue service: Dysport ($625K/yr) — NOT Botox ($172K). Feature Dysport prominently.
-- Top fillers: Restylane line ($687K), Sculptra ($159K), midface procedures ($291K)
-- Growing categories: Emsculpt Neo ($91K), weight loss (semaglutide $12.6K, tirzepatide $5.7K)
-- Retail skincare: SkinBetter ($25K+), Plated ($33K+), Hydrinity ($22K+)
+- Top treatments: Dysport, Restylane fillers, Sculptra, midface procedures, Emsculpt Neo
+- Growing categories: weight loss (semaglutide, tirzepatide), body sculpting
+- Retail skincare: SkinBetter, Plated, Hydrinity
 - Target audience: Women 25-55 in metro Atlanta, professionals who value self-care
 - Platforms: Instagram (primary), Facebook, YouTube
 - Tone: Professional yet warm, empowering, educational but accessible
 
-TASK: Generate 25 trending content topic ideas for ${MONTH_NAMES[month - 1]} ${year}.
+TASK: Generate 10 high-priority content topic ideas for ${MONTH_NAMES[month - 1]} ${year}.
 
 ${focusInstruction}
 
@@ -355,25 +636,28 @@ For each topic, provide:
 1. title: A specific, actionable content topic (not generic)
 2. platform: Best platform for this topic (Instagram, Facebook, YouTube, or All)
 3. format: Best format (Reel, Post, Carousel, Story, YouTube Short, YouTube Video)
-4. rationale: One sentence explaining why this will perform well — CITE THE DATA above (mention specific numbers, treatments, or trends)
-5. potential: Engagement potential rating (High, Medium, or Low)
-6. category: One of: treatment, promotion, educational, lifestyle
+4. hook: The first 1-2 sentences of the post — the scroll-stopper that makes people stop and watch/read. Write it as if it's the actual opening line of the post.
+5. suggested_cta: A specific call-to-action for the end of the post. Must reference a treatment or booking action. Examples: "Book your Dysport consultation → link in bio", "DM us 'GLOW' for our spring facial package"
+6. rationale: One sentence explaining why this will perform well — CITE THE DATA above
+7. content_intent: Either "reach" (designed to get views and grow audience) or "convert" (designed to drive bookings and consultations)
+8. category: One of: treatment, promotion, educational, lifestyle
 
 CRITICAL RULES:
 - Make topics SPECIFIC to med spa / aesthetics (not generic social media advice)
 - Reference actual treatments from your data — especially trending-UP treatments and content gaps
-- Feature Dysport at least twice (it's your #1 revenue driver at $625K/yr)
 - Include topics for any content gaps identified above (services with no recent posts)
+- If competitor data is available, create content that fills gaps vs competitors
 - Use format recommendations based on YOUR format performance data
 - If review themes are available, craft content inspired by real patient language
-- Consider which lead sources convert best when recommending content strategy
-- Include a mix of engagement potential levels (not all High)
-- At least 8 topics should directly reference treatments by name
-- Include 4-5 promotional angles tied to seasonal events
-- Include 3-4 topics for services that haven't been posted about recently
+- Include a mix of "reach" and "convert" content_intent (aim for ~4 reach, ~6 convert)
+- At least 5 topics should directly reference treatments by name
+- Include 2-3 promotional angles tied to seasonal events
+- Every suggested_cta must be specific and actionable (not generic like "follow us")
+- NEVER include revenue figures, dollar amounts, or internal business metrics. Say "top-performing service" not "$625K/yr". Say "trending up this month" not "+15% bookings".
+- If feedback data shows which past topics performed well, lean into similar themes
 
 Return ONLY a valid JSON array of objects. No markdown, no explanation, no code fences.
-Format: [{"title":"...","platform":"...","format":"...","rationale":"...","potential":"High","category":"treatment"}]`;
+Format: [{"title":"...","platform":"...","format":"...","hook":"...","suggested_cta":"...","rationale":"...","content_intent":"reach","category":"treatment"}]`;
 
         const response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
@@ -408,11 +692,33 @@ Format: [{"title":"...","platform":"...","format":"...","rationale":"...","poten
             return NextResponse.json({ error: 'Failed to parse AI response' }, { status: 502 });
         }
 
+        // ── Score and enrich each topic ──
+
+        const scoringInputs: OpportunityInputs = {
+            searchDemandMap,
+            contentGapMap,
+            neverPostedSet,
+            formatPerfMap,
+            competitorTopicSet,
+            revenueMap,
+            topRevenueKeywords,
+        };
+
+        const enrichedTopics = topics.map(t => ({
+            ...t,
+            opportunity_score: computeOpportunityScore(t, scoringInputs),
+            money_maker_alert: computeMoneyMakerAlert(t, scoringInputs),
+            booking_url: findBookingUrl(t),
+        }));
+
+        // Sort by opportunity score descending
+        enrichedTopics.sort((a, b) => b.opportunity_score - a.opportunity_score);
+
         // Save to DB
         const userEmail = session.user.email;
         await sql`
             INSERT INTO research_trends (month, year, focus, trends_data, created_by)
-            VALUES (${month}, ${year}, ${focus}, ${JSON.stringify(topics)}, ${userEmail})
+            VALUES (${month}, ${year}, ${focus}, ${JSON.stringify(enrichedTopics)}, ${userEmail})
         `.catch(e => console.error('[research/trends] DB save error:', e));
 
         // Track usage
@@ -424,7 +730,11 @@ Format: [{"title":"...","platform":"...","format":"...","rationale":"...","poten
             DO UPDATE SET total_calls = api_usage_monthly.total_calls + 1
         `.catch(() => {});
 
-        return NextResponse.json({ topics, count: topics.length });
+        return NextResponse.json({
+            topics: enrichedTopics,
+            count: enrichedTopics.length,
+            feedback: feedbackSummary,
+        });
     } catch (error: any) {
         console.error('[research/trends] Error:', error);
         return NextResponse.json({ error: error.message || 'Trend generation failed' }, { status: 500 });
