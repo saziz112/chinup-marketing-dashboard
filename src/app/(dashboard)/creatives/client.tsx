@@ -359,7 +359,8 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
                     resolution,
                     variations,
                     tags,
-                    referenceImageUrls: referenceImages.map(r => r.url).filter(Boolean),
+                    referenceImageUrls: referenceImages.filter(r => !r.isLogo).map(r => r.url).filter(Boolean),
+                    includeBrandLogo: referenceImages.some(r => r.isLogo),
                 }),
             });
 

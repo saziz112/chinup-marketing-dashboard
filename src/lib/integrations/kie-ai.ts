@@ -22,6 +22,7 @@ export interface GenerateRequest {
     referenceImageUrl?: string;       // legacy single URL
     referenceImageUrls?: string[];    // multiple reference images (up to 3)
     brandContext?: string;            // brand prompt enhancement from IG analysis
+    includeBrandLogo?: boolean;       // subtly include brand logo in the image
 }
 
 export interface GenerateResult {
@@ -86,12 +87,13 @@ function getResolutionForAspect(resolution: Resolution, aspectRatio: AspectRatio
 
 // --- Prompt Enhancement ---
 
-export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRatio: AspectRatio, brandContext?: string): string {
+export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRatio: AspectRatio, brandContext?: string, includeBrandLogo?: boolean): string {
     const prefix = STYLE_PREFIXES[style];
     const arContext = ASPECT_RATIO_CONTEXT[aspectRatio];
     const brand = brandContext ? ` ${brandContext}.` : '';
+    const logo = includeBrandLogo ? ' Include a subtle, small brand logo watermark in the corner of the image.' : '';
     const suffix = '8K resolution, professional quality, sharp focus, vibrant colors';
-    return `${prefix}, ${arContext}.${brand} ${userPrompt}. ${suffix}`;
+    return `${prefix}, ${arContext}.${brand} ${userPrompt}.${logo} ${suffix}`;
 }
 
 // --- API Calls ---
@@ -104,7 +106,7 @@ const RESOLUTION_LABEL: Record<Resolution, string> = {
 
 export async function createImageTask(req: GenerateRequest): Promise<GenerateResult> {
     const apiKey = getEnv('KIE_AI_API_KEY');
-    const enhancedPrompt = enhancePrompt(req.prompt, req.style, req.aspectRatio, req.brandContext);
+    const enhancedPrompt = enhancePrompt(req.prompt, req.style, req.aspectRatio, req.brandContext, req.includeBrandLogo);
 
     // Support both legacy single URL and new multi-URL array
     const refImages = req.referenceImageUrls?.length
