@@ -1181,7 +1181,7 @@ function GalleryTab({ onRegenerate }: { onRegenerate: (data: PrefillData) => voi
             </div>
 
             {/* Gallery Grid */}
-            <div style={{
+            <div className="gallery-grid" style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
                 gap: '16px',

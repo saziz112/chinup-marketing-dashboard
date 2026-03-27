@@ -1167,7 +1167,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
 
                 {/* Gallery Picker Overlay */}
                 {showGalleryPicker && (
-                    <div style={{
+                    <div className="gallery-picker-overlay" style={{
                         position: 'fixed', inset: 0, zIndex: 100,
                         background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
                         display: 'flex', flexDirection: 'column', padding: '24px',
@@ -1199,7 +1199,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                             ) : galleryImages.length === 0 ? (
                                 <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '60px 0' }}>No images found. Generate some on the Creatives page first.</p>
                             ) : (
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px' }}>
+                                <div className="gallery-picker-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px' }}>
                                     {galleryImages.map(img => (
                                         <div
                                             key={img.id}
@@ -1373,10 +1373,10 @@ function QueueCalendar({ posts, onUpdate, onEdit }: { posts: PostRecord[], onUpd
             </p>
 
             {/* Calendar Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+            <div className="queue-calendar-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
                 {/* Day headers */}
                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-                    <div key={d} style={{ textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', padding: '8px 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{d}</div>
+                    <div key={d} className="queue-calendar-header" style={{ textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', padding: '8px 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{d}</div>
                 ))}
 
                 {/* Day cells */}

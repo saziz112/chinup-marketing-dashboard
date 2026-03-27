@@ -632,11 +632,11 @@ export default function ResearchPage() {
             {calendarLastGenerated && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 8 }}>Last generated: {calendarLastGenerated}</div>}
 
             {calendarDays.length > 0 ? (
-                <div style={{ display: 'flex', gap: 24 }}>
+                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+                        <div className="queue-calendar-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
                             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-                                <div key={d} style={{ textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', padding: '8px 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{d}</div>
+                                <div key={d} className="queue-calendar-header" style={{ textAlign: 'center', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', padding: '8px 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{d}</div>
                             ))}
                             {calendarGrid.map((day, i) => {
                                 const dayNum = i - new Date(selectedYear, selectedMonth - 1, 1).getDay() + 1;
@@ -722,7 +722,7 @@ export default function ResearchPage() {
                     </div>
 
                     {calendarSummary && (
-                        <div style={{ width: 220, flexShrink: 0 }}>
+                        <div className="calendar-summary-sidebar" style={{ width: 220, flexShrink: 0 }}>
                             <div className="section-card">
                                 <h4 style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginTop: 0, marginBottom: 12 }}>Summary</h4>
                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>{calendarSummary.total} posts planned</div>

@@ -884,6 +884,70 @@ body {
 }
 
 /* ============================================================
+   Mobile Responsiveness — Calendar & Creative Grids
+   ============================================================ */
+
+@media (max-width: 768px) {
+  /* Queue/Research calendar grids → 3 columns on tablet */
+  .queue-calendar-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+
+  /* Hide day headers on mobile (dates are shown in cells) */
+  .queue-calendar-header {
+    display: none !important;
+  }
+
+  /* Calendar summary sidebar → full width stacked below */
+  .calendar-summary-sidebar {
+    width: 100% !important;
+  }
+
+  /* Gallery picker grid — smaller cards */
+  .gallery-picker-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)) !important;
+  }
+
+  /* Creatives gallery grid — smaller minmax */
+  .gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important;
+  }
+
+  /* Force expanded group spans to single column */
+  .gallery-grid > div[style*="gridColumn"] {
+    grid-column: span 1 !important;
+  }
+
+  /* Gallery picker overlay — less padding */
+  .gallery-picker-overlay {
+    padding: 16px !important;
+  }
+
+  /* Media preview images — smaller on mobile */
+  .media-preview-item {
+    height: 80px !important;
+    width: 80px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Calendar → 2 columns on small phones */
+  .queue-calendar-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Gallery picker — tighter padding */
+  .gallery-picker-overlay {
+    padding: 10px !important;
+  }
+
+  .gallery-picker-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)) !important;
+    gap: 8px !important;
+  }
+}
+
+/* ============================================================
    Publishing & Goals
    ============================================================ */
 
