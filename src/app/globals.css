@@ -802,11 +802,12 @@ body {
   display: none;
   position: fixed;
   top: 56px;
-  left: 240px;
+  left: 0;
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.6);
-  z-index: 49;
+  z-index: 50;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* --- Responsive --- */
@@ -824,7 +825,8 @@ body {
     transition: transform 0.3s ease;
     z-index: 55;
     top: 56px;
-    padding-top: 16px;
+    height: calc(100vh - 56px);
+    padding-top: 12px;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
@@ -833,8 +835,13 @@ body {
     transform: translateX(0);
   }
 
-  .mobile-overlay {
-    z-index: 52;
+  .sidebar-brand {
+    display: none;
+  }
+
+  .main-content {
+    position: relative;
+    z-index: 1;
   }
 
   .main-content {
