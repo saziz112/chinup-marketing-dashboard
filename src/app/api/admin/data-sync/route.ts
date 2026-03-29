@@ -189,6 +189,10 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ action, ...result });
             }
             case 'rebackfill-columns': {
+                // Ensure new columns exist (runs migration if not already applied)
+                await sql`ALTER TABLE mb_clients_cache ADD COLUMN IF NOT EXISTS referred_by TEXT`;
+                await sql`ALTER TABLE mb_clients_cache ADD COLUMN IF NOT EXISTS creation_date TIMESTAMPTZ`;
+                await sql`ALTER TABLE mb_sales_history ADD COLUMN IF NOT EXISTS payments_total NUMERIC(10,2) DEFAULT 0`;
                 // Targeted client re-fetch: updates referred_by + creation_date
                 // for existing clients where those columns are NULL.
                 // Sales don't need re-fetching — revenue queries fall back to total_amount.
