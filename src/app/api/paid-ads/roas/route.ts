@@ -54,6 +54,34 @@ export async function GET(request: NextRequest) {
 
         const campaignCostMap = new Map(adsData.campaigns.map(c => [c.id, c.costPerResult]));
 
+        // Build name→id map from ads campaigns for fallback matching.
+        // When Meta's lead API doesn't return campaign_id, the lead's campaignId
+        // falls back to the form ID, which won't match any ads campaign. We remap
+        // by matching the lead's campaignName to an ads campaign name.
+        const campaignNameToId = new Map<string, string>();
+        for (const c of adsData.campaigns) {
+            campaignNameToId.set(c.name.toLowerCase().trim(), c.id);
+        }
+        // Also index by known campaign IDs so we can detect which leads need remapping
+        const knownCampaignIds = new Set(adsData.campaigns.map(c => c.id));
+
+        // Remap lead campaignIds that don't match any ads campaign
+        for (const lead of leadData.leads) {
+            if (!knownCampaignIds.has(lead.campaignId) && lead.campaignName) {
+                const match = campaignNameToId.get(lead.campaignName.toLowerCase().trim());
+                if (match) {
+                    lead.campaignId = match;
+                }
+            }
+        }
+        // Also rebuild byCampaign map after remapping
+        leadData.byCampaign.clear();
+        for (const lead of leadData.leads) {
+            const arr = leadData.byCampaign.get(lead.campaignId) || [];
+            arr.push(lead);
+            leadData.byCampaign.set(lead.campaignId, arr);
+        }
+
         // First, count how many leads each email has to handle revenue splitting
         const emailLeadCounts = new Map<string, number>();
         for (const lead of leadData.leads) {
