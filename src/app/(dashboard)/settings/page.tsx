@@ -214,7 +214,8 @@ export default function SettingsPage() {
 
     // Trigger a sync action (auto-loops for chunked backfills)
     const MAX_SYNC_LOOPS = 200; // Safety cap — 200 chunks × 3 months = 50 years max
-    const MAX_ZERO_PROGRESS = 3; // Stop if 3 consecutive chunks insert 0 records
+    const MAX_ZERO_PROGRESS_BACKFILL = 12; // Backfills walk 3-month chunks from 2020 — allow 3 empty years
+    const MAX_ZERO_PROGRESS_SYNC = 3;     // Incremental syncs should never have 3 empty steps
     const triggerSync = async (action: string) => {
         setSyncAction(action);
         setSyncProgress(null);
@@ -247,10 +248,12 @@ export default function SettingsPage() {
                     setSyncProgress(`Step ${loops}: ${data.chunkLabel} (${data.total || 0} records)`);
                 }
 
-                // Detect stalled loops — stop if no records inserted for 3 consecutive chunks
+                // Detect stalled loops — backfills tolerate more empty chunks (early date ranges)
+                const isBackfill = action.startsWith('backfill') || action.startsWith('rebackfill');
+                const zeroLimit = isBackfill ? MAX_ZERO_PROGRESS_BACKFILL : MAX_ZERO_PROGRESS_SYNC;
                 if (data.continue && (data.total === 0 || data.total === undefined)) {
                     consecutiveZero++;
-                    if (consecutiveZero >= MAX_ZERO_PROGRESS) {
+                    if (consecutiveZero >= zeroLimit) {
                         showFlash(`Auto-stopped: ${consecutiveZero} consecutive steps with 0 records. Possible issue — check logs.`, 'error');
                         break;
                     }
