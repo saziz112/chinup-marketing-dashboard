@@ -289,7 +289,7 @@ export default function OverviewPage() {
             </div>
 
             {/* KPI Cards */}
-            <div className="metrics-grid" style={{ gridTemplateColumns: `repeat(3, 1fr)` }}>
+            <div className="metrics-grid md:grid-cols-3">
                 <div className="metric-card">
                     <div className="label">Total Followers</div>
                     <div className="value">{socialLoading ? <Skeleton className="h-9 w-24" /> : totalFollowers}</div>
@@ -319,7 +319,7 @@ export default function OverviewPage() {
             {/* Reputation & Search */}
             <div className="section-card">
                 <h3>Reputation &amp; Search</h3>
-                <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
+                <div className="metrics-grid md:grid-cols-5">
                     <div className="metric-card" style={{ padding: '16px' }}>
                         <div className="label">Google Rating</div>
                         <div className="value" style={{ fontSize: '1.5rem' }}>
@@ -396,12 +396,12 @@ export default function OverviewPage() {
 
             {/* Trend Charts */}
             {socialLoading ? (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <SkeletonChart height={280} />
                     <SkeletonChart height={280} />
                 </div>
             ) : combinedDaily.length > 0 ? (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="chart-container">
                         <div className="chart-header">
                             <h3>Follower Growth</h3>
@@ -439,7 +439,7 @@ export default function OverviewPage() {
                     </div>
                 </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="chart-container">
                         <div className="chart-header">
                             <h3>Follower Growth</h3>

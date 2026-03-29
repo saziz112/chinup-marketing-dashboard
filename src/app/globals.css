@@ -835,6 +835,11 @@ body {
     transform: translateX(0);
   }
 
+  /* Global fix: prevent inline styles from cramming metric cards on mobile */
+  .metrics-grid[style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+
   .sidebar-brand {
     display: none;
   }
@@ -871,6 +876,20 @@ body {
 }
 
 @media (max-width: 480px) {
+  .period-btn {
+    padding: 10px 16px;
+    font-size: 0.875rem;
+  }
+  .sub-tab {
+    padding: 12px 16px;
+    font-size: 0.9375rem;
+  }
+  .sub-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    padding-bottom: 4px;
+  }
   .main-content {
     padding: 16px;
     padding-top: 72px;
