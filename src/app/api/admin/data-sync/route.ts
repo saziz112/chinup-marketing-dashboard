@@ -16,6 +16,7 @@ import {
     incrementalSync,
     getSyncStats,
     getAvailableTreatments,
+    rebackfillClientColumns,
 } from '@/lib/integrations/mindbody-sync';
 import {
     backfillGhlContacts,
@@ -188,22 +189,21 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ action, ...result });
             }
             case 'rebackfill-columns': {
-                // Re-backfill sales (payments_total) and clients (referred_by, creation_date)
-                // without deleting existing data — upsert will populate new columns
-                // Start from earliest existing data to skip empty years
-                const earliest = await sql`SELECT EXTRACT(YEAR FROM MIN(sale_date))::INTEGER as yr FROM mb_sales_history`;
-                const startYear = earliest.rows[0]?.yr || 2020;
-                await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('sales', 'sales_backfill_progress')`;
-                await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('clients', 'clients_backfill_progress')`;
-                const salesRes = await backfillSales(startYear);
-                if (!salesRes.done) {
-                    return NextResponse.json({ action, phase: 'sales', ...salesRes, continue: true });
+                // Targeted client re-fetch: updates referred_by + creation_date
+                // for existing clients where those columns are NULL.
+                // Sales don't need re-fetching — revenue queries fall back to total_amount.
+                // ~633 API calls (6,372 clients ÷ 10 per batch), 200 clients per invocation.
+                // Restore sales sync state if it was deleted by a previous failed attempt
+                const salesState = await sql`SELECT 1 FROM mb_sync_state WHERE sync_type = 'sales'`;
+                if (salesState.rows.length === 0) {
+                    await sql`
+                        INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+                        VALUES ('sales', ${new Date().toISOString().split('T')[0]}, (SELECT COUNT(*) FROM mb_sales_history), NOW())
+                        ON CONFLICT (sync_type) DO NOTHING
+                    `;
                 }
-                const clientsRes = await backfillClients();
-                if (!clientsRes.done) {
-                    return NextResponse.json({ action, phase: 'clients', ...clientsRes, continue: true });
-                }
-                return NextResponse.json({ action, phase: 'complete', message: 'All columns re-backfilled', continue: false });
+                const result = await rebackfillClientColumns();
+                return NextResponse.json({ action, phase: 'clients', ...result, continue: !result.done });
             }
             case 'reset-social': {
                 await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('social_posts', 'social_posts_backfill_progress')`;

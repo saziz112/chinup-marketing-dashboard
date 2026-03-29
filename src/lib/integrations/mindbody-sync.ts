@@ -265,6 +265,50 @@ export async function backfillClients(): Promise<{ total: number; apiCalls: numb
 }
 
 // ---------------------------------------------------------------------------
+// Re-fetch existing clients (updates referred_by + creation_date columns)
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-fetch clients already in mb_clients_cache where referred_by IS NULL.
+ * Updates existing rows with referred_by + creation_date from the API.
+ * Processes 200 clients per invocation. Returns done: false if more remain.
+ */
+export async function rebackfillClientColumns(): Promise<{ total: number; apiCalls: number; done: boolean; chunkLabel: string }> {
+    const CHUNK_SIZE = 200;
+
+    // Find clients missing the new columns
+    const result = await sql`
+        SELECT client_id FROM mb_clients_cache
+        WHERE referred_by IS NULL
+        ORDER BY client_id
+        LIMIT ${CHUNK_SIZE}
+    `;
+    const clientIds = result.rows.map(r => String(r.client_id));
+
+    if (clientIds.length === 0) {
+        return { total: 0, apiCalls: 0, done: true, chunkLabel: 'All client columns updated' };
+    }
+
+    const remaining = await sql`SELECT COUNT(*) as cnt FROM mb_clients_cache WHERE referred_by IS NULL`;
+    const remainingCount = Number(remaining.rows[0]?.cnt || 0);
+    const chunkLabel = `Updating ${clientIds.length} clients (${remainingCount} remaining)`;
+    console.log(`[mb-sync] ${chunkLabel}`);
+
+    const clients = await getClients(clientIds);
+    const apiCalls = Math.ceil(clientIds.length / 10);
+
+    if (clients.length > 0) {
+        await upsertClients(clients);
+    }
+
+    // Check if there are more
+    const moreResult = await sql`SELECT COUNT(*) as cnt FROM mb_clients_cache WHERE referred_by IS NULL`;
+    const moreRemaining = Number(moreResult.rows[0]?.cnt || 0);
+
+    return { total: clients.length, apiCalls, done: moreRemaining === 0, chunkLabel };
+}
+
+// ---------------------------------------------------------------------------
 // Incremental Sync
 // ---------------------------------------------------------------------------
 

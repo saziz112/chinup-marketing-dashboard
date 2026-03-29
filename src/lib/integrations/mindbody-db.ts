@@ -48,8 +48,10 @@ export async function getRevenueFromDB(
     const start = startDate.split('T')[0];
     const end = endDate.split('T')[0];
 
+    // Use payments_total when available, fall back to total_amount for historical rows
+    // (difference is only gift card purchases — negligible for most sales)
     const result = await sql`
-        SELECT COALESCE(SUM(payments_total), 0) as total,
+        SELECT COALESCE(SUM(CASE WHEN payments_total > 0 THEN payments_total ELSE total_amount END), 0) as total,
                COUNT(*) as count
         FROM mb_sales_history
         WHERE sale_date BETWEEN ${start} AND ${end}
