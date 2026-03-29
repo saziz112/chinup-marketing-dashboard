@@ -190,9 +190,12 @@ export async function POST(req: NextRequest) {
             case 'rebackfill-columns': {
                 // Re-backfill sales (payments_total) and clients (referred_by, creation_date)
                 // without deleting existing data — upsert will populate new columns
+                // Start from earliest existing data to skip empty years
+                const earliest = await sql`SELECT EXTRACT(YEAR FROM MIN(sale_date))::INTEGER as yr FROM mb_sales_history`;
+                const startYear = earliest.rows[0]?.yr || 2020;
                 await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('sales', 'sales_backfill_progress')`;
                 await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('clients', 'clients_backfill_progress')`;
-                const salesRes = await backfillSales(2020);
+                const salesRes = await backfillSales(startYear);
                 if (!salesRes.done) {
                     return NextResponse.json({ action, phase: 'sales', ...salesRes, continue: true });
                 }
