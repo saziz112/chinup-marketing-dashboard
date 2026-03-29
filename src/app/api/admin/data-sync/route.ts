@@ -206,6 +206,15 @@ export async function POST(req: NextRequest) {
                         ON CONFLICT (sync_type) DO NOTHING
                     `;
                 }
+                // Restore clients sync state if it was deleted by a previous failed attempt
+                const clientsState = await sql`SELECT 1 FROM mb_sync_state WHERE sync_type = 'clients'`;
+                if (clientsState.rows.length === 0) {
+                    await sql`
+                        INSERT INTO mb_sync_state (sync_type, last_sync_date, total_records, updated_at)
+                        VALUES ('clients', ${new Date().toISOString().split('T')[0]}, (SELECT COUNT(*) FROM mb_clients_cache), NOW())
+                        ON CONFLICT (sync_type) DO NOTHING
+                    `;
+                }
                 const result = await rebackfillClientColumns();
                 return NextResponse.json({ action, phase: 'clients', ...result, continue: !result.done });
             }
