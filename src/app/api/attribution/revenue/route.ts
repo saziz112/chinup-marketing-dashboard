@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPurchasingClients } from '@/lib/integrations/mindbody';
+import { getPurchasingClientsFromDB } from '@/lib/integrations/mindbody-db';
 import { attributeSource, getPlatformLabel, type AttributedPlatform } from '@/lib/attribution';
 import { subDays, format } from 'date-fns';
 import { getServerSession } from 'next-auth';
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
         const formattedStart = format(startDate, "yyyy-MM-dd'T'00:00:00");
         const formattedEnd = format(endDate, "yyyy-MM-dd'T'23:59:59");
 
-        const { clients, sales } = await getPurchasingClients(formattedStart, formattedEnd);
+        const { clients, sales } = await getPurchasingClientsFromDB(formattedStart, formattedEnd);
 
         // Map each client to their attributed platform
         const clientPlatformMap = new Map<string, AttributedPlatform>();

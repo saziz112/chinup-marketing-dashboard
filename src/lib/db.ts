@@ -420,6 +420,8 @@ async function initMbSalesHistoryTable() {
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_mb_sales_client ON mb_sales_history(client_id)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_mb_sales_date ON mb_sales_history(sale_date)`;
+    // Self-migration: payments_total for Cash Equivalent Receipts (different from total_amount)
+    await sql`ALTER TABLE mb_sales_history ADD COLUMN IF NOT EXISTS payments_total NUMERIC(10,2) DEFAULT 0`;
 }
 
 async function initMbAppointmentsHistoryTable() {
@@ -467,6 +469,9 @@ async function initMbClientsCacheTable() {
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_mb_clients_phone ON mb_clients_cache(phone)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_mb_clients_email ON mb_clients_cache(email)`;
+    // Self-migration: referred_by + creation_date for attribution
+    await sql`ALTER TABLE mb_clients_cache ADD COLUMN IF NOT EXISTS referred_by TEXT`;
+    await sql`ALTER TABLE mb_clients_cache ADD COLUMN IF NOT EXISTS creation_date TIMESTAMPTZ`;
 }
 
 async function initGhlContactsMapTable() {

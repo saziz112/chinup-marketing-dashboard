@@ -15,7 +15,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { isGHLConfigured, getFullPipelineData, type LocationKey, type GHLOpportunity } from '@/lib/integrations/gohighlevel';
-import { getClientMatchMaps, normalizePhone } from '@/lib/integrations/mindbody';
+import { getClientMatchMapsFromDB } from '@/lib/integrations/mindbody-db';
+import { normalizePhone } from '@/lib/integrations/mindbody';
 import { format, subDays } from 'date-fns';
 
 interface SourceAccumulator {
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
         // Fetch both data sources in parallel (both are cached)
         const [pipelineData, { emailMap, phoneMap }] = await Promise.all([
             getFullPipelineData({ locationFilter: locationParam || undefined }),
-            getClientMatchMaps(mbStart, mbEnd),
+            getClientMatchMapsFromDB(mbStart, mbEnd),
         ]);
 
         // Extract opportunities and filter to selected period

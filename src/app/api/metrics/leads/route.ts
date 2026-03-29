@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getNewClients } from '@/lib/integrations/mindbody';
+import { getNewClientsCountFromDB } from '@/lib/integrations/mindbody-db';
 import { subDays, format } from 'date-fns';
 
 export async function GET() {
@@ -17,10 +17,10 @@ export async function GET() {
         const formattedStart = format(startDate, "yyyy-MM-dd'T'00:00:00");
         const formattedEnd = format(endDate, "yyyy-MM-dd'T'23:59:59");
 
-        const clients = await getNewClients(formattedStart, formattedEnd);
+        const count = await getNewClientsCountFromDB(formattedStart, formattedEnd);
 
         return NextResponse.json({
-            count: clients.length,
+            count,
             period: '30d',
             startDate: formattedStart,
             endDate: formattedEnd

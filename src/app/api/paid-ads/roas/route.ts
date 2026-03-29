@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getMetaAdsData, getMetaLeads, isMetaAdsConfigured } from '@/lib/integrations/meta-ads';
-import { getClientEmailMap } from '@/lib/integrations/mindbody';
+import { getClientEmailMapFromDB } from '@/lib/integrations/mindbody-db';
 import { format, subDays, startOfMonth } from 'date-fns';
 
 const today = new Date();
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
         const [adsData, leadData, clientEmailMap] = await Promise.all([
             getMetaAdsData(since, until),
             getMetaLeads(since, until),
-            getClientEmailMap(mbStart, mbEnd),
+            getClientEmailMapFromDB(mbStart, mbEnd),
         ]);
 
         const campaignCostMap = new Map(adsData.campaigns.map(c => [c.id, c.costPerResult]));

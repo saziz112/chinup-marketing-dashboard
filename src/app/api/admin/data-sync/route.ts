@@ -187,6 +187,21 @@ export async function POST(req: NextRequest) {
                 const result = await incrementalSearchConsoleSync();
                 return NextResponse.json({ action, ...result });
             }
+            case 'rebackfill-columns': {
+                // Re-backfill sales (payments_total) and clients (referred_by, creation_date)
+                // without deleting existing data — upsert will populate new columns
+                await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('sales', 'sales_backfill_progress')`;
+                await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('clients', 'clients_backfill_progress')`;
+                const salesRes = await backfillSales(2020);
+                if (!salesRes.done) {
+                    return NextResponse.json({ action, phase: 'sales', ...salesRes, continue: true });
+                }
+                const clientsRes = await backfillClients();
+                if (!clientsRes.done) {
+                    return NextResponse.json({ action, phase: 'clients', ...clientsRes, continue: true });
+                }
+                return NextResponse.json({ action, phase: 'complete', message: 'All columns re-backfilled', continue: false });
+            }
             case 'reset-social': {
                 await sql`DELETE FROM mb_sync_state WHERE sync_type IN ('social_posts', 'social_posts_backfill_progress')`;
                 await sql`DELETE FROM social_posts`;
@@ -204,6 +219,7 @@ export async function POST(req: NextRequest) {
                         'backfill-sales', 'backfill-appointments', 'backfill-clients',
                         'backfill-mindbody', 'backfill-ghl', 'reset-ghl',
                         'backfill-social', 'backfill-search-console',
+                        'rebackfill-columns',
                         'sync', 'sync-mindbody', 'sync-ghl', 'sync-social', 'sync-search-console',
                         'reset-social', 'reset-search-console',
                     ],

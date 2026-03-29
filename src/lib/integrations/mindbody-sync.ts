@@ -562,16 +562,18 @@ async function upsertSales(sales: Sale[]): Promise<number> {
     let inserted = 0;
     for (const sale of sales) {
         const totalAmount = sale.PurchasedItems?.reduce((s, item) => s + (item.TotalAmount || 0), 0) || 0;
+        const paymentsTotal = sale.Payments?.reduce((s, p) => s + (p.Amount || 0), 0) || 0;
         const saleDate = (sale.SaleDate || sale.SaleDateTime || '').split('T')[0];
         if (!saleDate || !sale.ClientId) continue;
 
         await sql`
-            INSERT INTO mb_sales_history (sale_id, client_id, sale_date, location_id, total_amount, items_json, synced_at)
+            INSERT INTO mb_sales_history (sale_id, client_id, sale_date, location_id, total_amount, items_json, payments_total, synced_at)
             VALUES (${sale.Id}, ${sale.ClientId}, ${saleDate}, ${sale.LocationId || 0}, ${totalAmount},
-                    ${JSON.stringify(sale.PurchasedItems || [])}, NOW())
+                    ${JSON.stringify(sale.PurchasedItems || [])}, ${paymentsTotal}, NOW())
             ON CONFLICT (sale_id) DO UPDATE SET
                 total_amount = ${totalAmount},
                 items_json = ${JSON.stringify(sale.PurchasedItems || [])},
+                payments_total = ${paymentsTotal},
                 synced_at = NOW()
         `;
         inserted++;
@@ -604,14 +606,18 @@ async function upsertAppointments(appts: StaffAppointment[]): Promise<number> {
 async function upsertClients(clients: Client[]): Promise<void> {
     for (const client of clients) {
         const phone = normalizePhone(client.MobilePhone || client.HomePhone || '');
+        const referredBy = client.ReferredBy || null;
+        const creationDate = client.CreationDate || null;
         await sql`
-            INSERT INTO mb_clients_cache (client_id, first_name, last_name, email, phone, synced_at)
-            VALUES (${client.Id}, ${client.FirstName || ''}, ${client.LastName || ''}, ${client.Email || ''}, ${phone}, NOW())
+            INSERT INTO mb_clients_cache (client_id, first_name, last_name, email, phone, referred_by, creation_date, synced_at)
+            VALUES (${client.Id}, ${client.FirstName || ''}, ${client.LastName || ''}, ${client.Email || ''}, ${phone}, ${referredBy}, ${creationDate}, NOW())
             ON CONFLICT (client_id) DO UPDATE SET
                 first_name = ${client.FirstName || ''},
                 last_name = ${client.LastName || ''},
                 email = ${client.Email || ''},
                 phone = ${phone},
+                referred_by = ${referredBy},
+                creation_date = ${creationDate},
                 synced_at = NOW()
         `;
     }

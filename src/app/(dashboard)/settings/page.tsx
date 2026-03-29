@@ -214,11 +214,13 @@ export default function SettingsPage() {
 
     // Trigger a sync action (auto-loops for chunked backfills)
     const MAX_SYNC_LOOPS = 200; // Safety cap — 200 chunks × 3 months = 50 years max
+    const MAX_ZERO_PROGRESS = 3; // Stop if 3 consecutive chunks insert 0 records
     const triggerSync = async (action: string) => {
         setSyncAction(action);
         setSyncProgress(null);
         syncStopRef.current = false;
         let loops = 0;
+        let consecutiveZero = 0;
         try {
             while (true) {
                 loops++;
@@ -243,6 +245,17 @@ export default function SettingsPage() {
                 // Show progress for chunked backfills
                 if (data.chunkLabel) {
                     setSyncProgress(`Step ${loops}: ${data.chunkLabel} (${data.total || 0} records)`);
+                }
+
+                // Detect stalled loops — stop if no records inserted for 3 consecutive chunks
+                if (data.continue && (data.total === 0 || data.total === undefined)) {
+                    consecutiveZero++;
+                    if (consecutiveZero >= MAX_ZERO_PROGRESS) {
+                        showFlash(`Auto-stopped: ${consecutiveZero} consecutive steps with 0 records. Possible issue — check logs.`, 'error');
+                        break;
+                    }
+                } else {
+                    consecutiveZero = 0;
                 }
 
                 // If not a chunked response or done, break
@@ -701,6 +714,7 @@ export default function SettingsPage() {
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
                                     {[
                                         { action: 'backfill-mindbody', label: 'Backfill MindBody (All)', est: '~500 API calls' },
+                                        { action: 'rebackfill-columns', label: 'Rebackfill MB Columns', est: '~833 API calls' },
                                         { action: 'backfill-ghl', label: 'Backfill GHL Contacts', est: '~320 API calls' },
                                         { action: 'backfill-social', label: 'Backfill Social Posts (IG)', est: '~50 API calls' },
                                         { action: 'backfill-search-console', label: 'Backfill Search Console', est: '6 API calls' },

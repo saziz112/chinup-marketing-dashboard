@@ -1,8 +1,8 @@
 /**
- * Vercel Cron: Sync Research Data
+ * Vercel Cron: Sync Research Data + MindBody
  * Runs daily at 9 AM UTC (5 AM ET).
- * Incrementally syncs social posts (IG) and Search Console query data
- * into Postgres for the Market Intel tab.
+ * Incrementally syncs social posts (IG), Search Console query data,
+ * and MindBody sales/appointments/clients into Postgres.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -10,6 +10,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { incrementalSocialSync } from '@/lib/integrations/social-posts-sync';
 import { incrementalSearchConsoleSync } from '@/lib/integrations/search-console-sync';
+import { incrementalSync as incrementalMbSync } from '@/lib/integrations/mindbody-sync';
 
 export const maxDuration = 60;
 
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-        const [social, gsc] = await Promise.all([
+        const [social, gsc, mb] = await Promise.all([
             incrementalSocialSync().catch(e => ({
                 total: 0, apiCalls: 0, done: true,
                 chunkLabel: `Social sync error: ${e.message}`,
@@ -41,14 +42,19 @@ export async function GET(req: NextRequest) {
                 total: 0, apiCalls: 0, done: true,
                 chunkLabel: `GSC sync error: ${e.message}`,
             })),
+            incrementalMbSync().catch(e => ({
+                newSales: 0, newAppts: 0, newClients: 0, apiCalls: 0,
+                error: e.message,
+            })),
         ]);
 
-        console.log(`[sync-research] Social: ${social.chunkLabel} | GSC: ${gsc.chunkLabel}`);
+        console.log(`[sync-research] Social: ${social.chunkLabel} | GSC: ${gsc.chunkLabel} | MB: ${mb.newSales} sales, ${mb.newAppts} appts, ${mb.newClients} clients`);
 
         return NextResponse.json({
             social,
             searchConsole: gsc,
-            totalApiCalls: social.apiCalls + gsc.apiCalls,
+            mindbody: mb,
+            totalApiCalls: social.apiCalls + gsc.apiCalls + mb.apiCalls,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Sync failed';
