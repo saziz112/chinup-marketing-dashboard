@@ -175,7 +175,9 @@ export async function getPurchasingClientsFromDB(
         try {
             const parsed = typeof row.items_json === 'string' ? JSON.parse(row.items_json) : row.items_json;
             if (Array.isArray(parsed)) items = parsed;
-        } catch { /* empty */ }
+        } catch (e) {
+            console.warn(`[mindbody-db] Failed to parse items_json for sale ${row.sale_id}:`, e);
+        }
 
         return {
             Id: row.sale_id,

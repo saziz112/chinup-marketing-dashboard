@@ -650,7 +650,9 @@ async function upsertAppointments(appts: StaffAppointment[]): Promise<number> {
 async function upsertClients(clients: Client[]): Promise<void> {
     for (const client of clients) {
         const phone = normalizePhone(client.MobilePhone || client.HomePhone || '');
-        const referredBy = client.ReferredBy || null;
+        // Use empty string instead of null when API returns no referral — distinguishes
+        // "checked, no referral" from "never checked" (NULL) for rebackfill logic
+        const referredBy = client.ReferredBy || '';
         const creationDate = client.CreationDate || null;
         await sql`
             INSERT INTO mb_clients_cache (client_id, first_name, last_name, email, phone, referred_by, creation_date, synced_at)

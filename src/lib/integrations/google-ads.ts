@@ -117,11 +117,20 @@ async function runAdsQuery(accessToken: string, query: string): Promise<any[]> {
     return data.results || [];
 }
 
+// --- Cache (matches Meta Ads 4-hour pattern) ---
+const googleAdsCache = new Map<string, { data: GoogleAdsData; expiresAt: number }>();
+const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
+
 export async function getGoogleAdsData(since: string, until: string): Promise<GoogleAdsData> {
     if (!isGoogleAdsConfigured()) {
         console.warn('[GoogleAds] Credentials missing, falling back to mock data...');
         return getMockData(since, until);
     }
+
+    // Check cache first
+    const cacheKey = `google_ads_${since}_${until}`;
+    const cached = googleAdsCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) return cached.data;
 
     try {
         console.log(`[GoogleAds REST] Fetching live data... Customer: ${process.env.GOOGLE_ADS_CUSTOMER_ID}`);
@@ -234,13 +243,15 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
             results: parseFloat(row.metrics?.conversions || '0')
         }));
 
-        return {
+        const result: GoogleAdsData = {
             isConfigured: true,
             isMock: false,
             account: accountSummary,
             campaigns,
             dailySpend
         };
+        googleAdsCache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL });
+        return result;
 
     } catch (error: any) {
         console.error('[GoogleAds REST] Live API Error Details:', error.message || error);

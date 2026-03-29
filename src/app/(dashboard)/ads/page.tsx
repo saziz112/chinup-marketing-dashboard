@@ -456,6 +456,11 @@ export default function AdsPage() {
             const isGoogle = activeTab === 'Google Ads';
             const isOverview = activeTab === 'Overview';
 
+            // Clear stale ROAS when not on Meta tab
+            if (isOverview || isGoogle) {
+                setRoasData(null);
+            }
+
             if (isOverview) {
                 const res = await fetch(`/api/paid-ads/overview?${params}`);
                 if (!res.ok) throw new Error(`Overview API: HTTP ${res.status}`);
