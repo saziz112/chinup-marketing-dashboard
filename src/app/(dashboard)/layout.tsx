@@ -122,12 +122,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <div className="user-avatar" style={{ width: 28, height: 28, fontSize: '0.625rem' }}>{initials}</div>
             </div>
 
-            {/* Mobile Overlay */}
-            {sidebarOpen && (
-                <div className="mobile-overlay" onClick={() => setSidebarOpen(false)} />
-            )}
-
             <div className="dashboard-layout">
+                {/* Mobile Overlay */}
+                {sidebarOpen && (
+                    <div className="mobile-overlay" onClick={() => setSidebarOpen(false)} />
+                )}
+
                 {/* Sidebar */}
                 <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
                     <div className="sidebar-brand">
