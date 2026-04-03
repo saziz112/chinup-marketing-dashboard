@@ -67,6 +67,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
     { id: 'overview', label: 'Overview', href: '/', icon: 'home' },
+    { id: 'knowledge', label: 'Knowledge Base', href: '/knowledge', icon: 'book-open' },
     { id: 'organic', label: 'Organic', href: '/organic', icon: 'trending-up', group: 'Analytics' },
     { id: 'ads', label: 'Paid Ads', href: '/ads', icon: 'dollar-sign', group: 'Analytics' },
     { id: 'attribution', label: 'Leads & Pipeline', href: '/attribution', icon: 'git-branch', group: 'Analytics' },
