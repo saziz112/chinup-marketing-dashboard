@@ -464,7 +464,6 @@ function formatCurrency(val: number): string {
 export async function getStrategyAnalysis(options?: {
     locationFilter?: LocationKey;
     isAdmin?: boolean;
-    enrichWithConversations?: boolean;
 }): Promise<StrategyResponse> {
     const [pipelineData, staleLeads] = await Promise.all([
         getFullPipelineData({ locationFilter: options?.locationFilter }),
@@ -473,59 +472,33 @@ export async function getStrategyAnalysis(options?: {
 
     const isAdmin = options?.isAdmin ?? false;
 
-    // Optionally enrich stale leads with conversation data
-    let staleLeadCorrections: StrategyResponse['staleLeadCorrections'];
+    // Always enrich with conversation data (conversation-first approach)
     let conversationIntelligence: ConversationsIntelligence | null = null;
+    let staleLeadCorrections: StrategyResponse['staleLeadCorrections'];
 
-    if (options?.enrichWithConversations) {
-        try {
-            conversationIntelligence = await getConversationsIntelligence({
-                locationFilter: options.locationFilter,
-            });
+    try {
+        conversationIntelligence = await getConversationsIntelligence({
+            locationFilter: options?.locationFilter,
+        });
 
-            // Mark false positives on stale leads
-            const overrideIds = new Set(conversationIntelligence.staleLeadOverrides.map(o => o.contactId));
-            let correctedCount = 0;
+        // Mark false positives on stale leads
+        const overrideIds = new Set(conversationIntelligence.staleLeadOverrides.map(o => o.contactId));
+        let correctedCount = 0;
 
-            for (const lead of staleLeads) {
-                if (overrideIds.has(lead.opportunity.contactId)) {
-                    lead.falsePositive = true;
-                    correctedCount++;
-                }
+        for (const lead of staleLeads) {
+            if (overrideIds.has(lead.opportunity.contactId)) {
+                lead.falsePositive = true;
+                correctedCount++;
             }
-
-            // Enrich stale leads with engagement data
-            let enrichedCount = 0;
-            for (const lead of staleLeads) {
-                const override = conversationIntelligence.staleLeadOverrides.find(
-                    o => o.contactId === lead.opportunity.contactId
-                );
-                if (override) {
-                    const eng = override.engagement;
-                    lead.lastCommunicationDate = eng.lastCommunicationDate || undefined;
-                    lead.daysSinceCommunication = eng.daysSinceLastContact || undefined;
-                    lead.engagementSummary = {
-                        totalMessages: eng.totalMessages,
-                        totalConversations: eng.totalConversations,
-                        lifecycleStage: eng.lifecycleStage,
-                        lastInbound: eng.lastInboundDate,
-                        lastOutbound: eng.lastOutboundDate,
-                    };
-                    if (eng.hasRecentActivity) {
-                        lead.lastActivitySource = 'conversation';
-                    }
-                    enrichedCount++;
-                }
-            }
-
-            staleLeadCorrections = {
-                falsePositiveCount: correctedCount,
-                correctedStaleness: correctedCount,
-                conversationEnriched: enrichedCount,
-            };
-        } catch (err) {
-            console.warn('[ghl-strategy] Conversation enrichment failed, continuing without:', err);
         }
+
+        staleLeadCorrections = {
+            falsePositiveCount: correctedCount,
+            correctedStaleness: correctedCount,
+            conversationEnriched: conversationIntelligence.summary.totalAnalyzed,
+        };
+    } catch (err) {
+        console.warn('[ghl-strategy] Conversation enrichment failed, continuing without:', err);
     }
 
     const insights = computeInsights(pipelineData, staleLeads, conversationIntelligence);

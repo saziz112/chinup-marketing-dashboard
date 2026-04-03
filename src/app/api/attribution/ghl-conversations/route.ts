@@ -18,12 +18,8 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Admin-only for Phase 27
     const user = session.user as Record<string, unknown>;
     const isAdmin = user.isAdmin === true;
-    if (!isAdmin) {
-        return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
 
     if (!isGHLConfigured()) {
         return NextResponse.json({ error: 'GoHighLevel not configured', configured: false }, { status: 503 });
@@ -39,12 +35,19 @@ export async function GET(req: NextRequest) {
             forceRefresh,
         });
 
+        // Mask monetary values for non-admin users
+        const maskValue = (v: number) => isAdmin ? v : 0;
+
         if (mode === 'summary') {
-            // Summary mode: just KPIs, counts, top gaps — no full engagement objects
             return NextResponse.json({
                 configured: true,
-                summary: intelligence.summary,
+                isAdmin,
+                summary: {
+                    ...intelligence.summary,
+                    lostRevenuePotential: maskValue(intelligence.summary.lostRevenuePotential),
+                },
                 lifecycleCounts: intelligence.lifecycleCounts,
+                ghostAnalytics: intelligence.ghostAnalytics,
                 speedToLead: {
                     avgMinutes: intelligence.speedToLead.avgMinutes,
                     neverResponded: intelligence.speedToLead.neverResponded,
@@ -53,21 +56,47 @@ export async function GET(req: NextRequest) {
                 lostRevenueCandidatesCount: intelligence.lostRevenueCandidates.length,
                 topEngagementGaps: intelligence.engagementGaps.slice(0, 10).map(g => ({
                     contactName: g.opportunity.contactName,
+                    contactPhone: g.engagement.phone,
                     stageName: g.stageName,
-                    monetaryValue: g.monetaryValue,
+                    monetaryValue: maskValue(g.monetaryValue),
                     daysSinceOutreach: g.daysSinceOutreach,
                     riskLevel: g.riskLevel,
                     suggestedAction: g.suggestedAction,
                     achievabilityScore: g.achievabilityScore,
+                    callPriority: g.callPriority,
+                    lifecycleStage: g.engagement.lifecycleStage,
                     locationName: g.locationName,
+                    locationKey: g.locationKey,
                 })),
+                timestampFallbackCount: intelligence.timestampFallbackContacts.length,
                 fetchedAt: intelligence.fetchedAt,
             });
         }
 
-        // Full mode: everything (admin sees all values)
+        // Full mode: everything
+        if (!isAdmin) {
+            // Mask values in full response for non-admin
+            return NextResponse.json({
+                configured: true,
+                isAdmin,
+                ...intelligence,
+                engagementGaps: intelligence.engagementGaps.map(g => ({
+                    ...g, monetaryValue: 0,
+                    opportunity: { ...g.opportunity, monetaryValue: 0 },
+                })),
+                lostRevenueCandidates: intelligence.lostRevenueCandidates.map(c => ({
+                    ...c, monetaryValue: 0,
+                    opportunity: { ...c.opportunity, monetaryValue: 0 },
+                })),
+                timestampFallbackContacts: intelligence.timestampFallbackContacts.map(c => ({
+                    ...c, opportunity: { ...c.opportunity, monetaryValue: 0 },
+                })),
+            });
+        }
+
         return NextResponse.json({
             configured: true,
+            isAdmin,
             ...intelligence,
         });
     } catch (error: unknown) {

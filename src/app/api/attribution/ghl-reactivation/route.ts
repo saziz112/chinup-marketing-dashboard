@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@vercel/postgres';
-import { type LocationKey, isGHLConfigured, getStaleLeads, getLocations } from '@/lib/integrations/gohighlevel';
+import { type LocationKey, isGHLConfigured, getLocations } from '@/lib/integrations/gohighlevel';
 import {
     getConversationsIntelligence,
     getLapsedPatients,
@@ -23,7 +23,7 @@ import {
     sendBulkSMS, sendBulkEmail, SMS_TEMPLATES, EMAIL_TEMPLATES,
     sendSMS, sendEmail, renderTemplate,
 } from '@/lib/integrations/ghl-messaging';
-import { hashPhone, hashEmail, checkDNDSimple } from '@/lib/dnd-check';
+import { hashPhone, hashEmail } from '@/lib/dnd-check';
 import { normalizePhone } from '@/lib/integrations/mindbody';
 
 export const maxDuration = 300; // 5 min — cold-start fetches MindBody + GHL for all 3 locations
@@ -352,45 +352,59 @@ export async function GET(req: NextRequest) {
             });
         }
 
-        // ── Campaign 6: Pipeline Follow-Up (ALL stale leads) ──
-        if (segment === 'pipeline-followup') {
-            const staleLeads = await getStaleLeads(locationParam || undefined);
-            const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
-
-            // Phone-level dedup across all stale leads
-            const seenPhones = new Set<string>();
-            const dedupedLeads = staleLeads.filter(sl => {
-                if (!sl.opportunity.contactPhone) return false;
-                const normalized = normalizePhone(sl.opportunity.contactPhone);
-                if (seenPhones.has(normalized)) return false;
-                seenPhones.add(normalized);
-                return true;
+        // ── Conversation-Based Segments (replace pipeline-followup) ──
+        // These 4 segments use conversation lifecycle stages as the primary signal
+        if (segment === 'untouched' || segment === 'attempted-no-reply' || segment === 're-engage-ghost' || segment === 'quoted-followup') {
+            const intelligence = await getConversationsIntelligence({
+                locationFilter: locationParam || undefined,
             });
 
-            const noDND = dedupedLeads.filter(sl => {
-                const normalized = normalizePhone(sl.opportunity.contactPhone);
-                const entry = phoneMap.get(normalized);
-                if (entry?.dnd) return false;
-                return !checkDNDSimple(sl.opportunity.contactDND ?? false, sl.opportunity.contactTags || [], 'sms', sl.opportunity.contactPhone);
+            // Filter by lifecycle stage based on segment
+            const eligible = intelligence.engagementGaps.filter(g => {
+                if (!g.engagement?.phone) return false;
+                if (g.engagement?.isDND) return false;
+                if (g.mindbodyMatch?.isActive) return false;
+
+                if (segment === 'untouched') {
+                    return g.engagement.lifecycleStage === 'untouched';
+                }
+                if (segment === 'attempted-no-reply') {
+                    return g.engagement.lifecycleStage === 'attempted' && g.daysSinceOutreach >= 7;
+                }
+                if (segment === 're-engage-ghost') {
+                    return g.engagement.lifecycleStage === 'ghost'
+                        && g.engagement.daysSinceLastContact !== null
+                        && g.engagement.daysSinceLastContact >= 14
+                        && g.engagement.daysSinceLastContact <= 60;
+                }
+                if (segment === 'quoted-followup') {
+                    return g.engagement.lifecycleStage === 'quoted' && g.daysSinceOutreach >= 7;
+                }
+                return false;
             });
 
-            const contacts: ContactEntry[] = noDND.map(sl => ({
-                contactId: sl.opportunity.contactId,
-                contactName: sl.opportunity.contactName,
-                firstName: sl.opportunity.contactName?.split(' ')[0] || '',
-                phone: sl.opportunity.contactPhone,
-                email: sl.opportunity.contactEmail || '',
-                maskedPhone: maskPhone(sl.opportunity.contactPhone),
-                locationKey: sl.locationKey as LocationKey,
-                locationName: sl.locationName,
-                stageName: `${sl.pipelineName} — ${sl.stageName}`,
-                monetaryValue: sl.opportunity.monetaryValue,
-                daysSinceOutreach: sl.daysSinceActivity,
-                achievabilityScore: sl.staleness === 'at-risk' ? 70 : sl.staleness === 'stale' ? 45 : 25,
-                riskLevel: sl.staleness === 'at-risk' ? 'needs-outreach' as const
-                    : sl.staleness === 'stale' ? 'going-cold' as const
-                    : 'abandoned' as const,
-                tags: sl.opportunity.contactTags || [],
+            const responseRates: Record<string, number> = {
+                'untouched': 0.10,
+                'attempted-no-reply': 0.08,
+                're-engage-ghost': 0.18,
+                'quoted-followup': 0.25,
+            };
+
+            const contacts: ContactEntry[] = eligible.map(g => ({
+                contactId: g.opportunity.contactId,
+                contactName: g.opportunity.contactName,
+                firstName: g.opportunity.contactName?.split(' ')[0] || '',
+                phone: g.engagement?.phone || '',
+                email: g.opportunity.contactEmail || '',
+                maskedPhone: maskPhone(g.engagement?.phone || ''),
+                locationKey: g.locationKey as LocationKey,
+                locationName: g.locationName,
+                stageName: `${g.engagement.lifecycleStage} — ${g.stageName}`,
+                monetaryValue: g.monetaryValue,
+                daysSinceOutreach: g.daysSinceOutreach,
+                achievabilityScore: g.achievabilityScore,
+                riskLevel: g.riskLevel as ContactEntry['riskLevel'],
+                tags: [] as string[],
             }));
 
             const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
@@ -401,14 +415,14 @@ export async function GET(req: NextRequest) {
                 contacts: filtered,
                 totalEligible: filtered.length,
                 segment,
-                forecast: buildForecast(filtered, 0.12),
+                forecast: buildForecast(filtered, responseRates[segment] || 0.12),
                 templates: SMS_TEMPLATES,
                 emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: (dedupedLeads.length - noDND.length) + v2DndFiltered,
+                dndFiltered: intelligence.summary.dndFiltered + v2DndFiltered,
                 cooldownExcluded,
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
-                source: 'ghl-pipeline',
+                source: 'ghl-conversations',
             });
         }
 

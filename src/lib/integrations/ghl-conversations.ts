@@ -106,7 +106,26 @@ export interface EngagementGap {
     pipelineName: string;
     stageName: string;
     achievabilityScore: number; // 0-100
+    callPriority: number; // 0-100, conversation-first actionability score
     mindbodyMatch?: MindbodyMatch;
+}
+
+export interface GhostAnalytics {
+    avgMessagesBeforeGhosting: number;
+    avgDaysToGhost: number;
+    ghostRateBySource: { source: string; ghostRate: number; total: number }[];
+    ghostRateByLocation: { location: string; ghostRate: number; total: number }[];
+}
+
+export interface TimestampFallbackContact {
+    opportunity: GHLOpportunity;
+    locationKey: LocationKey;
+    locationName: string;
+    pipelineName: string;
+    stageName: string;
+    staleness: 'at-risk' | 'stale' | 'dormant' | 'unknown';
+    daysSinceUpdate: number;
+    source: 'timestamp';
 }
 
 export interface LostRevenueCandidate {
@@ -152,6 +171,8 @@ export interface ConversationsIntelligence {
         metrics: SpeedToLeadMetric[];
     };
     staffMetrics: StaffMetric[];
+    ghostAnalytics: GhostAnalytics;
+    timestampFallbackContacts: TimestampFallbackContact[];
     summary: {
         totalAnalyzed: number;
         withConversations: number;
@@ -162,6 +183,7 @@ export interface ConversationsIntelligence {
         lostRevenuePotential: number;
         dndFiltered: number;
         mindbodyActiveFiltered: number;
+        unrepliedInbound: number;
     };
     fetchedAt: string;
 }
@@ -523,6 +545,55 @@ function computeAchievabilityScore(
     return Math.min(100, Math.max(0, score));
 }
 
+// --- Call Priority Score (conversation-first actionability) ---
+
+function computeCallPriority(
+    engagement: ContactEngagement,
+    monetaryValue: number,
+    maxValue: number,
+): number {
+    let score = 0;
+    const { daysSinceLastContact, totalMessages, lifecycleStage, messageBreakdown: mb } = engagement;
+
+    // Lifecycle stage (30%) — quoted leads are the highest priority
+    const stageScores: Record<LifecycleStage, number> = {
+        quoted: 30, engaged: 24, ghost: 18, attempted: 12, untouched: 6, converted: 0,
+    };
+    score += stageScores[lifecycleStage] || 0;
+
+    // Recency (30%)
+    if (daysSinceLastContact === null) score += 0;
+    else if (daysSinceLastContact < 7) score += 30;
+    else if (daysSinceLastContact < 14) score += 24;
+    else if (daysSinceLastContact < 30) score += 15;
+    else if (daysSinceLastContact < 60) score += 8;
+    else score += 3;
+
+    // Monetary value (20%)
+    if (maxValue > 0) score += Math.round((monetaryValue / maxValue) * 20);
+
+    // Conversation depth (10%)
+    if (totalMessages >= 10) score += 10;
+    else if (totalMessages >= 5) score += 7;
+    else if (totalMessages >= 2) score += 5;
+    else if (totalMessages >= 1) score += 3;
+
+    // Unreplied inbound (10%) — they reached out to us and we haven't responded
+    const totalInbound = mb.sms.inbound + mb.call.inbound + mb.email.inbound;
+    const totalOutbound = mb.sms.outbound + mb.call.outbound + mb.email.outbound;
+    const lastInMs = engagement.lastInboundDate ? new Date(engagement.lastInboundDate).getTime() : 0;
+    const lastOutMs = engagement.lastOutboundDate ? new Date(engagement.lastOutboundDate).getTime() : 0;
+    if (totalInbound > 0 && lastInMs > lastOutMs) {
+        // They messaged us more recently than we messaged them
+        score += 10;
+    } else if (totalInbound > 0 && totalOutbound === 0) {
+        // They've reached out but we never responded
+        score += 10;
+    }
+
+    return Math.min(100, Math.max(0, score));
+}
+
 // --- Location Filter Helper ---
 
 function filterIntelligenceByLocation(
@@ -542,6 +613,16 @@ function filterIntelligenceByLocation(
         || { untouched: 0, attempted: 0, engaged: 0, quoted: 0, ghost: 0, converted: 0 };
     const locationTotal = Object.values(locationLC).reduce((s, n) => s + n, 0);
 
+    const filteredTimestampFallback = data.timestampFallbackContacts.filter(c => c.locationKey === locationKey);
+
+    // Filter ghost analytics by location
+    const locationGhostAnalytics: GhostAnalytics = {
+        avgMessagesBeforeGhosting: data.ghostAnalytics.avgMessagesBeforeGhosting, // aggregate
+        avgDaysToGhost: data.ghostAnalytics.avgDaysToGhost, // aggregate
+        ghostRateBySource: data.ghostAnalytics.ghostRateBySource, // aggregate
+        ghostRateByLocation: data.ghostAnalytics.ghostRateByLocation.filter(g => g.location === locationKey),
+    };
+
     return {
         engagementGaps: filteredGaps,
         lostRevenueCandidates: filteredLost,
@@ -553,6 +634,8 @@ function filterIntelligenceByLocation(
             metrics: filteredSpeedMetrics,
         },
         staffMetrics: filteredStaff,
+        ghostAnalytics: locationGhostAnalytics,
+        timestampFallbackContacts: filteredTimestampFallback,
         summary: {
             totalAnalyzed: locationTotal,
             withConversations: filteredGaps.filter(g => g.engagement.totalConversations > 0).length,
@@ -563,6 +646,7 @@ function filterIntelligenceByLocation(
             lostRevenuePotential: filteredLost.reduce((sum, c) => sum + c.monetaryValue, 0),
             dndFiltered: data.summary.dndFiltered, // aggregate
             mindbodyActiveFiltered: data.summary.mindbodyActiveFiltered, // aggregate
+            unrepliedInbound: data.summary.unrepliedInbound, // aggregate
         },
         fetchedAt: data.fetchedAt,
     };
@@ -680,13 +764,27 @@ export async function getConversationsIntelligence(
     // Each contact = 1 search + ~1-3 message fetches = ~2-4 API calls
     // Cap at 150 contacts = ~450 API calls, safe within rate limits
     const MAX_CONTACTS = 150;
+    const excludedContacts: typeof contactMap = new Map();
     if (contactMap.size > MAX_CONTACTS) {
-        // Prioritize by monetary value (highest first)
+        // Prioritize by: monetary value (60%) + recency (40%)
+        const nowMs = Date.now();
         const sorted = Array.from(contactMap.entries())
-            .sort((a, b) => b[1].opp.monetaryValue - a[1].opp.monetaryValue);
+            .sort((a, b) => {
+                const aValue = a[1].opp.monetaryValue;
+                const bValue = b[1].opp.monetaryValue;
+                const maxVal = Math.max(aValue, bValue, 1);
+                const aRecency = Math.max(0, 1 - (nowMs - new Date(a[1].opp.createdAt).getTime()) / (180 * 86400000));
+                const bRecency = Math.max(0, 1 - (nowMs - new Date(b[1].opp.createdAt).getTime()) / (180 * 86400000));
+                const aScore = (aValue / maxVal) * 0.6 + aRecency * 0.4;
+                const bScore = (bValue / maxVal) * 0.6 + bRecency * 0.4;
+                return bScore - aScore;
+            });
         const keep = new Set(sorted.slice(0, MAX_CONTACTS).map(([id]) => id));
-        for (const [id] of contactMap) {
-            if (!keep.has(id)) contactMap.delete(id);
+        for (const [id, info] of contactMap) {
+            if (!keep.has(id)) {
+                excludedContacts.set(id, info);
+                contactMap.delete(id);
+            }
         }
     }
 
@@ -785,6 +883,13 @@ export async function getConversationsIntelligence(
     let falsePositives = 0;
     let dndFiltered = 0;
     let mindbodyActiveFiltered = 0;
+    let unrepliedInbound = 0;
+
+    // Track ghost contacts for analytics
+    const ghostContacts: { totalMessages: number; daysToGhost: number; source: string; locationKey: LocationKey }[] = [];
+    // Track all contacts by source/location for ghost rate computation
+    const contactsBySource = new Map<string, { total: number; ghosts: number }>();
+    const contactsByLocationForGhost = new Map<LocationKey, { total: number; ghosts: number }>();
 
     const maxValue = Math.max(...Array.from(contactMap.values()).map(c => c.opp.monetaryValue), 1);
 
@@ -796,6 +901,40 @@ export async function getConversationsIntelligence(
         lifecycleCounts[engagement.lifecycleStage]++;
         if (lifecycleByLocation[info.locationKey]) {
             lifecycleByLocation[info.locationKey][engagement.lifecycleStage]++;
+        }
+
+        // Track source/location counts for ghost rate
+        const source = info.opp.source || 'unknown';
+        const srcEntry = contactsBySource.get(source) || { total: 0, ghosts: 0 };
+        srcEntry.total++;
+        if (engagement.lifecycleStage === 'ghost') srcEntry.ghosts++;
+        contactsBySource.set(source, srcEntry);
+
+        const locEntry = contactsByLocationForGhost.get(info.locationKey) || { total: 0, ghosts: 0 };
+        locEntry.total++;
+        if (engagement.lifecycleStage === 'ghost') locEntry.ghosts++;
+        contactsByLocationForGhost.set(info.locationKey, locEntry);
+
+        // Track ghost details for analytics
+        if (engagement.lifecycleStage === 'ghost') {
+            const firstOutMs = engagement.firstOutboundDate ? new Date(engagement.firstOutboundDate).getTime() : 0;
+            const lastCommMs = engagement.lastCommunicationDate ? new Date(engagement.lastCommunicationDate).getTime() : 0;
+            const daysToGhost = firstOutMs && lastCommMs ? Math.floor((lastCommMs - firstOutMs) / 86400000) : 0;
+            ghostContacts.push({
+                totalMessages: engagement.totalMessages,
+                daysToGhost: Math.max(0, daysToGhost),
+                source,
+                locationKey: info.locationKey,
+            });
+        }
+
+        // Track unreplied inbound (they reached out, we haven't responded)
+        const totalInbound = engagement.messageBreakdown.sms.inbound + engagement.messageBreakdown.call.inbound + engagement.messageBreakdown.email.inbound;
+        const totalOutbound = engagement.messageBreakdown.sms.outbound + engagement.messageBreakdown.call.outbound + engagement.messageBreakdown.email.outbound;
+        const lastInMs = engagement.lastInboundDate ? new Date(engagement.lastInboundDate).getTime() : 0;
+        const lastOutMs = engagement.lastOutboundDate ? new Date(engagement.lastOutboundDate).getTime() : 0;
+        if (totalInbound > 0 && (totalOutbound === 0 || lastInMs > lastOutMs)) {
+            unrepliedInbound++;
         }
 
         // Track DND
@@ -876,6 +1015,7 @@ export async function getConversationsIntelligence(
                 pipelineName: info.pipelineName,
                 stageName: info.stageName,
                 achievabilityScore: computeAchievabilityScore(engagement, info.opp.monetaryValue, maxValue),
+                callPriority: computeCallPriority(engagement, info.opp.monetaryValue, maxValue),
                 mindbodyMatch: mbMatch,
             });
         }
@@ -902,8 +1042,8 @@ export async function getConversationsIntelligence(
         }
     }
 
-    // Sort engagement gaps by value (highest first), then by achievability
-    engagementGaps.sort((a, b) => b.achievabilityScore - a.achievabilityScore || b.monetaryValue - a.monetaryValue);
+    // Sort engagement gaps by call priority (highest first), then by achievability
+    engagementGaps.sort((a, b) => b.callPriority - a.callPriority || b.achievabilityScore - a.achievabilityScore);
     lostRevenueCandidates.sort((a, b) => b.monetaryValue - a.monetaryValue);
 
     // Compute speed-to-lead averages per location
@@ -935,6 +1075,54 @@ export async function getConversationsIntelligence(
         };
     });
 
+    // Compute ghost analytics
+    const ghostAnalytics: GhostAnalytics = {
+        avgMessagesBeforeGhosting: ghostContacts.length > 0
+            ? Math.round(ghostContacts.reduce((s, g) => s + g.totalMessages, 0) / ghostContacts.length)
+            : 0,
+        avgDaysToGhost: ghostContacts.length > 0
+            ? Math.round(ghostContacts.reduce((s, g) => s + g.daysToGhost, 0) / ghostContacts.length)
+            : 0,
+        ghostRateBySource: Array.from(contactsBySource.entries())
+            .filter(([, v]) => v.total >= 3) // only show sources with enough data
+            .map(([source, v]) => ({
+                source,
+                ghostRate: Math.round((v.ghosts / v.total) * 100),
+                total: v.total,
+            }))
+            .sort((a, b) => b.ghostRate - a.ghostRate),
+        ghostRateByLocation: Array.from(contactsByLocationForGhost.entries())
+            .map(([location, v]) => ({
+                location,
+                ghostRate: Math.round((v.ghosts / v.total) * 100),
+                total: v.total,
+            }))
+            .sort((a, b) => b.ghostRate - a.ghostRate),
+    };
+
+    // Build timestamp fallback for contacts beyond 150 cap
+    const timestampFallbackContacts: TimestampFallbackContact[] = [];
+    for (const [, info] of excludedContacts) {
+        const oppAge = Math.floor((Date.now() - new Date(info.opp.updatedAt || info.opp.createdAt).getTime()) / 86400000);
+        let staleness: TimestampFallbackContact['staleness'];
+        if (oppAge >= 60) staleness = 'dormant';
+        else if (oppAge >= 30) staleness = 'stale';
+        else if (oppAge >= 14) staleness = 'at-risk';
+        else staleness = 'unknown';
+
+        timestampFallbackContacts.push({
+            opportunity: info.opp,
+            locationKey: info.locationKey,
+            locationName: info.locationName,
+            pipelineName: info.pipelineName,
+            stageName: info.stageName,
+            staleness,
+            daysSinceUpdate: oppAge,
+            source: 'timestamp',
+        });
+    }
+    timestampFallbackContacts.sort((a, b) => a.daysSinceUpdate - b.daysSinceUpdate);
+
     const intelligence: ConversationsIntelligence = {
         engagementGaps: engagementGaps.slice(0, 50),
         lostRevenueCandidates: lostRevenueCandidates.slice(0, 30),
@@ -947,6 +1135,8 @@ export async function getConversationsIntelligence(
             metrics: speedToLeadMetrics.slice(0, 100),
         },
         staffMetrics,
+        ghostAnalytics,
+        timestampFallbackContacts: timestampFallbackContacts.slice(0, 50),
         summary: {
             totalAnalyzed: allEngagement.size,
             withConversations: Array.from(allEngagement.values()).filter(e => e.totalConversations > 0).length,
@@ -957,6 +1147,7 @@ export async function getConversationsIntelligence(
             lostRevenuePotential: lostRevenueCandidates.reduce((sum, c) => sum + c.monetaryValue, 0),
             dndFiltered,
             mindbodyActiveFiltered,
+            unrepliedInbound,
         },
         fetchedAt: new Date().toISOString(),
     };
