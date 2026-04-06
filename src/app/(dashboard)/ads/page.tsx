@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { useSession } from 'next-auth/react';
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -359,7 +360,7 @@ function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData; isMoc
 
 // --- Campaigns Table ---
 
-function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFilter, isOverview, isGoogle }: {
+function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFilter, isOverview, isGoogle, onAnalyze, aiAnalysis, aiLoading }: {
     campaigns: (Campaign & { platform?: string })[];
     roasDict?: Record<string, CampaignBreakdown>;
     isAdmin: boolean;
@@ -367,6 +368,9 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
     onStatusFilter: (f: StatusFilter) => void;
     isOverview?: boolean;
     isGoogle?: boolean;
+    onAnalyze?: (campaign: Campaign) => void;
+    aiAnalysis?: Record<string, { grade: string; summary: string; priorityActions: string[]; creativeSuggestion: string | null }>;
+    aiLoading?: string | null;
 }) {
     const [sortBy, setSortBy] = useState<string>('results');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -460,6 +464,7 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
                                 {isAdmin && !!roasDict && <Th label="Booked" col="apptsBooked" />}
                                 {isAdmin && !!roasDict && <Th label="Completed" col="apptsCompleted" />}
                                 <Th label={isAdmin && !!roasDict ? "True ROAS" : "ROAS"} col={isAdmin && !!roasDict ? "trueRoas" : "roas"} />
+                                {!!onAnalyze && <th style={{ width: 40 }} />}
                             </tr>
                         </thead>
                         <tbody>
@@ -476,7 +481,8 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
                                     : {} as Record<string, MetricGrade | null>;
 
                                 return (
-                                    <tr key={c.id}>
+                                    <React.Fragment key={c.id}>
+                                    <tr>
                                         <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</td>
                                         {isOverview && (
                                             <td>
@@ -515,7 +521,64 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
                                                 <GradeDot grade={gradeMetric('roas', roasVal ?? c.roas, plat)} />
                                             </span>
                                         </td>
+                                        {!!onAnalyze && (
+                                            <td>
+                                                <button
+                                                    onClick={() => onAnalyze(c)}
+                                                    disabled={aiLoading === c.id}
+                                                    title="AI Campaign Analysis"
+                                                    style={{
+                                                        background: aiAnalysis?.[c.id] ? '#6366f122' : 'transparent',
+                                                        border: `1px solid ${aiAnalysis?.[c.id] ? '#6366f144' : 'var(--border)'}`,
+                                                        borderRadius: 6, padding: '4px 8px', cursor: 'pointer',
+                                                        color: aiAnalysis?.[c.id] ? '#a5b4fc' : 'var(--text-muted)',
+                                                        fontSize: 14, lineHeight: 1,
+                                                    }}
+                                                >
+                                                    {aiLoading === c.id ? '...' : '✨'}
+                                                </button>
+                                            </td>
+                                        )}
                                     </tr>
+                                    {/* AI Analysis expandable row */}
+                                    {aiAnalysis?.[c.id] && (
+                                        <tr>
+                                            <td colSpan={20} style={{ padding: 0, border: 'none' }}>
+                                                <div style={{
+                                                    background: 'linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(34,197,94,0.04) 100%)',
+                                                    borderTop: '1px solid #6366f133',
+                                                    padding: '12px 16px', fontSize: 13,
+                                                }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                                                        <span style={{
+                                                            fontSize: 20, fontWeight: 700, lineHeight: 1,
+                                                            color: { A: '#22c55e', B: '#86efac', C: '#f59e0b', D: '#fb923c', F: '#ef4444' }[aiAnalysis[c.id].grade] || '#6b7280',
+                                                        }}>
+                                                            {aiAnalysis[c.id].grade}
+                                                        </span>
+                                                        <span style={{ color: 'var(--text-secondary)' }}>{aiAnalysis[c.id].summary}</span>
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                                                        <div style={{ flex: 1, minWidth: 250 }}>
+                                                            <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Priority Actions</div>
+                                                            <ul style={{ margin: 0, paddingLeft: 16, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                                                                {aiAnalysis[c.id].priorityActions.map((a, i) => (
+                                                                    <li key={i}>{a}</li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                        {aiAnalysis[c.id].creativeSuggestion && (
+                                                            <div style={{ flex: 1, minWidth: 250 }}>
+                                                                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Creative Suggestion</div>
+                                                                <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{aiAnalysis[c.id].creativeSuggestion}</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </React.Fragment>
                                 );
                             })}
                         </tbody>
@@ -559,6 +622,9 @@ export default function AdsPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [showRoasModal, setShowRoasModal] = useState(false);
+    const [aiAnalysis, setAiAnalysis] = useState<Record<string, { grade: string; summary: string; priorityActions: string[]; creativeSuggestion: string | null }>>({});
+    const [aiLoading, setAiLoading] = useState<string | null>(null); // campaignId currently loading
+    const [creativesData, setCreativesData] = useState<Record<string, Array<{ title: string | null; body: string | null }>>>({});
 
     const user = session?.user as Record<string, unknown> | undefined;
     const isAdmin = user?.isAdmin === true;
@@ -661,6 +727,65 @@ export default function AdsPage() {
     });
 
     const periodLabel = `${format(parseISO(since), 'MMM d, yyyy')} - ${format(parseISO(until), 'MMM d, yyyy')}`;
+
+    // Fetch ad creatives when switching to Meta/Google tab
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (isOverview || !data) return;
+        const plat = isGoogle ? 'google' : 'meta';
+        fetch(`/api/paid-ads/creatives?since=${since}&until=${until}&platform=${plat}`)
+            .then(r => r.json())
+            .then(d => { if (d.creatives) setCreativesData(d.creatives); })
+            .catch(() => {});
+    }, [since, until, activeTab, isOverview, isGoogle]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const analyzeWithAI = async (campaign: Campaign) => {
+        const platform = isGoogle ? 'google' : 'meta';
+        setAiLoading(campaign.id);
+        try {
+            const grades = gradeAllMetrics(
+                { ctr: campaign.ctr, cpm: campaign.cpm, costPerResult: campaign.costPerResult, roas: campaign.roas },
+                platform as 'meta' | 'google',
+            );
+            const benchmarkGrades: Record<string, { grade: string; label: string }> = {};
+            for (const [k, v] of Object.entries(grades)) {
+                if (v) benchmarkGrades[k] = { grade: v.grade, label: v.label };
+            }
+
+            const creatives = creativesData[campaign.id];
+            const adCopy = creatives?.[0] ? { title: creatives[0].title, body: creatives[0].body } : null;
+
+            const breakdown = roasData?.campaignBreakdown.find(b => b.id === campaign.id);
+            const appointmentData = breakdown && (breakdown.appointmentsBooked > 0 || breakdown.appointmentsCompleted > 0)
+                ? { booked: breakdown.appointmentsBooked, completed: breakdown.appointmentsCompleted }
+                : null;
+
+            const res = await fetch('/api/paid-ads/ai-analysis', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    campaignName: campaign.name,
+                    platform,
+                    metrics: {
+                        ctr: campaign.ctr, cpm: campaign.cpm, cpc: campaign.cpc,
+                        costPerResult: campaign.costPerResult, roas: campaign.roas,
+                        impressions: campaign.impressions, clicks: campaign.clicks,
+                        results: campaign.results, spend: campaign.spend,
+                    },
+                    benchmarkGrades,
+                    adCopy,
+                    appointmentData,
+                }),
+            });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error);
+            setAiAnalysis(prev => ({ ...prev, [campaign.id]: result }));
+        } catch (e) {
+            console.error('AI analysis failed:', e);
+        } finally {
+            setAiLoading(null);
+        }
+    };
 
     return (
         <>
@@ -885,6 +1010,9 @@ export default function AdsPage() {
                             onStatusFilter={setStatusFilter}
                             isOverview={isOverview}
                             isGoogle={isGoogle}
+                            onAnalyze={!isOverview ? analyzeWithAI : undefined}
+                            aiAnalysis={aiAnalysis}
+                            aiLoading={aiLoading}
                         />
                     </div>
                 </>

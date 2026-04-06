@@ -666,3 +666,81 @@ function getMockData(since: string, until: string): MetaAdsData {
         dailySpend,
     };
 }
+
+// --- Ad Creatives ---
+
+export interface MetaAdCreative {
+    adId: string;
+    campaignId: string;
+    title: string | null;
+    body: string | null;
+    linkDescription: string | null;
+    thumbnailUrl: string | null;
+}
+
+/**
+ * Fetch ad creatives (copy text) for all ads in the account.
+ * Returns a map of campaignId → array of creatives.
+ */
+export async function getMetaAdCreatives(
+    since: string,
+    until: string,
+): Promise<Map<string, MetaAdCreative[]>> {
+    const cacheKey = `meta_creatives_${since}_${until}`;
+    const cached = getCached<Map<string, MetaAdCreative[]>>(cacheKey);
+    if (cached) { trackCall('metaAds', 'getAdCreatives', true); return cached; }
+
+    const token = getOptionalEnv('META_ADS_ACCESS_TOKEN');
+    if (!token) return new Map();
+
+    const result = new Map<string, MetaAdCreative[]>();
+
+    try {
+        // Fetch ads with creative fields — paginated
+        let url = `/${AD_ACCOUNT_ID}/ads?fields=id,campaign_id,creative{title,body,link_description,thumbnail_url}&time_range={"since":"${since}","until":"${until}"}&limit=100`;
+
+        while (url) {
+            const data = await adsGet<{
+                data: Array<{
+                    id: string;
+                    campaign_id: string;
+                    creative?: {
+                        title?: string;
+                        body?: string;
+                        link_description?: string;
+                        thumbnail_url?: string;
+                    };
+                }>;
+                paging?: { next?: string };
+            }>(url, token);
+
+            for (const ad of data.data || []) {
+                const creative: MetaAdCreative = {
+                    adId: ad.id,
+                    campaignId: ad.campaign_id,
+                    title: ad.creative?.title || null,
+                    body: ad.creative?.body || null,
+                    linkDescription: ad.creative?.link_description || null,
+                    thumbnailUrl: ad.creative?.thumbnail_url || null,
+                };
+
+                const arr = result.get(ad.campaign_id) || [];
+                arr.push(creative);
+                result.set(ad.campaign_id, arr);
+            }
+
+            // Follow pagination
+            if (data.paging?.next) {
+                // Extract path from full URL
+                url = data.paging.next.replace(`${GRAPH_BASE}`, '');
+            } else {
+                break;
+            }
+        }
+    } catch (e) {
+        console.error('[meta-ads] Failed to fetch ad creatives:', e instanceof Error ? e.message : e);
+    }
+
+    setCache(cacheKey, result);
+    return result;
+}
