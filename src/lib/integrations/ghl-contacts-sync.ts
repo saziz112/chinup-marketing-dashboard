@@ -252,16 +252,16 @@ export async function incrementalGhlSync(): Promise<{ newContacts: number; apiCa
         }
 
         newContacts += locationNew;
-    }
 
-    // Update sync state
-    await sql`
-        UPDATE mb_sync_state
-        SET last_sync_date = ${new Date().toISOString().split('T')[0]},
-            total_records = (SELECT COUNT(*) FROM ghl_contacts_map),
-            updated_at = NOW()
-        WHERE sync_type = 'ghl-contacts'
-    `;
+        // Update sync state after each location to survive timeouts
+        await sql`
+            UPDATE mb_sync_state
+            SET last_sync_date = ${new Date().toISOString().split('T')[0]},
+                total_records = (SELECT COUNT(*) FROM ghl_contacts_map),
+                updated_at = NOW()
+            WHERE sync_type = 'ghl-contacts'
+        `;
+    }
 
     console.log(`[ghl-sync] Incremental sync: ${newContacts} new/updated, ${apiCalls} API calls`);
     return { newContacts, apiCalls };
