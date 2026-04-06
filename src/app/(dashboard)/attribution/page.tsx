@@ -70,6 +70,7 @@ const CAMPAIGN_SEGMENTS = [
     { id: 'lapsed-long', label: 'Long-Lapsed', desc: '180+ days since last visit', source: 'mindbody' },
     { id: 'lapsed-winback', label: 'Win-Back VIPs', desc: '$500+, 365+ days', source: 'mindbody' },
     { id: 'lapsed-treatment', label: 'Treatment-Specific', desc: 'By treatment type, 90+ days', source: 'mindbody' },
+    { id: 'never-booked', label: 'Never Booked', desc: 'Inquired but never purchased', source: 'ghl' },
 ];
 
 function formatCurrency(val: number): string {

@@ -407,6 +407,18 @@ export const SMS_TEMPLATES: Record<string, { label: string; template: string }> 
         label: 'VIP Win-Back Offer',
         template: "Hi {{firstName}}, it's Sam from Chin Up! Aesthetics - {{locationName}}.\nReal talk — we're reaching out to a small group of past clients we'd love to see again \u2764\uFE0F\nSpecial Offer: Complimentary add-on (dermaplaning, B12 shot, or light chemical peel) with any booking OR $75 OFF any service — offers can scale based on what you are interested in!\nReply BOOK to claim yours!\nReply STOP to opt out",
     },
+    'lapsed-winback': {
+        label: 'Win-Back VIP',
+        template: "Hi {{firstName}}, it's Chin Up! Aesthetics — {{locationName}}. It's been over a year since your last visit and we'd love to welcome you back! We have new treatments and special pricing for returning VIPs. Reply YES to learn more. Reply STOP to opt out.",
+    },
+    'lapsed-treatment': {
+        label: 'Treatment Reminder',
+        template: "Hi {{firstName}}, it's Chin Up! Aesthetics — {{locationName}}. It's been a while since your last treatment with us. Ready for a touch-up? Reply YES to schedule. Reply STOP to opt out.",
+    },
+    'never-booked': {
+        label: 'First Visit Invite',
+        template: "Hi {{firstName}}, thanks for reaching out to Chin Up! Aesthetics — {{locationName}}. We'd love to get you in for your first visit! We offer Cherry financing and HydraFacials starting at $199. Reply YES to schedule. Reply STOP to opt out.",
+    },
 };
 
 /* ── Email Templates (6 campaigns) ───────────────────────── */
@@ -516,6 +528,52 @@ Reply to this email or call us to claim yours.
 
 Warmly,
 Sam
+Chin Up! Aesthetics {{locationName}}`,
+    },
+    'lapsed-winback': {
+        label: 'Win-Back VIP',
+        subject: "We'd love to welcome you back, {{firstName}}!",
+        template: `Hi {{firstName}},
+
+It's been over a year since your last visit to Chin Up! Aesthetics and we truly miss seeing you.
+
+We've added some exciting new treatments and would love to welcome you back with special VIP pricing.
+
+Reply to this email or call us to schedule your return visit.
+
+Warmly,
+Chin Up! Aesthetics {{locationName}}`,
+    },
+    'lapsed-treatment': {
+        label: 'Treatment Reminder',
+        subject: "Time for a touch-up, {{firstName}}?",
+        template: `Hi {{firstName}},
+
+It's been a while since your last treatment at Chin Up! Aesthetics. Many of our patients find that regular maintenance keeps their results looking fresh.
+
+We'd love to help you schedule your next session. Reply to this email or call us anytime.
+
+Best,
+Chin Up! Aesthetics {{locationName}}`,
+    },
+    'never-booked': {
+        label: 'First Visit Invite',
+        subject: "Ready to get started, {{firstName}}?",
+        template: `Hi {{firstName}},
+
+Thanks for your interest in Chin Up! Aesthetics! We'd love to help you take the next step and schedule your first visit.
+
+A few things to know:
+
+Cherry Financing — https://pay.withcherry.com/chinupaesthetics
+Break your treatment into easy monthly payments.
+
+HydraFacials starting at $199
+Our most popular treatment for first-time visitors.
+
+Reply to this email or call us to schedule. We look forward to meeting you!
+
+Best,
 Chin Up! Aesthetics {{locationName}}`,
     },
 };
