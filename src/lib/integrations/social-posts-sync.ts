@@ -9,8 +9,8 @@ import { IGMedia, isMetaConfigured } from './meta-organic';
 
 const GRAPH_API_VERSION = 'v22.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
-const PAGES_PER_CHUNK = 3; // 3 pages × 50 posts = ~150 posts per invocation
-const PAGE_SIZE = 50;
+const PAGES_PER_CHUNK = 1; // 1 page × 25 posts = ~25 posts per invocation (fits 60s Vercel limit)
+const PAGE_SIZE = 25;
 
 interface SyncResult {
     total: number;
