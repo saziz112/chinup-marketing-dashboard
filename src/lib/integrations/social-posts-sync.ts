@@ -124,7 +124,7 @@ async function upsertPosts(posts: IGMedia[]): Promise<number> {
         const views = p.views || 0;
         const reach = p.reach || 0;
         const denominator = Math.max(views, reach, 1);
-        const engagementRate = (likes + comments + shares + saves) / denominator;
+        const engagementRate = Math.min((likes + comments + shares + saves) / denominator, 99.9999);
 
         await sql`
             INSERT INTO social_posts (platform, post_id, post_type, posted_at, caption, permalink, media_url, likes, comments, shares, saves, views, reach, impressions, engagement_rate, updated_at)
