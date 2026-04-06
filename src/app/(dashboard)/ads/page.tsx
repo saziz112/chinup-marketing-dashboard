@@ -81,6 +81,8 @@ interface CampaignBreakdown {
     matchedRevenue: number;
     trueRoas: number | null;
     matchRate: number | null;
+    appointmentsBooked: number;
+    appointmentsCompleted: number;
 }
 
 interface RoasData {
@@ -97,6 +99,8 @@ interface RoasData {
     attributionMethod: string;
     attributionNote: string;
     campaignBreakdown: CampaignBreakdown[];
+    totalAppointmentsBooked: number;
+    totalAppointmentsCompleted: number;
     matchedClientsDetails: {
         email: string;
         clientName: string;
@@ -379,6 +383,12 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
         if (col === 'mbClients') {
             return roasDict?.[c.id]?.mbMatchedClients ?? -1;
         }
+        if (col === 'apptsBooked') {
+            return roasDict?.[c.id]?.appointmentsBooked ?? -1;
+        }
+        if (col === 'apptsCompleted') {
+            return roasDict?.[c.id]?.appointmentsCompleted ?? -1;
+        }
         return (c as any)[col] ?? -1;
     };
 
@@ -447,6 +457,8 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
                                 <Th label="Leads" col="results" />
                                 {isAdmin && <Th label="Cost/Lead" col="costPerResult" />}
                                 {isAdmin && !!roasDict && <Th label="MB Clients" col="mbClients" />}
+                                {isAdmin && !!roasDict && <Th label="Booked" col="apptsBooked" />}
+                                {isAdmin && !!roasDict && <Th label="Completed" col="apptsCompleted" />}
                                 <Th label={isAdmin && !!roasDict ? "True ROAS" : "ROAS"} col={isAdmin && !!roasDict ? "trueRoas" : "roas"} />
                             </tr>
                         </thead>
@@ -485,6 +497,16 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
                                         {isAdmin && !!roasDict && (
                                             <td style={{ fontWeight: 600, color: (breakdown?.mbMatchedClients || 0) > 0 ? '#22c55e' : 'var(--text-muted)' }}>
                                                 {breakdown?.mbMatchedClients || '0'}
+                                            </td>
+                                        )}
+                                        {isAdmin && !!roasDict && (
+                                            <td style={{ color: (breakdown?.appointmentsBooked || 0) > 0 ? '#60a5fa' : 'var(--text-muted)' }}>
+                                                {breakdown?.appointmentsBooked || '0'}
+                                            </td>
+                                        )}
+                                        {isAdmin && !!roasDict && (
+                                            <td style={{ fontWeight: 600, color: (breakdown?.appointmentsCompleted || 0) > 0 ? '#22c55e' : 'var(--text-muted)' }}>
+                                                {breakdown?.appointmentsCompleted || '0'}
                                             </td>
                                         )}
                                         <td style={{ color: roasVal > 0 ? '#22c55e' : 'var(--text-muted)', fontWeight: 600 }}>
@@ -760,6 +782,21 @@ export default function AdsPage() {
                         />
                         {isAdmin && roasData && roasData.trueRoas !== null && (
                             <KpiCard label="True ROAS" value={`${roasData.trueRoas.toFixed(2)}x`} sub="MindBody verified" green />
+                        )}
+                        {isAdmin && roasData && roasData.totalAppointmentsBooked > 0 && (
+                            <KpiCard
+                                label="Appts Booked"
+                                value={fmtNum(roasData.totalAppointmentsBooked)}
+                                sub={roasData.metaLeads > 0 ? `${Math.round((roasData.totalAppointmentsBooked / roasData.metaLeads) * 100)}% of leads` : 'from matched leads'}
+                            />
+                        )}
+                        {isAdmin && roasData && roasData.totalAppointmentsCompleted > 0 && (
+                            <KpiCard
+                                label="Appts Completed"
+                                value={fmtNum(roasData.totalAppointmentsCompleted)}
+                                sub={roasData.totalAppointmentsBooked > 0 ? `${Math.round((roasData.totalAppointmentsCompleted / roasData.totalAppointmentsBooked) * 100)}% show rate` : 'from matched leads'}
+                                green
+                            />
                         )}
                     </div>
 

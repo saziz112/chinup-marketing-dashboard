@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getMetaAdsData, getMetaLeads, isMetaAdsConfigured } from '@/lib/integrations/meta-ads';
-import { getClientEmailMapFromDB } from '@/lib/integrations/mindbody-db';
+import { getClientEmailMapFromDB, getAppointmentsByClientIds } from '@/lib/integrations/mindbody-db';
 import { format, subDays, startOfMonth } from 'date-fns';
 
 const today = new Date();
@@ -126,6 +126,26 @@ export async function GET(request: NextRequest) {
         // Spend from Meta Ads
         const metaSpend = adsData.account.totalSpend;
 
+        // --- Appointment attribution ---
+        // Collect unique client IDs from matched leads
+        const matchedClientIds = [...new Set(matchedClientsDetails.map(m => {
+            const email = m.email.toLowerCase().trim();
+            return clientEmailMap.get(email)?.client.Id;
+        }).filter(Boolean))] as string[];
+
+        const appointmentMap = await getAppointmentsByClientIds(matchedClientIds, mbStart, mbEnd);
+
+        // Build client→campaign mapping for appointment attribution
+        const clientToCampaign = new Map<string, string[]>();
+        for (const m of matchedClientsDetails) {
+            const email = m.email.toLowerCase().trim();
+            const clientId = clientEmailMap.get(email)?.client.Id;
+            if (!clientId) continue;
+            const campaigns = clientToCampaign.get(clientId) || [];
+            if (!campaigns.includes(m.campaignId)) campaigns.push(m.campaignId);
+            clientToCampaign.set(clientId, campaigns);
+        }
+
         // Per-campaign matched revenue
         const campaignMatchMap = new Map<string, { revenue: number; matched: number }>();
         for (const m of matchedClientsDetails) {
@@ -135,11 +155,25 @@ export async function GET(request: NextRequest) {
             campaignMatchMap.set(m.campaignId, entry);
         }
 
+        // Aggregate appointments per campaign
+        const campaignApptMap = new Map<string, { booked: number; completed: number }>();
+        for (const [clientId, appts] of appointmentMap) {
+            const campaigns = clientToCampaign.get(clientId) || [];
+            for (const cId of campaigns) {
+                const entry = campaignApptMap.get(cId) || { booked: 0, completed: 0 };
+                // If client is attributed to multiple campaigns, count for each
+                entry.booked += appts.booked;
+                entry.completed += appts.completed;
+                campaignApptMap.set(cId, entry);
+            }
+        }
+
         const campaignBreakdown = adsData.campaigns.map(c => {
             const match = campaignMatchMap.get(c.id);
             const campaignLeads = leadData.byCampaign.get(c.id)?.length || 0;
             const campaignRevenue = match?.revenue || 0;
             const campaignMatched = match?.matched || 0;
+            const appts = campaignApptMap.get(c.id);
 
             // If there's spend but no revenue, ROAS is 0. If no spend, ROAS is null (not calculable)
             let trueRoas: number | null = null;
@@ -157,6 +191,8 @@ export async function GET(request: NextRequest) {
                 matchedRevenue: Math.round(campaignRevenue * 100) / 100,
                 trueRoas,
                 matchRate: campaignLeads > 0 ? Math.round((campaignMatched / campaignLeads) * 100) : null,
+                appointmentsBooked: appts?.booked || 0,
+                appointmentsCompleted: appts?.completed || 0,
             };
         });
 
@@ -213,6 +249,9 @@ export async function GET(request: NextRequest) {
                 : 0,
             // Per-campaign
             campaignBreakdown,
+            // Appointment funnel
+            totalAppointmentsBooked: campaignBreakdown.reduce((s, c) => s + c.appointmentsBooked, 0),
+            totalAppointmentsCompleted: campaignBreakdown.reduce((s, c) => s + c.appointmentsCompleted, 0),
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown error';

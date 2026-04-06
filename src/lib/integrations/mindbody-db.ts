@@ -131,6 +131,60 @@ export async function getClientEmailMapFromDB(
 }
 
 // ---------------------------------------------------------------------------
+// B3b: getAppointmentsByClientIds — appointment attribution for Paid Ads
+// ---------------------------------------------------------------------------
+
+export async function getAppointmentsByClientIds(
+    clientIds: string[],
+    startDate: string,
+    endDate: string,
+): Promise<Map<string, { booked: number; completed: number; noShow: number }>> {
+    if (clientIds.length === 0) return new Map();
+
+    const start = startDate.split('T')[0];
+    const end = endDate.split('T')[0];
+
+    // Query appointments for matched clients within the date range
+    // Process in chunks to avoid parameter limits
+    const allRows: Array<{ client_id: string; status: string; cnt: number }> = [];
+    const chunkSize = 50;
+    for (let i = 0; i < clientIds.length; i += chunkSize) {
+        const chunk = clientIds.slice(i, i + chunkSize);
+        const placeholders = chunk.map((_, idx) => `$${idx + 3}`).join(',');
+        const result = await sql.query(
+            `SELECT client_id, status, COUNT(*)::int AS cnt
+             FROM mb_appointments_history
+             WHERE client_id IN (${placeholders})
+               AND start_date::date BETWEEN $1 AND $2
+             GROUP BY client_id, status`,
+            [start, end, ...chunk],
+        );
+        allRows.push(...result.rows as any[]);
+    }
+
+    const map = new Map<string, { booked: number; completed: number; noShow: number }>();
+
+    for (const row of allRows) {
+        const clientId = row.client_id as string;
+        const entry = map.get(clientId) || { booked: 0, completed: 0, noShow: 0 };
+        const cnt = Number(row.cnt);
+        const status = (row.status as string || '').toLowerCase();
+
+        if (status === 'completed' || status === 'arrived') {
+            entry.completed += cnt;
+        } else if (status === 'noshow' || status === 'no show') {
+            entry.noShow += cnt;
+        }
+        // All statuses count as "booked" (they had an appointment created)
+        entry.booked += cnt;
+
+        map.set(clientId, entry);
+    }
+
+    return map;
+}
+
+// ---------------------------------------------------------------------------
 // B4: getPurchasingClientsFromDB — replaces getPurchasingClients() in
 //     attribution/leads and attribution/revenue
 // ---------------------------------------------------------------------------
