@@ -88,6 +88,7 @@ async function init() {
             reach INT DEFAULT 0,
             impressions INT DEFAULT 0,
             engagement_rate NUMERIC(6,4),
+            media_url TEXT,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(platform, post_id)

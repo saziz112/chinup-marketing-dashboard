@@ -173,6 +173,9 @@ export async function backfillSocialPosts(): Promise<SyncResult> {
         return { total: 0, apiCalls: 0, done: true, chunkLabel: 'Meta not configured — skipped' };
     }
 
+    // Self-migration: ensure media_url column exists
+    await sql`ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS media_url TEXT`;
+
     // Check if already complete
     const doneCheck = await sql`SELECT sync_type FROM mb_sync_state WHERE sync_type = 'social_posts'`;
     if (doneCheck.rows.length > 0) {
@@ -254,6 +257,9 @@ export async function incrementalSocialSync(): Promise<SyncResult> {
     if (!isMetaConfigured()) {
         return { total: 0, apiCalls: 0, done: true, chunkLabel: 'Meta not configured — skipped' };
     }
+
+    // Self-migration: ensure media_url column exists
+    await sql`ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS media_url TEXT`;
 
     const token = process.env.META_PAGE_ACCESS_TOKEN!;
     const igUserId = process.env.META_IG_USER_ID!;
