@@ -10,6 +10,7 @@ import {
 import { format, parseISO, subDays } from 'date-fns';
 import { DateRangePicker } from '@/components/DateRangePicker';
 import { SkeletonKpiCard, SkeletonChart, SkeletonTable } from '@/components/Skeleton';
+import { gradeMetric, gradeAllMetrics, overallGrade, getBenchmarkInfo, type MetricGrade } from '@/lib/ads-benchmarks';
 
 // --- Types ---
 
@@ -168,6 +169,87 @@ function StatusBadge({ status }: { status: Campaign['status'] }) {
     );
 }
 
+// --- Grade Dot (benchmark indicator) ---
+
+function GradeDot({ grade, showLabel }: { grade: MetricGrade | null; showLabel?: boolean }) {
+    if (!grade) return null;
+    const info = getBenchmarkInfo;
+    return (
+        <span title={grade.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span style={{
+                width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
+                background: grade.color, flexShrink: 0,
+            }} />
+            {showLabel && <span style={{ fontSize: 10, color: grade.color, fontWeight: 500 }}>{grade.label}</span>}
+        </span>
+    );
+}
+
+// --- Performance Summary Card ---
+
+function PerformanceSummary({ campaigns, platform, isAdmin }: {
+    campaigns: Campaign[];
+    platform: 'meta' | 'google';
+    isAdmin: boolean;
+}) {
+    const activeCampaigns = campaigns.filter(c => c.status === 'ACTIVE' && (c.impressions > 0 || c.clicks > 0));
+    if (activeCampaigns.length === 0) return null;
+
+    // Aggregate metrics across active campaigns
+    const totalImpressions = activeCampaigns.reduce((s, c) => s + c.impressions, 0);
+    const totalClicks = activeCampaigns.reduce((s, c) => s + c.clicks, 0);
+    const totalSpend = activeCampaigns.reduce((s, c) => s + (c.spend || 0), 0);
+    const totalResults = activeCampaigns.reduce((s, c) => s + c.results, 0);
+
+    const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+    const avgCpm = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
+    const avgCpl = totalResults > 0 ? totalSpend / totalResults : 0;
+    const avgRoas = activeCampaigns.reduce((s, c) => s + c.roas, 0) / activeCampaigns.length;
+
+    const grades = gradeAllMetrics(
+        { ctr: avgCtr, cpm: avgCpm, costPerResult: avgCpl, roas: avgRoas },
+        platform,
+    );
+    const overall = overallGrade(grades);
+
+    const metrics = [
+        { key: 'ctr', label: 'CTR', value: `${avgCtr.toFixed(2)}%`, grade: grades.ctr, show: true },
+        { key: 'cpm', label: 'CPM', value: `$${avgCpm.toFixed(0)}`, grade: grades.cpm, show: isAdmin },
+        { key: 'costPerLead', label: 'Cost/Lead', value: `$${avgCpl.toFixed(0)}`, grade: grades.costPerLead, show: isAdmin },
+        { key: 'roas', label: 'ROAS', value: `${avgRoas.toFixed(1)}x`, grade: grades.roas, show: true },
+    ].filter(m => m.show);
+
+    return (
+        <div className="section-card" style={{
+            marginBottom: 24, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap',
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(34,197,94,0.04) 100%)',
+            border: `1px solid ${overall.color}33`,
+        }}>
+            <div style={{ textAlign: 'center', minWidth: 70 }}>
+                <div style={{ fontSize: 36, fontWeight: 700, color: overall.color, lineHeight: 1 }}>{overall.letter}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Overall</div>
+            </div>
+            <div style={{ width: 1, height: 48, background: 'var(--border)' }} />
+            {metrics.map(m => (
+                <div key={m.key} style={{ textAlign: 'center', minWidth: 80 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>{m.value}</span>
+                        <GradeDot grade={m.grade} />
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{m.label}</div>
+                    {m.grade && (
+                        <div style={{ fontSize: 10, color: m.grade.color, fontWeight: 500 }}>{m.grade.label}</div>
+                    )}
+                </div>
+            ))}
+            <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', textAlign: 'right' }}>
+                <div>vs. Med Spa Industry Avg</div>
+                <div>{activeCampaigns.length} active campaign{activeCampaigns.length !== 1 ? 's' : ''}</div>
+            </div>
+        </div>
+    );
+}
+
 // --- KPI Card ---
 
 function KpiCard({ label, value, sub, gold, green }: {
@@ -273,13 +355,14 @@ function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData; isMoc
 
 // --- Campaigns Table ---
 
-function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFilter, isOverview }: {
+function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFilter, isOverview, isGoogle }: {
     campaigns: (Campaign & { platform?: string })[];
     roasDict?: Record<string, CampaignBreakdown>;
     isAdmin: boolean;
     statusFilter: StatusFilter;
     onStatusFilter: (f: StatusFilter) => void;
     isOverview?: boolean;
+    isGoogle?: boolean;
 }) {
     const [sortBy, setSortBy] = useState<string>('results');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -373,6 +456,13 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
                                 const hasTrueRoas = breakdown?.trueRoas !== undefined && breakdown?.trueRoas !== null;
                                 const roasVal = hasTrueRoas ? breakdown!.trueRoas! : c.roas;
 
+                                const plat: 'meta' | 'google' = isOverview
+                                    ? (c.platform === 'Google Ads' ? 'google' : 'meta')
+                                    : (isGoogle ? 'google' : 'meta');
+                                const cGrades = c.impressions > 0
+                                    ? gradeAllMetrics({ ctr: c.ctr, cpm: c.cpm, costPerResult: c.costPerResult, roas: c.roas }, plat)
+                                    : {} as Record<string, MetricGrade | null>;
+
                                 return (
                                     <tr key={c.id}>
                                         <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</td>
@@ -388,17 +478,20 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
                                         {isAdmin && <td style={{ color: 'var(--accent)', fontWeight: 600 }}>{fmt$(c.spend)}</td>}
                                         <td>{fmtNum(c.impressions)}</td>
                                         <td>{fmtNum(c.clicks)}</td>
-                                        <td>{fmtPct(c.ctr)}</td>
-                                        {isAdmin && <td>{fmt$(c.cpm)}</td>}
+                                        <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>{fmtPct(c.ctr)} <GradeDot grade={cGrades.ctr ?? null} /></span></td>
+                                        {isAdmin && <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>{fmt$(c.cpm)} <GradeDot grade={cGrades.cpm ?? null} /></span></td>}
                                         <td style={{ fontWeight: 600 }}>{fmtNum(c.results)}</td>
-                                        {isAdmin && <td>{fmt$(c.costPerResult)}</td>}
+                                        {isAdmin && <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>{fmt$(c.costPerResult)} <GradeDot grade={cGrades.costPerLead ?? null} /></span></td>}
                                         {isAdmin && !!roasDict && (
                                             <td style={{ fontWeight: 600, color: (breakdown?.mbMatchedClients || 0) > 0 ? '#22c55e' : 'var(--text-muted)' }}>
                                                 {breakdown?.mbMatchedClients || '0'}
                                             </td>
                                         )}
                                         <td style={{ color: roasVal > 0 ? '#22c55e' : 'var(--text-muted)', fontWeight: 600 }}>
-                                            {roasVal !== null && roasVal !== undefined ? `${roasVal.toFixed(1)}x` : '—'}
+                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                {roasVal !== null && roasVal !== undefined ? `${roasVal.toFixed(1)}x` : '—'}
+                                                <GradeDot grade={gradeMetric('roas', roasVal ?? c.roas, plat)} />
+                                            </span>
                                         </td>
                                     </tr>
                                 );
@@ -644,6 +737,15 @@ export default function AdsPage() {
                         <TrueRoasBanner roas={roasData} isMock={roasData.isMock} onOpenDetails={() => setShowRoasModal(true)} />
                     )}
 
+                    {/* Performance Summary (Benchmarks) */}
+                    {!isOverview && campaigns.length > 0 && (
+                        <PerformanceSummary
+                            campaigns={campaigns}
+                            platform={isGoogle ? 'google' : 'meta'}
+                            isAdmin={isAdmin}
+                        />
+                    )}
+
                     {/* KPI Cards */}
                     <div className="metrics-grid" style={{ marginBottom: 24 }}>
                         {isAdmin && (
@@ -745,6 +847,7 @@ export default function AdsPage() {
                             statusFilter={statusFilter}
                             onStatusFilter={setStatusFilter}
                             isOverview={isOverview}
+                            isGoogle={isGoogle}
                         />
                     </div>
                 </>
