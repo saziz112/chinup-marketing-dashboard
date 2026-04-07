@@ -162,16 +162,21 @@ function applyOutboundCooldown(
  * `dnd` boolean — misses contacts with per-channel DND (e.g. "Text Messages" only).
  * This calls v2 API to check `dndSettings.SMS.status` for each contact.
  */
+const V2_DND_CHECK_LIMIT = 200; // Cap v2 API calls to avoid Vercel 60s timeout
+
 async function applyV2SmsDnd(
     contacts: ContactEntry[],
 ): Promise<{ filtered: ContactEntry[]; v2DndFiltered: number }> {
     if (contacts.length === 0) return { filtered: contacts, v2DndFiltered: 0 };
+    // Only check DND for first N contacts — v2 API calls are expensive (~1 per contact)
+    const toCheck = contacts.slice(0, V2_DND_CHECK_LIMIT);
+    const passThrough = contacts.slice(V2_DND_CHECK_LIMIT);
     const smsDndIds = await getV2SmsDndContactIds(
-        contacts.map(c => ({ contactId: c.contactId, locationKey: c.locationKey })),
+        toCheck.map(c => ({ contactId: c.contactId, locationKey: c.locationKey })),
     );
     if (smsDndIds.size === 0) return { filtered: contacts, v2DndFiltered: 0 };
-    const filtered = contacts.filter(c => !smsDndIds.has(c.contactId));
-    return { filtered, v2DndFiltered: contacts.length - filtered.length };
+    const checkedFiltered = toCheck.filter(c => !smsDndIds.has(c.contactId));
+    return { filtered: [...checkedFiltered, ...passThrough], v2DndFiltered: toCheck.length - checkedFiltered.length };
 }
 
 export async function GET(req: NextRequest) {
@@ -680,11 +685,7 @@ export async function GET(req: NextRequest) {
 
             const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(neverBooked, recentHashes);
             const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
-            // Cap v2 DND check to 200 contacts to avoid Vercel timeout (32K+ GHL contacts)
-            const dndCheckSlice = afterOutbound.slice(0, 200);
-            const remainder = afterOutbound.slice(200);
-            const { filtered: dndChecked, v2DndFiltered } = await applyV2SmsDnd(dndCheckSlice);
-            const finalFiltered = [...dndChecked, ...remainder];
+            const { filtered: finalFiltered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
 
             return NextResponse.json({
                 contacts: finalFiltered,
