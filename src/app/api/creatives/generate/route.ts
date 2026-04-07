@@ -11,6 +11,8 @@ import { createImageTask, getTaskStatus, isKieAiConfigured, type GenerateRequest
 import { sql } from '@vercel/postgres';
 import { put } from '@vercel/blob';
 import { pgCacheGet } from '@/lib/pg-cache';
+import sharp from 'sharp';
+import path from 'path';
 
 async function ensureCreativeImagesTable() {
     try {
@@ -46,6 +48,41 @@ const VARIATION_SUFFIXES = [
     ', alternative composition and angle',
     ', different perspective and framing',
 ];
+
+/** Overlay the real Chin Up logo onto the bottom-right of the generated image */
+async function overlayLogo(imageBuffer: Buffer): Promise<Buffer> {
+    try {
+        const fs = await import('fs/promises');
+        const logoPath = path.join(process.cwd(), 'public', 'logo.png');
+        const logoBuffer = await fs.readFile(logoPath);
+
+        const image = sharp(imageBuffer);
+        const metadata = await image.metadata();
+        const imgWidth = metadata.width || 1024;
+
+        // Resize logo to ~15% of image width, maintain aspect ratio
+        const logoWidth = Math.round(imgWidth * 0.15);
+        const resizedLogo = await sharp(logoBuffer)
+            .resize({ width: logoWidth })
+            .png()
+            .toBuffer();
+
+        // Composite logo in bottom-right corner with some padding and slight transparency
+        const result = await image
+            .composite([{
+                input: resizedLogo,
+                gravity: 'southeast',
+                blend: 'over',
+            }])
+            .png()
+            .toBuffer();
+
+        return result;
+    } catch (err) {
+        console.error('[creatives/generate] Logo overlay failed, returning original:', err);
+        return imageBuffer;
+    }
+}
 
 // POST: Start image generation (1-3 variations)
 export async function POST(req: NextRequest) {
@@ -157,6 +194,7 @@ export async function GET(req: NextRequest) {
 
     const taskId = req.nextUrl.searchParams.get('taskId');
     const id = req.nextUrl.searchParams.get('id');
+    const wantLogo = req.nextUrl.searchParams.get('logo') === '1';
 
     if (!taskId || !id) {
         return NextResponse.json({ error: 'Missing taskId or id' }, { status: 400 });
@@ -175,13 +213,19 @@ export async function GET(req: NextRequest) {
                 });
             }
 
-            // Download from Kie.ai (URLs expire in 24h) and re-upload to Vercel Blob
+            // Download from Kie.ai (URLs expire in 24h), optionally overlay logo, re-upload to Vercel Blob
             let blobUrl = taskStatus.imageUrl;
             try {
                 const imageRes = await fetch(taskStatus.imageUrl);
                 if (imageRes.ok) {
-                    const imageBuffer = await imageRes.arrayBuffer();
-                    const blob = await put(`creatives/${id}.png`, Buffer.from(imageBuffer), {
+                    let imageBuffer: Buffer<ArrayBuffer> = Buffer.from(await imageRes.arrayBuffer());
+
+                    // Overlay real Chin Up logo if requested
+                    if (wantLogo) {
+                        imageBuffer = Buffer.from(await overlayLogo(imageBuffer));
+                    }
+
+                    const blob = await put(`creatives/${id}.png`, imageBuffer, {
                         access: 'public',
                         contentType: 'image/png',
                     });

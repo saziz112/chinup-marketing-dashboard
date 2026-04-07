@@ -322,7 +322,8 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
             for (let i = 0; i < tasks.length; i++) {
                 if (completed.has(tasks[i].id)) continue;
                 try {
-                    const res = await fetch(`/api/creatives/generate?taskId=${tasks[i].taskId}&id=${tasks[i].id}`);
+                    const logoParam = referenceImages.some(r => r.isLogo) ? '&logo=1' : '';
+                    const res = await fetch(`/api/creatives/generate?taskId=${tasks[i].taskId}&id=${tasks[i].id}${logoParam}`);
                     const data = await res.json();
                     if (data.status === 'success' && data.blobUrl) {
                         completed.add(tasks[i].id);

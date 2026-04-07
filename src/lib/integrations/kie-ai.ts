@@ -92,9 +92,10 @@ export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRa
     const arContext = ASPECT_RATIO_CONTEXT[aspectRatio];
     const brand = brandContext ? ` ${brandContext}.` : '';
     // Never ask AI to generate logos — it will hallucinate random brand names.
-    // Logo overlay should be done in post-processing, not in the image generation prompt.
+    // Logo overlay is done in post-processing via sharp, not in the image generation prompt.
+    const antihallucination = 'Do not include any text, logos, watermarks, brand names, or signage in the image.';
     const suffix = 'Shot on professional camera, natural imperfections, realistic skin texture with pores, authentic lighting with natural shadows, not overly retouched, editorial quality';
-    return `${prefix}, ${arContext}.${brand} ${userPrompt}. ${suffix}`;
+    return `${prefix}, ${arContext}.${brand} ${userPrompt}. ${antihallucination} ${suffix}`;
 }
 
 // --- API Calls ---
