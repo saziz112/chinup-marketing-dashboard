@@ -100,7 +100,9 @@ export async function backfillSearchConsole(): Promise<SyncResult> {
 
     // Load progress
     const progressRow = await sql`SELECT * FROM mb_sync_state WHERE sync_type = 'search_console_backfill_progress'`;
-    const cursor = progressRow.rows[0]?.cursor_data ? JSON.parse(progressRow.rows[0].cursor_data) : {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let cursor: any = {};
+    try { if (progressRow.rows[0]?.cursor_data) cursor = JSON.parse(progressRow.rows[0].cursor_data); } catch { /* invalid JSON */ }
     const previousTotal = Number(progressRow.rows[0]?.total_records || 0);
 
     // Calculate date window

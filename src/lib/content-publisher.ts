@@ -76,14 +76,18 @@ async function ensurePostsTable() {
     }
 }
 
+function safeParse<T>(str: string | null | undefined, fallback: T): T {
+    try { return str ? JSON.parse(str) : fallback; } catch { return fallback; }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function rowToPost(row: Record<string, any>): PostRecord {
     return {
         id: row.id,
-        platforms: JSON.parse(row.platforms || '[]'),
+        platforms: safeParse(row.platforms, []),
         title: row.title,
         caption: row.caption,
-        mediaUrls: JSON.parse(row.media_urls || '[]'),
+        mediaUrls: safeParse(row.media_urls, []),
         status: row.status,
         postType: row.post_type || 'feed',
         scheduledFor: row.scheduled_for?.toISOString(),
@@ -91,9 +95,9 @@ function rowToPost(row: Record<string, any>): PostRecord {
         publishedAt: row.published_at?.toISOString(),
         createdBy: row.created_by || undefined,
         archivedAt: row.archived_at?.toISOString() || undefined,
-        errors: JSON.parse(row.errors || '{}'),
-        publishResults: JSON.parse(row.publish_results || '[]'),
-        metadata: JSON.parse(row.metadata || '{}'),
+        errors: safeParse(row.errors, {}),
+        publishResults: safeParse(row.publish_results, []),
+        metadata: safeParse(row.metadata, {}),
     };
 }
 

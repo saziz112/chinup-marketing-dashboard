@@ -360,7 +360,7 @@ export default function AdsPage() {
                         <KpiCard
                             label="Leads (Results)"
                             value={fmtNum(acc?.totalResults)}
-                            sub={isAdmin && acc?.totalSpend && acc.totalResults ? `${fmt$(acc.totalSpend / acc.totalResults)}/lead` : 'conversions'}
+                            sub={isAdmin && acc?.totalSpend != null && acc.totalResults ? `${fmt$(acc.totalSpend / acc.totalResults)}/lead` : 'conversions'}
                         />
                         {isAdmin && roasData && roasData.trueRoas !== null && (
                             <KpiCard label="True ROAS" value={`${roasData.trueRoas.toFixed(2)}x`} sub="MindBody verified" green />

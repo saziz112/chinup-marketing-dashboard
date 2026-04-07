@@ -64,7 +64,7 @@ export async function backfillSales(startYear: number = 2020): Promise<{ total: 
     let chunkStart: Date;
     if (progressResult.rows.length > 0) {
         // Resume from where we left off
-        const lastDate = new Date(progressResult.rows[0].last_sync_date);
+        const lastDate = new Date(progressResult.rows[0]?.last_sync_date || `${startYear}-01-01`);
         chunkStart = new Date(lastDate);
         chunkStart.setDate(chunkStart.getDate() + 1);
     } else {
@@ -139,7 +139,7 @@ export async function backfillAppointments(startYear: number = 2020): Promise<{ 
     const progressResult = await sql`SELECT last_sync_date FROM mb_sync_state WHERE sync_type = 'appts_backfill_progress'`;
     let chunkStart: Date;
     if (progressResult.rows.length > 0) {
-        const lastDate = new Date(progressResult.rows[0].last_sync_date);
+        const lastDate = new Date(progressResult.rows[0]?.last_sync_date || `${startYear}-01-01`);
         chunkStart = new Date(lastDate);
         chunkStart.setDate(chunkStart.getDate() + 1);
     } else {

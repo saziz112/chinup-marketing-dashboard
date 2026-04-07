@@ -46,7 +46,9 @@ export async function backfillGhlContacts(): Promise<{
     let totalSoFar = 0;
 
     if (progressRow.rows.length > 0) {
-        const cursor = progressRow.rows[0].cursor_data ? JSON.parse(progressRow.rows[0].cursor_data) : {};
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let cursor: any = {};
+        try { if (progressRow.rows[0].cursor_data) cursor = JSON.parse(progressRow.rows[0].cursor_data); } catch { /* invalid JSON, start fresh */ }
         locationIndex = cursor.locationIndex || 0;
         startAfter = cursor.startAfter != null ? Number(cursor.startAfter) : undefined;
         startAfterId = cursor.startAfterId || undefined;
@@ -184,7 +186,7 @@ export async function incrementalGhlSync(): Promise<{ newContacts: number; apiCa
         return { newContacts: 0, apiCalls: 0 };
     }
 
-    const lastSync = new Date(stateResult.rows[0].last_sync_date);
+    const lastSync = new Date(stateResult.rows[0]?.last_sync_date || Date.now());
     const locations = getLocations();
     let newContacts = 0;
     let apiCalls = 0;
