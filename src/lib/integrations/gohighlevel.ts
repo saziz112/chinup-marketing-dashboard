@@ -163,13 +163,13 @@ async function ghlFetch<T>(apiKey: string, endpoint: string, params?: Record<str
 // --- Core API Methods ---
 
 export async function getPipelines(location: GHLLocation): Promise<GHLPipeline[]> {
-    const data = await ghlFetch<{ pipelines: any[] }>(location.apiKey, '/pipelines/');
+    const data = await ghlFetch<{ pipelines: { id: string; name: string; stages?: { id: string; name: string }[] }[] }>(location.apiKey, '/pipelines/');
     trackCall('ghl', 'getPipelines', false);
 
-    return (data.pipelines || []).map((p: any, idx: number) => ({
+    return (data.pipelines || []).map((p, idx: number) => ({
         id: p.id,
         name: p.name,
-        stages: (p.stages || []).map((s: any, sIdx: number) => ({
+        stages: (p.stages || []).map((s, sIdx: number) => ({
             id: s.id,
             name: s.name,
             position: sIdx,
@@ -178,7 +178,31 @@ export async function getPipelines(location: GHLLocation): Promise<GHLPipeline[]
     }));
 }
 
-function parseOpportunity(o: any, locationKey: LocationKey): GHLOpportunity {
+interface RawGHLOpportunity {
+    id: string;
+    name?: string;
+    monetaryValue?: number;
+    pipelineId: string;
+    pipelineStageId: string;
+    status?: string;
+    source?: string;
+    contact?: {
+        id?: string;
+        name?: string;
+        email?: string;
+        phone?: string;
+        tags?: string[];
+        dateUpdated?: string;
+        dnd?: boolean;
+        dndSettings?: { Call?: { status?: string }; SMS?: { status?: string } };
+    };
+    assignedTo?: string | null;
+    createdAt: string;
+    updatedAt: string;
+    lastStatusChangeAt?: string;
+}
+
+function parseOpportunity(o: RawGHLOpportunity, locationKey: LocationKey): GHLOpportunity {
     return {
         id: o.id,
         name: o.name || 'Unknown',
@@ -226,7 +250,7 @@ export async function getOpportunities(
         if (startAfter !== undefined) params.startAfter = startAfter.toString();
         if (startAfterId) params.startAfterId = startAfterId;
 
-        const data = await ghlFetch<{ opportunities: any[]; meta?: OpportunityMeta }>(
+        const data = await ghlFetch<{ opportunities: RawGHLOpportunity[]; meta?: OpportunityMeta }>(
             location.apiKey,
             `/pipelines/${pipelineId}/opportunities`,
             params
@@ -269,6 +293,7 @@ export async function getContacts(
     const params: Record<string, string> = { limit: limit.toString() };
     if (startAfter) params.startAfter = startAfter.toString();
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = await ghlFetch<{ contacts: any[]; meta?: { total?: number } }>(
         location.apiKey,
         '/contacts/',

@@ -149,7 +149,10 @@ export default function KnowledgeBasePage() {
                                     { icon: 'Leads & Pipeline', route: '/attribution', desc: 'GHL pipeline summary, conversation-based lead outreach, campaigns' },
                                     { icon: 'Research', route: '/research', desc: 'Social trends, competitor analysis, content calendar, market intel' },
                                     { icon: 'Publish', route: '/publish', desc: 'Schedule and publish content to Facebook, Instagram, and Google Business' },
+                                    { icon: 'Content', route: '/content', desc: 'Unified view of all published content across Instagram and YouTube' },
                                     { icon: 'Creatives', route: '/creatives', desc: 'AI-generated marketing images via Kie.ai' },
+                                    { icon: 'Reputation', route: '/reputation', desc: 'Google reviews, Search Console rankings, competitor tracking' },
+                                    { icon: 'Knowledge', route: '/knowledge', desc: 'This page — documentation for all dashboard features' },
                                     { icon: 'Settings', route: '/settings', desc: 'Admin: manage users, connect accounts, monitor API usage, trigger syncs' },
                                 ].map(item => (
                                     <div key={item.route} style={{ display: 'flex', gap: '16px', padding: '10px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', alignItems: 'center' }}>
@@ -223,12 +226,25 @@ export default function KnowledgeBasePage() {
                                 'Video list with view counts, likes, comments, shares',
                                 'Follower count from user profile',
                                 'Video thumbnail previews (note: URLs expire after 6 hours)',
+                                'Top sounds and hashtags analysis',
+                                'Breakout video detection (10x+ average views)',
                             ]}
                             notes={[
                                 'Access token expires every 24 hours — auto-refreshed using the refresh token',
                                 'Refresh token lasts 365 days but the returned token may change — always stores the latest',
                                 'NOT available from TikTok API: profile views, audience demographics, watch time, follower growth time series',
                                 'Cover image URLs have a 6-hour TTL — they expire and need re-fetching',
+                            ]}
+                        />
+                        <Feature
+                            name="Unified Content View"
+                            source="All platform data combined | Content tab in Organic"
+                            features={[
+                                'Cross-platform content table with all Instagram and YouTube posts in one view',
+                                'Sortable by views, likes, comments, shares, engagement rate',
+                                'Platform and media type filters',
+                                'Top posts leaderboard across all platforms',
+                                'Best time to post analysis based on historical engagement data',
                             ]}
                         />
                     </Section>
@@ -239,9 +255,12 @@ export default function KnowledgeBasePage() {
                             source="Meta Marketing API | Uses user access token (long-lived)"
                             features={[
                                 'Campaign-level spend, impressions, clicks, CTR, CPC, CPM',
-                                'Per-campaign breakdown with daily/weekly/monthly views',
+                                'Industry benchmarks with A-F grading vs. med spa averages (CTR, CPM, Cost/Lead, ROAS)',
+                                'Per-campaign breakdown with sortable table and status filtering (Active/Paused/All)',
                                 'Lead form integration — counts leads per campaign',
-                                'Cost per lead (CPL) calculation',
+                                'Appointment attribution: booked and completed appointments per campaign (MindBody cross-reference)',
+                                'Ad copy fetching — view the creative text for each campaign',
+                                'AI Campaign Analysis — Claude-powered grading with priority actions and creative suggestions (expand/collapse per campaign)',
                             ]}
                             notes={[
                                 'User access token expires ~60 days — check Settings for expiration date',
@@ -259,17 +278,21 @@ export default function KnowledgeBasePage() {
                             ]}
                         />
                         <Feature
-                            name="ROAS (Return on Ad Spend)"
-                            source="Cross-referenced: Meta Ads + Google Ads spend vs. MindBody revenue"
+                            name="ROAS Reconciliation"
+                            source="Cross-referenced: Meta Lead Forms (email) vs. MindBody sales"
                             features={[
-                                'Combined ad spend across all platforms',
-                                'True ROAS: actual MindBody revenue attributed to ad-sourced leads',
-                                'Blended ROAS: total revenue / total spend',
-                                'Per-campaign ROAS breakdown',
+                                'True ROAS: matches Meta lead form emails to MindBody purchasing clients',
+                                'Meta ROAS vs. True ROAS side-by-side comparison',
+                                'Per-campaign ROAS breakdown with matched client count',
+                                'Match rate tracking (what % of leads became paying clients)',
+                                'Cost per matched client calculation',
+                                'Detailed modal: see each matched patient, their revenue, lead cost, and individual ROAS',
+                                'Split attribution when a patient submitted multiple lead forms',
                             ]}
                             notes={[
-                                'ROAS matching uses GHL lead source to connect ad campaigns to MindBody purchases',
-                                'Match accuracy depends on consistent lead source tracking in GoHighLevel',
+                                'Requires a Lead Generation campaign with native Facebook forms (email collection)',
+                                'Matching is done by email address — accuracy depends on leads using the same email in MindBody',
+                                'Admin-only feature — marketing managers see lead counts but not dollar values',
                             ]}
                         />
                     </Section>
@@ -405,31 +428,36 @@ export default function KnowledgeBasePage() {
                 <>
                     <Section title="Research Hub">
                         <Feature
-                            name="Social Trends"
-                            source="Instagram + Postgres sync | Daily cron"
+                            name="Trend Scout"
+                            source="Claude AI + social data analysis"
                             features={[
-                                'Trending content analysis across your posts and competitors',
-                                'Best posting times based on historical engagement data',
-                                'Content type performance comparison (photos vs. reels vs. carousels)',
+                                'AI-generated content ideas scored 0-100 on opportunity potential',
+                                '11-point scoring: search volume, competition, audience fit, content gap, trend momentum, and more',
+                                'Focus filters: seasonal, competitor gap, trending, evergreen, local',
+                                'Actionable content briefs with suggested formats, hooks, and CTAs',
+                                'Copy-to-clipboard for quick content creation',
                             ]}
                         />
                         <Feature
-                            name="Competitor Watch"
-                            source="Public social data + manual tracking"
+                            name="Content Calendar"
+                            source="Claude AI + real business data context"
                             features={[
-                                'Track competitor social activity and posting frequency',
-                                'Compare engagement rates across competitors',
-                                'Content gap analysis — what competitors post that you don\'t',
+                                'AI-generated monthly content calendar tailored to your business',
+                                'Incorporates real data: top-performing posts, audience insights, seasonal trends',
+                                'Calendar grid with day-by-day content suggestions',
+                                'Queue button to add calendar items directly to publishing queue',
+                                'Month navigation with regeneration on demand',
                             ]}
                         />
                         <Feature
                             name="Market Intelligence"
-                            source="Google Search Console + social_posts sync (Postgres)"
+                            source="Claude AI + Google Search Console + social data"
                             features={[
-                                'Search query performance: impressions, clicks, CTR, position',
-                                'Top-performing pages by organic search traffic',
-                                'Content performance over time with daily granularity',
-                                'Keyword opportunities and ranking trends',
+                                'AI-powered market analysis for the med spa industry',
+                                'Local market insights for the Atlanta metro area',
+                                'Treatment trend analysis with seasonal patterns',
+                                'Competitive positioning recommendations',
+                                'Content strategy suggestions based on search data',
                             ]}
                             notes={[
                                 'Search Console data has a 2-3 day delay from Google',
@@ -437,12 +465,22 @@ export default function KnowledgeBasePage() {
                             ]}
                         />
                         <Feature
-                            name="Content Calendar"
-                            source="Local database + scheduling engine"
+                            name="Competitor Watch"
+                            source="Public social data + Instagram API"
                             features={[
-                                'Visual calendar view of planned and published content',
-                                'Queue management for upcoming posts',
-                                'Content gap detection — days without scheduled posts',
+                                'Track competitor social activity and posting frequency',
+                                'Compare engagement rates across competitors',
+                                'Radar chart comparing your metrics vs. competitors',
+                                'Content gap analysis — what competitors post that you don\'t',
+                            ]}
+                        />
+                        <Feature
+                            name="Content Analysis"
+                            source="Postgres social_posts sync"
+                            features={[
+                                'Category breakdown of your content (educational, promotional, behind-the-scenes, etc.)',
+                                'Performance by content category with engagement comparison',
+                                'Content mix recommendations',
                             ]}
                         />
                     </Section>
@@ -453,16 +491,20 @@ export default function KnowledgeBasePage() {
                             source="Meta Graph API + Google Business Profile via GHL"
                             features={[
                                 'Publish to Facebook Pages and Instagram (feed posts, Reels, Stories)',
-                                'Google Business Profile posting via GoHighLevel Social Planner',
-                                'Schedule posts for future dates and times',
-                                'Bulk upload: upload multiple images and schedule a content batch',
-                                'AI caption suggestions for uploaded images',
+                                'Google Business Profile posting via GoHighLevel Social Planner (Decatur, Smyrna, Kennesaw)',
+                                'Schedule posts for future dates and times (all times in Eastern Time)',
+                                'Calendar view: visual month grid showing scheduled posts per day',
+                                'Bulk upload via CSV: upload multiple posts with captions and scheduling',
+                                'AI caption suggestions powered by Claude',
+                                'Gallery integration: use AI-generated creatives directly in posts',
+                                'Publishing history with status tracking (Live, Failed, Partial)',
+                                'Weekly content goals scorecard with per-platform progress tracking',
                             ]}
                             notes={[
                                 'Instagram Reels require video files; Stories require 9:16 aspect ratio',
                                 'Google Business Profile posting uses GHL\'s Social Planner API — Google\'s direct API (v4) is dead and newer APIs have quota=0',
-                                'Scheduled posts are checked every minute by a cron job',
-                                'Images are stored in Vercel Blob storage',
+                                'Scheduled posts are published automatically by a cron job',
+                                'Images and videos are stored in Vercel Blob storage (10MB images, 100MB videos)',
                             ]}
                         />
                     </Section>

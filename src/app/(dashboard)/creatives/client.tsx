@@ -5,6 +5,7 @@ import { upload } from '@vercel/blob/client';
 import { Loader2, Download, Send, Image as ImageIcon, Upload, X, ChevronDown, ChevronUp, Trash2, CheckSquare, Square, RefreshCw, Search, Instagram, Facebook, MapPin } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
+import { PLATFORM_COLORS } from '@/lib/constants';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -154,7 +155,7 @@ const smallBtnStyle: React.CSSProperties = {
 // ─── Platform icon helper ───────────────────────────────────────────────────
 
 function PlatformIcon({ platform, size = 10 }: { platform: string; size?: number }) {
-    const colors: Record<string, string> = { instagram: '#E1306C', facebook: '#1877F2', 'google-business': '#4285F4' };
+    const colors = PLATFORM_COLORS;
     if (platform === 'instagram') return <Instagram size={size} style={{ color: colors[platform] }} />;
     if (platform === 'facebook') return <Facebook size={size} style={{ color: colors[platform] }} />;
     if (platform === 'google-business') return <MapPin size={size} style={{ color: colors[platform] }} />;

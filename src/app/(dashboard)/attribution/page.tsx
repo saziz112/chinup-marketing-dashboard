@@ -5,9 +5,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
+import { formatNumber, formatCurrency } from '@/lib/format';
+import { LOCATION_OPTIONS, type LocationFilter } from '@/lib/constants';
 
 type Tab = 'overview' | 'action' | 'campaigns';
-type LocationFilter = 'all' | 'decatur' | 'smyrna' | 'kennesaw';
 
 interface PipelineResponse {
     configured: boolean;
@@ -51,13 +52,6 @@ const TAB_CONFIG: { id: Tab; label: string; adminOnly?: boolean }[] = [
     { id: 'campaigns', label: 'Campaigns', adminOnly: true },
 ];
 
-const LOCATION_OPTIONS = [
-    { id: 'all' as LocationFilter, label: 'All Locations' },
-    { id: 'decatur' as LocationFilter, label: 'Decatur' },
-    { id: 'smyrna' as LocationFilter, label: 'Smyrna/Vinings' },
-    { id: 'kennesaw' as LocationFilter, label: 'Kennesaw' },
-];
-
 const CAMPAIGN_SEGMENTS = [
     { id: 'untouched', label: 'Never Contacted', desc: 'Leads with zero outreach attempts', source: 'conversations' },
     { id: 'attempted-no-reply', label: 'Attempted, No Reply', desc: 'Outbound sent 7+ days ago, no inbound', source: 'conversations' },
@@ -72,16 +66,6 @@ const CAMPAIGN_SEGMENTS = [
     { id: 'lapsed-treatment', label: 'Treatment-Specific', desc: 'By treatment type, 90+ days', source: 'mindbody' },
     { id: 'never-booked', label: 'Never Booked', desc: 'Inquired but never purchased', source: 'ghl' },
 ];
-
-function formatCurrency(val: number): string {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
-}
-
-function formatNumber(n: number): string {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-    return n.toLocaleString();
-}
 
 export default function LeadsPipelinePage() {
     const { data: session } = useSession();

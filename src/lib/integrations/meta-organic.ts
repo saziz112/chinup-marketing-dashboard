@@ -5,6 +5,7 @@
  */
 
 import { trackCall } from '@/lib/api-usage-tracker';
+import { createMemCache } from '@/lib/mem-cache';
 import { LocationId } from './google-business';
 
 // --- Types ---
@@ -114,19 +115,14 @@ async function graphGet<T>(endpoint: string, token: string): Promise<T> {
 
 // --- In-Memory Cache (4-hour TTL, same pattern as MindBody) ---
 
-const metaCache = new Map<string, { data: unknown; expiresAt: number }>();
-const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
+const metaCache = createMemCache<unknown>(4 * 60 * 60 * 1000); // 4 hours
 
 function getCached<T>(key: string): T | null {
-    const entry = metaCache.get(key);
-    if (entry && Date.now() < entry.expiresAt) {
-        return entry.data as T;
-    }
-    return null;
+    return metaCache.get(key) as T | null;
 }
 
 function setCache(key: string, data: unknown): void {
-    metaCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
+    metaCache.set(key, data);
 }
 
 // --- Instagram Graph API ---

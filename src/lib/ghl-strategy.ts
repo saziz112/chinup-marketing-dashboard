@@ -3,6 +3,7 @@
  * Analyzes pipeline data for CEO-level insights, recovery projections,
  * reactivation campaign suggestions, funnel analysis, and funnel recommendations.
  */
+import { formatCurrency } from '@/lib/format';
 
 import { type FullPipelineData, type StaleLead, type LocationKey, getStaleLeads, getFullPipelineData } from '@/lib/integrations/gohighlevel';
 import { getConversationsIntelligence, type ConversationsIntelligence } from '@/lib/integrations/ghl-conversations';
@@ -453,10 +454,6 @@ function computeLocationComparison(
             staleCount,
         };
     });
-}
-
-function formatCurrency(val: number): string {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
 }
 
 // --- Main Export ---

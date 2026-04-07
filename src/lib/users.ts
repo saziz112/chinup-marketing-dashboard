@@ -82,8 +82,8 @@ export async function updatePassword(staffId: string, newPassword: string) {
 // --- Seeding ---
 
 export async function seedUsers() {
-    const adminHash = await bcrypt.hash('admin2026', SALT_ROUNDS);
-    const managerHash = await bcrypt.hash('marketing2026', SALT_ROUNDS);
+    const adminHash = await bcrypt.hash(process.env.SEED_ADMIN_PASSWORD || 'admin2026', SALT_ROUNDS);
+    const managerHash = await bcrypt.hash(process.env.SEED_MANAGER_PASSWORD || 'marketing2026', SALT_ROUNDS);
 
     for (const user of USERS) {
         const hash = user.role === 'admin' ? adminHash : managerHash;

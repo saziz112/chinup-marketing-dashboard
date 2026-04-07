@@ -76,7 +76,8 @@ async function ensurePostsTable() {
     }
 }
 
-function rowToPost(row: any): PostRecord {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToPost(row: Record<string, any>): PostRecord {
     return {
         id: row.id,
         platforms: JSON.parse(row.platforms || '[]'),

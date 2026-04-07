@@ -5,6 +5,7 @@
  */
 
 import { trackCall } from '@/lib/api-usage-tracker';
+import { createMemCache } from '@/lib/mem-cache';
 
 // --- Types ---
 
@@ -97,19 +98,14 @@ function parseDuration(iso: string): number {
 
 // --- In-Memory Cache (4-hour TTL) ---
 
-const ytCache = new Map<string, { data: unknown; expiresAt: number }>();
-const CACHE_TTL = 4 * 60 * 60 * 1000;
+const ytCache = createMemCache<unknown>(4 * 60 * 60 * 1000);
 
 function getCached<T>(key: string): T | null {
-    const entry = ytCache.get(key);
-    if (entry && Date.now() < entry.expiresAt) {
-        return entry.data as T;
-    }
-    return null;
+    return ytCache.get(key) as T | null;
 }
 
 function setCache(key: string, data: unknown): void {
-    ytCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
+    ytCache.set(key, data);
 }
 
 // --- YouTube Data API ---

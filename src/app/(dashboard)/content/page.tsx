@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { format, parseISO, getDay, getHours } from 'date-fns';
 import { Area, AreaChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts';
+import { PLATFORM_COLORS } from '@/lib/constants';
 
 interface ContentPost {
     id: string;
@@ -24,11 +25,7 @@ interface ContentPost {
     mediaType?: string;
 }
 
-const getPlatformColor = (platform: string) => {
-    if (platform === 'instagram') return '#E1306C';
-    if (platform === 'youtube') return '#FF0000';
-    return '#888';
-};
+const getPlatformColor = (platform: string) => PLATFORM_COLORS[platform] || '#888';
 
 const getPlatformIcon = (platform: string, size = 16) => {
     if (platform === 'instagram') return <Instagram size={size} />;

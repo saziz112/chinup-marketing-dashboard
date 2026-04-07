@@ -1,4 +1,4 @@
-
+import { createMemCache } from '@/lib/mem-cache';
 
 export interface GoogleAdsData {
     isConfigured: boolean;
@@ -118,8 +118,7 @@ async function runAdsQuery(accessToken: string, query: string): Promise<any[]> {
 }
 
 // --- Cache (matches Meta Ads 4-hour pattern) ---
-const googleAdsCache = new Map<string, { data: GoogleAdsData; expiresAt: number }>();
-const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
+const googleAdsCache = createMemCache<GoogleAdsData>(4 * 60 * 60 * 1000); // 4 hours
 
 export async function getGoogleAdsData(since: string, until: string): Promise<GoogleAdsData> {
     if (!isGoogleAdsConfigured()) {
@@ -130,7 +129,7 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
     // Check cache first
     const cacheKey = `google_ads_${since}_${until}`;
     const cached = googleAdsCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) return cached.data;
+    if (cached) return cached;
 
     try {
         console.log(`[GoogleAds REST] Fetching live data... Customer: ${process.env.GOOGLE_ADS_CUSTOMER_ID}`);
@@ -250,7 +249,7 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
             campaigns,
             dailySpend
         };
-        googleAdsCache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL });
+        googleAdsCache.set(cacheKey, result);
         return result;
 
     } catch (error: any) {

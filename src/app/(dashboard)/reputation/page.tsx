@@ -8,6 +8,8 @@ import {
 } from 'recharts';
 import { SkeletonKpiCard, SkeletonChart, SkeletonTable } from '@/components/Skeleton';
 import { format } from 'date-fns';
+import { formatNumber } from '@/lib/format';
+import { TOOLTIP_STYLE } from '@/lib/constants';
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -22,14 +24,6 @@ const LOCATIONS = [
     { id: 'decatur', label: 'Decatur' },
     { id: 'kennesaw', label: 'Kennesaw' },
 ];
-
-const TOOLTIP_STYLE: React.CSSProperties = {
-    background: '#0A225C',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: '8px',
-    color: '#FEFEFE',
-    fontSize: '0.85rem',
-};
 
 const REVIEWS_PER_PAGE = 5;
 
@@ -66,12 +60,6 @@ function StarRating({ rating }: { rating: number }) {
             {'☆'.repeat(emptyStars)}
         </span>
     );
-}
-
-function formatNumber(n: number): string {
-    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
-    return n.toLocaleString();
 }
 
 function extractKeywordThemes(reviews: any[]): { word: string; count: number }[] {

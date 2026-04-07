@@ -13,6 +13,7 @@
  */
 
 import { trackCall } from '@/lib/api-usage-tracker';
+import { createMemCache } from '@/lib/mem-cache';
 
 // --- Types ---
 
@@ -94,17 +95,14 @@ export function isMetaAdsConfigured(): boolean {
 
 // --- Cache ---
 
-const adsCache = new Map<string, { data: unknown; expiresAt: number }>();
-const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
+const adsCache = createMemCache<unknown>(4 * 60 * 60 * 1000); // 4 hours
 
 function getCached<T>(key: string): T | null {
-    const entry = adsCache.get(key);
-    if (entry && Date.now() < entry.expiresAt) return entry.data as T;
-    return null;
+    return adsCache.get(key) as T | null;
 }
 
 function setCache(key: string, data: unknown): void {
-    adsCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
+    adsCache.set(key, data);
 }
 
 // --- API Helper ---

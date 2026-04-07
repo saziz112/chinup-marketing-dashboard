@@ -3,6 +3,8 @@
 import { useSession } from 'next-auth/react';
 import { useState, useEffect } from 'react';
 import { Skeleton, SkeletonChart } from '@/components/Skeleton';
+import { formatNumber, formatDate } from '@/lib/format';
+import { TOOLTIP_STYLE, PLATFORM_COLORS } from '@/lib/constants';
 
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -15,24 +17,6 @@ interface PlatformData {
     followers: string;
     engagement: string;
     configured: boolean;
-}
-
-const TOOLTIP_STYLE = {
-    background: '#0A225C',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: '8px',
-    color: '#FEFEFE',
-};
-
-function formatDate(dateStr: string): string {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-function formatNumber(n: number): string {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-    return n.toLocaleString();
 }
 
 export default function OverviewPage() {
@@ -360,9 +344,9 @@ export default function OverviewPage() {
                 <h3>Platform Overview</h3>
                 <div className="platform-grid">
                     {[
-                        { name: 'Instagram', icon: 'instagram', color: '#E1306C', tab: 'instagram' },
-                        { name: 'Facebook', icon: 'facebook', color: '#1877F2', tab: 'facebook' },
-                        { name: 'YouTube', icon: 'youtube', color: '#FF0000', tab: 'youtube' },
+                        { name: 'Instagram', icon: 'instagram', color: PLATFORM_COLORS.instagram, tab: 'instagram' },
+                        { name: 'Facebook', icon: 'facebook', color: PLATFORM_COLORS.facebook, tab: 'facebook' },
+                        { name: 'YouTube', icon: 'youtube', color: PLATFORM_COLORS.youtube, tab: 'youtube' },
                     ].map(platform => {
                         const data = platforms[platform.name];
                         return (
@@ -414,8 +398,8 @@ export default function OverviewPage() {
                                 <YAxis tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
                                 <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(label) => formatDate(String(label))} />
                                 <Legend wrapperStyle={{ color: '#E4E4E7', fontSize: '0.8125rem' }} />
-                                {platforms.Instagram.configured && <Line type="monotone" dataKey="igFollowers" name="IG Followers (New)" stroke="#E1306C" strokeWidth={2} dot={false} />}
-                                {platforms.Facebook.configured && <Line type="monotone" dataKey="fbFollowers" name="FB Followers (New)" stroke="#1877F2" strokeWidth={2} dot={false} />}
+                                {platforms.Instagram.configured && <Line type="monotone" dataKey="igFollowers" name="IG Followers (New)" stroke={PLATFORM_COLORS.instagram} strokeWidth={2} dot={false} />}
+                                {platforms.Facebook.configured && <Line type="monotone" dataKey="fbFollowers" name="FB Followers (New)" stroke={PLATFORM_COLORS.facebook} strokeWidth={2} dot={false} />}
                             </LineChart>
                         </ResponsiveContainer>
                     </div>
@@ -432,8 +416,8 @@ export default function OverviewPage() {
                                 <YAxis tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
                                 <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(label) => formatDate(String(label))} />
                                 <Legend wrapperStyle={{ color: '#E4E4E7', fontSize: '0.8125rem' }} />
-                                {platforms.Instagram.configured && <Bar dataKey="igReach" name="IG Reach" fill="#E1306C" radius={[4, 4, 0, 0]} />}
-                                {platforms.Facebook.configured && <Bar dataKey="fbEngagements" name="FB Engagements" fill="#1877F2" radius={[4, 4, 0, 0]} />}
+                                {platforms.Instagram.configured && <Bar dataKey="igReach" name="IG Reach" fill={PLATFORM_COLORS.instagram} radius={[4, 4, 0, 0]} />}
+                                {platforms.Facebook.configured && <Bar dataKey="fbEngagements" name="FB Engagements" fill={PLATFORM_COLORS.facebook} radius={[4, 4, 0, 0]} />}
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
