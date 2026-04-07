@@ -105,9 +105,10 @@ export function DateRangePicker({ since, until, onChange }: DateRangePickerProps
                     <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setIsMenuOpen(false)} />
                     <div style={{
                         position: 'absolute', top: '100%', right: 0, marginTop: '8px', padding: '6px',
-                        background: 'var(--card-bg)', border: '1px solid var(--border-color)',
-                        borderRadius: '10px', boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                        background: '#1a2332', border: '1px solid var(--border-color)',
+                        borderRadius: '10px', boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
                         zIndex: 50, width: '220px', display: 'flex', flexDirection: 'column', gap: '2px',
+                        backdropFilter: 'blur(12px)',
                     }}>
                         {(['7d', '30d', 'thisMonth', 'custom'] as PresetRange[]).map(p => (
                             <button
