@@ -299,11 +299,12 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
     }, []);
 
     // Start polling for multiple tasks
-    const startPolling = useCallback((tasks: { taskId: string; id: string }[]) => {
+    const startPolling = useCallback((tasks: { taskId: string; id: string }[], wantLogo: boolean) => {
         stopPolling();
         let count = 0;
         const completed = new Set<string>();
         const urls: string[] = new Array(tasks.length).fill('');
+        const logoParam = wantLogo ? '&logo=1' : '';
 
         pollRef.current = setInterval(async () => {
             count++;
@@ -322,7 +323,6 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
             for (let i = 0; i < tasks.length; i++) {
                 if (completed.has(tasks[i].id)) continue;
                 try {
-                    const logoParam = referenceImages.some(r => r.isLogo) ? '&logo=1' : '';
                     const res = await fetch(`/api/creatives/generate?taskId=${tasks[i].taskId}&id=${tasks[i].id}${logoParam}`);
                     const data = await res.json();
                     if (data.status === 'success' && data.blobUrl) {
@@ -386,7 +386,7 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
 
             // Handle single or multiple tasks
             const tasks = data.tasks || [{ taskId: data.taskId, id: data.id }];
-            startPolling(tasks);
+            startPolling(tasks, referenceImages.some(r => r.isLogo));
         } catch (err: unknown) {
             setGenerating(false);
             setError(err instanceof Error ? err.message : 'Failed to generate');

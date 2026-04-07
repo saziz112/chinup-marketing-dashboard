@@ -12,7 +12,6 @@ import { sql } from '@vercel/postgres';
 import { put } from '@vercel/blob';
 import { pgCacheGet } from '@/lib/pg-cache';
 import sharp from 'sharp';
-import path from 'path';
 
 async function ensureCreativeImagesTable() {
     try {
@@ -52,27 +51,38 @@ const VARIATION_SUFFIXES = [
 /** Overlay the real Chin Up logo onto the bottom-right of the generated image */
 async function overlayLogo(imageBuffer: Buffer): Promise<Buffer> {
     try {
-        const fs = await import('fs/promises');
-        const logoPath = path.join(process.cwd(), 'public', 'logo.png');
-        const logoBuffer = await fs.readFile(logoPath);
+        // Fetch logo from public URL (filesystem not available on Vercel serverless)
+        const baseUrl = process.env.NEXTAUTH_URL || process.env.VERCEL_URL
+            ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3001';
+        const logoUrl = `${baseUrl}/logo.png`;
+        const logoRes = await fetch(logoUrl);
+        if (!logoRes.ok) {
+            console.error('[creatives/generate] Logo fetch failed:', logoRes.status);
+            return imageBuffer;
+        }
+        const logoBuffer = Buffer.from(await logoRes.arrayBuffer());
 
         const image = sharp(imageBuffer);
         const metadata = await image.metadata();
         const imgWidth = metadata.width || 1024;
+        const imgHeight = metadata.height || 1024;
 
-        // Resize logo to ~15% of image width, maintain aspect ratio
-        const logoWidth = Math.round(imgWidth * 0.15);
+        // Resize logo to ~18% of image width
+        const logoWidth = Math.round(imgWidth * 0.18);
         const resizedLogo = await sharp(logoBuffer)
             .resize({ width: logoWidth })
             .png()
             .toBuffer();
 
-        // Composite logo in bottom-right corner with some padding and slight transparency
+        const logoMeta = await sharp(resizedLogo).metadata();
+        const logoH = logoMeta.height || 60;
+
+        // Composite logo in bottom-right with padding
         const result = await image
             .composite([{
                 input: resizedLogo,
-                gravity: 'southeast',
-                blend: 'over',
+                top: imgHeight - logoH - Math.round(imgHeight * 0.03),
+                left: imgWidth - logoWidth - Math.round(imgWidth * 0.03),
             }])
             .png()
             .toBuffer();

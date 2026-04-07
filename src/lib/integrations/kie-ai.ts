@@ -88,14 +88,14 @@ function getResolutionForAspect(resolution: Resolution, aspectRatio: AspectRatio
 // --- Prompt Enhancement ---
 
 export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRatio: AspectRatio, brandContext?: string, includeBrandLogo?: boolean): string {
-    const prefix = STYLE_PREFIXES[style];
+    const styleHint = STYLE_PREFIXES[style];
     const arContext = ASPECT_RATIO_CONTEXT[aspectRatio];
-    const brand = brandContext ? ` ${brandContext}.` : '';
-    // Never ask AI to generate logos — it will hallucinate random brand names.
-    // Logo overlay is done in post-processing via sharp, not in the image generation prompt.
+    // Brand context goes FIRST so the model prioritizes the brand's actual visual identity
+    // over generic style defaults (prevents generic spa robes, etc.)
+    const brand = brandContext ? `IMPORTANT - Match this exact visual style: ${brandContext}. ` : '';
     const antihallucination = 'Do not include any text, logos, watermarks, brand names, or signage in the image.';
-    const suffix = 'Shot on professional camera, natural imperfections, realistic skin texture with pores, authentic lighting with natural shadows, not overly retouched, editorial quality';
-    return `${prefix}, ${arContext}.${brand} ${userPrompt}. ${antihallucination} ${suffix}`;
+    const suffix = 'Shot on professional camera, natural imperfections, realistic skin texture with pores, authentic lighting, editorial quality';
+    return `${brand}${styleHint}, ${arContext}. ${userPrompt}. ${antihallucination} ${suffix}`;
 }
 
 // --- API Calls ---
