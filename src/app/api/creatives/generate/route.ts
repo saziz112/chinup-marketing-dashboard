@@ -52,9 +52,12 @@ const VARIATION_SUFFIXES = [
 async function overlayLogo(imageBuffer: Buffer): Promise<Buffer> {
     try {
         // Fetch logo from public URL (filesystem not available on Vercel serverless)
-        const baseUrl = process.env.NEXTAUTH_URL || process.env.VERCEL_URL
-            ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3001';
+        // VERCEL_URL doesn't include protocol; NEXTAUTH_URL does
+        let baseUrl = process.env.NEXTAUTH_URL || '';
+        if (!baseUrl && process.env.VERCEL_URL) baseUrl = `https://${process.env.VERCEL_URL}`;
+        if (!baseUrl) baseUrl = 'http://localhost:3001';
         const logoUrl = `${baseUrl}/logo.png`;
+        console.log('[creatives/generate] Logo overlay: fetching from', logoUrl);
         const logoRes = await fetch(logoUrl);
         if (!logoRes.ok) {
             console.error('[creatives/generate] Logo fetch failed:', logoRes.status);
@@ -205,6 +208,7 @@ export async function GET(req: NextRequest) {
     const taskId = req.nextUrl.searchParams.get('taskId');
     const id = req.nextUrl.searchParams.get('id');
     const wantLogo = req.nextUrl.searchParams.get('logo') === '1';
+    console.log('[creatives/generate GET] Polling:', { taskId, id, wantLogo });
 
     if (!taskId || !id) {
         return NextResponse.json({ error: 'Missing taskId or id' }, { status: 400 });
