@@ -9,9 +9,15 @@ import { PLATFORM_COLORS } from '@/lib/constants';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+type CreativeModel = 'nano-banana-pro' | 'nano-banana-2';
 type CreativeStyle = 'photorealistic' | 'cinematic' | 'product-shot' | 'fashion' | 'beauty-closeup' | 'logo-design';
 type AspectRatio = '1:1' | '4:5' | '9:16' | '3:4' | '4:3' | '16:9';
 type Resolution = '1024' | '2048' | '4096';
+
+const MODEL_OPTIONS: { value: CreativeModel; label: string; desc: string; pricing: Record<Resolution, string> }[] = [
+    { value: 'nano-banana-pro', label: 'Banana Pro', desc: 'Best quality & style matching', pricing: { '1024': '$0.09', '2048': '$0.09', '4096': '$0.12' } },
+    { value: 'nano-banana-2', label: 'Banana 2', desc: 'Fastest & cheapest', pricing: { '1024': '$0.04', '2048': '$0.06', '4096': '$0.09' } },
+];
 
 interface GalleryImage {
     id: string;
@@ -202,6 +208,7 @@ export default function CreativesClient() {
 function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | null; onPrefillConsumed: () => void }) {
     const router = useRouter();
     const [prompt, setPrompt] = useState('');
+    const [model, setModel] = useState<CreativeModel>('nano-banana-pro');
     const [style, setStyle] = useState<CreativeStyle>('photorealistic');
     const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
     const [resolution, setResolution] = useState<Resolution>('2048');
@@ -369,6 +376,7 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     prompt: prompt.trim(),
+                    model,
                     style,
                     aspectRatio,
                     resolution,
@@ -645,6 +653,28 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
                             }}
                         >
                             + {t}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Model Selector */}
+            <div style={cardStyle}>
+                <label style={labelStyle}>Model</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    {MODEL_OPTIONS.map(m => (
+                        <button
+                            key={m.value}
+                            onClick={() => setModel(m.value)}
+                            disabled={generating}
+                            style={{
+                                ...pillStyle(model === m.value),
+                                display: 'flex', flexDirection: 'column', gap: '2px', padding: '10px 12px',
+                            }}
+                        >
+                            <span style={{ fontWeight: model === m.value ? 600 : 500 }}>{m.label}</span>
+                            <span style={{ fontSize: '0.6875rem', opacity: 0.6 }}>{m.desc}</span>
+                            <span style={{ fontSize: '0.625rem', color: 'var(--accent)', marginTop: '2px' }}>{m.pricing[resolution]}/image</span>
                         </button>
                     ))}
                 </div>

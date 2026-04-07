@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { prompt, style, aspectRatio, resolution, referenceImageUrl, referenceImageUrls, includeBrandLogo, variations = 1, tags = [] } = body;
+    const { prompt, model, style, aspectRatio, resolution, referenceImageUrl, referenceImageUrls, includeBrandLogo, variations = 1, tags = [] } = body;
 
     if (!prompt || !style || !aspectRatio || !resolution) {
         return NextResponse.json({ error: 'Missing required fields: prompt, style, aspectRatio, resolution' }, { status: 400 });
@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
 
         for (let i = 0; i < numVariations; i++) {
             const varPrompt = i === 0 ? prompt : prompt + VARIATION_SUFFIXES[i];
-            const generateReq: GenerateRequest = { prompt: varPrompt, style, aspectRatio, resolution, referenceImageUrls: effectiveRefUrls, brandContext, includeBrandLogo: !!includeBrandLogo };
+            const generateReq: GenerateRequest = { prompt: varPrompt, model: model || 'nano-banana-pro', style, aspectRatio, resolution, referenceImageUrls: effectiveRefUrls, brandContext, includeBrandLogo: !!includeBrandLogo };
 
             const { taskId, enhancedPrompt } = await createImageTask(generateReq);
             const id = `creative_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;

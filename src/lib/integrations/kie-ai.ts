@@ -10,12 +10,29 @@ const KIE_API_BASE = 'https://api.kie.ai/api/v1/jobs';
 
 // --- Types ---
 
+export type CreativeModel = 'nano-banana-2' | 'nano-banana-pro';
 export type CreativeStyle = 'photorealistic' | 'cinematic' | 'product-shot' | 'fashion' | 'beauty-closeup' | 'logo-design';
 export type AspectRatio = '1:1' | '4:5' | '9:16' | '3:4' | '4:3' | '16:9';
 export type Resolution = '1024' | '2048' | '4096';
 
+export const MODEL_INFO: Record<CreativeModel, { label: string; description: string; pricing: Record<Resolution, string>; maxRefImages: number }> = {
+    'nano-banana-pro': {
+        label: 'Nano Banana Pro',
+        description: 'Gemini 3 Pro — best style matching & quality',
+        pricing: { '1024': '$0.09', '2048': '$0.09', '4096': '$0.12' },
+        maxRefImages: 8,
+    },
+    'nano-banana-2': {
+        label: 'Nano Banana 2',
+        description: 'Gemini 3.1 Flash — fastest & cheapest',
+        pricing: { '1024': '$0.04', '2048': '$0.06', '4096': '$0.09' },
+        maxRefImages: 14,
+    },
+};
+
 export interface GenerateRequest {
     prompt: string;
+    model?: CreativeModel;
     style: CreativeStyle;
     aspectRatio: AspectRatio;
     resolution: Resolution;
@@ -125,7 +142,7 @@ export async function createImageTask(req: GenerateRequest): Promise<GenerateRes
     };
 
     const body = {
-        model: 'nano-banana-2',
+        model: req.model || 'nano-banana-pro',
         input,
     };
 
