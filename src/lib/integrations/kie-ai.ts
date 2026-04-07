@@ -50,11 +50,11 @@ export function isKieAiConfigured(): boolean {
 }
 
 const STYLE_PREFIXES: Record<CreativeStyle, string> = {
-    'photorealistic': 'Ultra-realistic photograph, natural lighting, high detail',
-    'cinematic': 'Cinematic film still, dramatic lighting, shallow depth of field, anamorphic lens',
-    'product-shot': 'Professional product photography, clean white background, studio lighting',
-    'fashion': 'High-end fashion editorial, luxury aesthetic, editorial lighting',
-    'beauty-closeup': 'Professional beauty photography, macro detail, soft even lighting, flawless skin texture',
+    'photorealistic': 'Ultra-realistic photograph taken with a DSLR camera, natural lighting, real skin texture with pores and natural imperfections, candid feel',
+    'cinematic': 'Cinematic film still, dramatic natural lighting, shallow depth of field, anamorphic lens, film grain',
+    'product-shot': 'Professional product photography, clean background, studio lighting, real product texture',
+    'fashion': 'High-end fashion editorial, luxury aesthetic, editorial lighting, real model with natural features',
+    'beauty-closeup': 'Professional beauty photography, macro detail, soft diffused lighting, real skin texture with natural pores, authentic not airbrushed',
     'logo-design': 'Minimalist modern logo, vector-style, clean lines, professional branding',
 };
 
@@ -91,9 +91,10 @@ export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRa
     const prefix = STYLE_PREFIXES[style];
     const arContext = ASPECT_RATIO_CONTEXT[aspectRatio];
     const brand = brandContext ? ` ${brandContext}.` : '';
-    const logo = includeBrandLogo ? ' Include a subtle, small brand logo watermark in the corner of the image.' : '';
-    const suffix = '8K resolution, professional quality, sharp focus, vibrant colors';
-    return `${prefix}, ${arContext}.${brand} ${userPrompt}.${logo} ${suffix}`;
+    // Never ask AI to generate logos — it will hallucinate random brand names.
+    // Logo overlay should be done in post-processing, not in the image generation prompt.
+    const suffix = 'Shot on professional camera, natural imperfections, realistic skin texture with pores, authentic lighting with natural shadows, not overly retouched, editorial quality';
+    return `${prefix}, ${arContext}.${brand} ${userPrompt}. ${suffix}`;
 }
 
 // --- API Calls ---

@@ -159,7 +159,7 @@ Return ONLY valid JSON with these exact keys:
   "topTreatments": ["treatment1", "treatment2", ...],
   "emojiStyle": ["emoji1", "emoji2", ...],
   "contentPillars": ["pillar1", "pillar2", ...],
-  "promptEnhancement": "A detailed 2-4 sentence prompt prefix for AI image generation that captures the EXACT visual style of these images. Be very specific about colors, lighting, mood, backgrounds, and subject framing. This will be prepended to image generation prompts to maintain brand consistency."
+  "promptEnhancement": "A detailed 2-4 sentence prompt prefix for AI image generation that captures the EXACT visual style of these images. Be very specific about colors, lighting, mood, backgrounds, and subject framing. Emphasize natural/realistic qualities — real skin texture, authentic lighting, candid feel. Do NOT include any brand names, logos, or watermarks in this prompt. This will be prepended to image generation prompts to maintain brand consistency."
 }
 
 CAPTIONS & METRICS:
