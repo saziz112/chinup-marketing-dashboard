@@ -1177,7 +1177,14 @@ export default function LeadsPipelinePage() {
                                         <button
                                             key={loc}
                                             className={`period-btn ${smsLocationFilter === loc ? 'active' : ''}`}
-                                            onClick={() => setSmsLocationFilter(loc)}
+                                            onClick={() => {
+                                                setSmsLocationFilter(loc);
+                                                // Auto-select only contacts matching the new location filter
+                                                const matching = loc === 'all'
+                                                    ? smsData.contacts
+                                                    : smsData.contacts.filter((c: any) => c.locationKey === loc);
+                                                setSmsSelected(new Set(matching.map((c: any) => c.contactId)));
+                                            }}
                                             style={{ fontSize: '0.75rem', padding: '4px 10px' }}
                                         >
                                             {loc === 'all' ? 'All Locations' : loc === 'smyrna' ? 'Smyrna' : loc.charAt(0).toUpperCase() + loc.slice(1)}
@@ -1217,19 +1224,31 @@ export default function LeadsPipelinePage() {
                                 </div>
 
                                 {/* Contact list preview */}
+                                {(() => {
+                                    const filteredContacts = smsLocationFilter === 'all'
+                                        ? smsData.contacts
+                                        : smsData.contacts.filter((c: any) => c.locationKey === smsLocationFilter);
+                                    const filteredIds = new Set(filteredContacts.map((c: any) => c.contactId));
+                                    const filteredSelectedCount = [...smsSelected].filter(id => filteredIds.has(id)).length;
+                                    const allFilteredSelected = filteredContacts.length > 0 && filteredContacts.every((c: any) => smsSelected.has(c.contactId));
+
+                                    return (
+                                        <>
                                 <div style={{ maxHeight: '200px', overflow: 'auto', marginBottom: '16px', border: '1px solid var(--border-subtle)', borderRadius: '8px' }}>
                                     <table className="data-table" style={{ fontSize: '0.8125rem' }}>
                                         <thead>
                                             <tr>
                                                 <th style={{ width: '30px' }}>
                                                     <input type="checkbox"
-                                                        checked={smsSelected.size === (smsData.contacts?.length || 0)}
+                                                        checked={allFilteredSelected}
                                                         onChange={e => {
+                                                            const next = new Set(smsSelected);
                                                             if (e.target.checked) {
-                                                                setSmsSelected(new Set(smsData.contacts.map((c: any) => c.contactId)));
+                                                                filteredContacts.forEach((c: any) => next.add(c.contactId));
                                                             } else {
-                                                                setSmsSelected(new Set());
+                                                                filteredContacts.forEach((c: any) => next.delete(c.contactId));
                                                             }
+                                                            setSmsSelected(next);
                                                         }}
                                                     />
                                                 </th>
@@ -1240,10 +1259,7 @@ export default function LeadsPipelinePage() {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {(smsLocationFilter === 'all'
-                                                ? smsData.contacts
-                                                : smsData.contacts.filter((c: any) => c.locationKey === smsLocationFilter)
-                                            )?.slice(0, 50).map((c: any) => (
+                                            {filteredContacts.slice(0, 50).map((c: any) => (
                                                 <tr key={c.contactId}>
                                                     <td>
                                                         <input type="checkbox"
@@ -1279,11 +1295,14 @@ export default function LeadsPipelinePage() {
                                     <button
                                         className="period-btn active"
                                         onClick={sendSmsCampaign}
-                                        disabled={smsSending || smsSelected.size === 0}
+                                        disabled={smsSending || filteredSelectedCount === 0}
                                     >
-                                        {smsSending ? 'Sending...' : `Send to ${smsSelected.size} Contact${smsSelected.size !== 1 ? 's' : ''}`}
+                                        {smsSending ? 'Sending...' : `Send to ${filteredSelectedCount} Contact${filteredSelectedCount !== 1 ? 's' : ''}`}
                                     </button>
                                 </div>
+                                        </>
+                                    );
+                                })()}
                                 {smsTestResult && (
                                     <div style={{
                                         marginTop: '8px', fontSize: '0.8125rem',
