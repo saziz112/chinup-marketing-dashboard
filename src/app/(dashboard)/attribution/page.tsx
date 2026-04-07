@@ -963,9 +963,9 @@ export default function LeadsPipelinePage() {
             {/* Modal: Pipeline Reorganization */}
             {/* ═══════════════════════════════════════════════════ */}
             {reorgOpen && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '24px' }}
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '24px' }}
                     onClick={(e) => { if (e.target === e.currentTarget) setReorgOpen(false); }}>
-                    <div style={{ background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-subtle)', maxWidth: '800px', width: '100%', maxHeight: '80vh', overflow: 'auto', padding: '32px' }}>
+                    <div style={{ background: '#1a2332', borderRadius: '16px', border: '1px solid var(--border-subtle)', maxWidth: '800px', width: '100%', maxHeight: '80vh', overflow: 'auto', padding: '32px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                             <h2 style={{ margin: 0 }}>Pipeline Reorganization</h2>
                             <button onClick={() => setReorgOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.25rem' }}>x</button>
@@ -1045,9 +1045,9 @@ export default function LeadsPipelinePage() {
             {/* Modal: Transcript Viewer */}
             {/* ═══════════════════════════════════════════════════ */}
             {transcriptOpen && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '24px' }}
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '24px' }}
                     onClick={(e) => { if (e.target === e.currentTarget) setTranscriptOpen(false); }}>
-                    <div style={{ background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-subtle)', maxWidth: '600px', width: '100%', maxHeight: '80vh', overflow: 'auto', padding: '32px' }}>
+                    <div style={{ background: '#1a2332', borderRadius: '16px', border: '1px solid var(--border-subtle)', maxWidth: '600px', width: '100%', maxHeight: '80vh', overflow: 'auto', padding: '32px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                             <h3 style={{ margin: 0 }}>Call Transcript — {transcriptContactName}</h3>
                             <button onClick={() => setTranscriptOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.25rem' }}>x</button>
@@ -1083,9 +1083,9 @@ export default function LeadsPipelinePage() {
             {/* Modal: SMS/Email Campaign Wizard */}
             {/* ═══════════════════════════════════════════════════ */}
             {smsOpen && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '24px' }}
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '24px' }}
                     onClick={(e) => { if (e.target === e.currentTarget) setSmsOpen(false); }}>
-                    <div style={{ background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--border-subtle)', maxWidth: '900px', width: '100%', maxHeight: '85vh', overflow: 'auto', padding: '32px' }}>
+                    <div style={{ background: '#1a2332', borderRadius: '16px', border: '1px solid var(--border-subtle)', maxWidth: '900px', width: '100%', maxHeight: '85vh', overflow: 'auto', padding: '32px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                             <h2 style={{ margin: 0 }}>
                                 {CAMPAIGN_SEGMENTS.find(s => s.id === smsSegment)?.label || smsSegment} Campaign
