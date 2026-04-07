@@ -360,7 +360,7 @@ function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData; isMoc
 
 // --- Campaigns Table ---
 
-function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFilter, isOverview, isGoogle, onAnalyze, aiAnalysis, aiLoading }: {
+function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFilter, isOverview, isGoogle, onAnalyze, aiAnalysis, aiExpanded, onToggleAI, aiLoading }: {
     campaigns: (Campaign & { platform?: string })[];
     roasDict?: Record<string, CampaignBreakdown>;
     isAdmin: boolean;
@@ -370,6 +370,8 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
     isGoogle?: boolean;
     onAnalyze?: (campaign: Campaign) => void;
     aiAnalysis?: Record<string, { grade: string; summary: string; priorityActions: string[]; creativeSuggestion: string | null }>;
+    aiExpanded?: Set<string>;
+    onToggleAI?: (id: string) => void;
     aiLoading?: string | null;
 }) {
     const [sortBy, setSortBy] = useState<string>('results');
@@ -524,24 +526,32 @@ function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onStatusFi
                                         {!!onAnalyze && (
                                             <td>
                                                 <button
-                                                    onClick={() => onAnalyze(c)}
+                                                    onClick={() => {
+                                                        if (aiAnalysis?.[c.id]) {
+                                                            // Toggle expand/collapse
+                                                            if (onToggleAI) onToggleAI(c.id);
+                                                        } else {
+                                                            // Fetch analysis and auto-expand
+                                                            onAnalyze(c);
+                                                        }
+                                                    }}
                                                     disabled={aiLoading === c.id}
-                                                    title="AI Campaign Analysis"
+                                                    title={aiAnalysis?.[c.id] ? (aiExpanded?.has(c.id) ? 'Collapse analysis' : 'Show analysis') : 'AI Campaign Analysis'}
                                                     style={{
-                                                        background: aiAnalysis?.[c.id] ? '#6366f122' : 'transparent',
+                                                        background: aiExpanded?.has(c.id) ? '#6366f122' : 'transparent',
                                                         border: `1px solid ${aiAnalysis?.[c.id] ? '#6366f144' : 'var(--border)'}`,
                                                         borderRadius: 6, padding: '4px 8px', cursor: 'pointer',
                                                         color: aiAnalysis?.[c.id] ? '#a5b4fc' : 'var(--text-muted)',
                                                         fontSize: 14, lineHeight: 1,
                                                     }}
                                                 >
-                                                    {aiLoading === c.id ? '...' : '✨'}
+                                                    {aiLoading === c.id ? '...' : aiExpanded?.has(c.id) ? '▼' : '✨'}
                                                 </button>
                                             </td>
                                         )}
                                     </tr>
                                     {/* AI Analysis expandable row */}
-                                    {aiAnalysis?.[c.id] && (
+                                    {aiAnalysis?.[c.id] && aiExpanded?.has(c.id) && (
                                         <tr>
                                             <td colSpan={20} style={{ padding: 0, border: 'none' }}>
                                                 <div style={{
@@ -623,6 +633,7 @@ export default function AdsPage() {
     const [error, setError] = useState<string | null>(null);
     const [showRoasModal, setShowRoasModal] = useState(false);
     const [aiAnalysis, setAiAnalysis] = useState<Record<string, { grade: string; summary: string; priorityActions: string[]; creativeSuggestion: string | null }>>({});
+    const [aiExpanded, setAiExpanded] = useState<Set<string>>(new Set()); // which AI rows are visible
     const [aiLoading, setAiLoading] = useState<string | null>(null); // campaignId currently loading
     const [creativesData, setCreativesData] = useState<Record<string, Array<{ title: string | null; body: string | null }>>>({});
 
@@ -780,6 +791,7 @@ export default function AdsPage() {
             const result = await res.json();
             if (!res.ok) throw new Error(result.error);
             setAiAnalysis(prev => ({ ...prev, [campaign.id]: result }));
+            setAiExpanded(prev => new Set(prev).add(campaign.id));
         } catch (e) {
             console.error('AI analysis failed:', e);
         } finally {
@@ -1012,6 +1024,12 @@ export default function AdsPage() {
                             isGoogle={isGoogle}
                             onAnalyze={!isOverview ? analyzeWithAI : undefined}
                             aiAnalysis={aiAnalysis}
+                            aiExpanded={aiExpanded}
+                            onToggleAI={(id) => setAiExpanded(prev => {
+                                const next = new Set(prev);
+                                if (next.has(id)) next.delete(id); else next.add(id);
+                                return next;
+                            })}
                             aiLoading={aiLoading}
                         />
                     </div>
