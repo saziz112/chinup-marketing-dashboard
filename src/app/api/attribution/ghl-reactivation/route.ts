@@ -680,7 +680,11 @@ export async function GET(req: NextRequest) {
 
             const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(neverBooked, recentHashes);
             const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
-            const { filtered: finalFiltered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
+            // Cap v2 DND check to 200 contacts to avoid Vercel timeout (32K+ GHL contacts)
+            const dndCheckSlice = afterOutbound.slice(0, 200);
+            const remainder = afterOutbound.slice(200);
+            const { filtered: dndChecked, v2DndFiltered } = await applyV2SmsDnd(dndCheckSlice);
+            const finalFiltered = [...dndChecked, ...remainder];
 
             return NextResponse.json({
                 contacts: finalFiltered,
