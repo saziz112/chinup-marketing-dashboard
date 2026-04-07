@@ -73,21 +73,30 @@ export async function POST(req: NextRequest) {
     try {
         await ensureCreativeImagesTable();
 
-        // Fetch brand context from cached IG analysis
+        // Fetch brand context from cached IG vision analysis
         let brandContext: string | undefined;
+        let brandRefImages: string[] = [];
         try {
-            const profile = await pgCacheGet<{ promptEnhancement: string }>('brand_profile');
+            // Try v2 (vision-based) first, fall back to v1 (caption-only)
+            const profile = await pgCacheGet<{ promptEnhancement: string; referenceImageUrls?: string[] }>('brand_profile_v2')
+                || await pgCacheGet<{ promptEnhancement: string; referenceImageUrls?: string[] }>('brand_profile');
             if (profile?.promptEnhancement) {
                 brandContext = profile.promptEnhancement;
             }
+            if (profile?.referenceImageUrls?.length) {
+                brandRefImages = profile.referenceImageUrls;
+            }
         } catch { /* no brand profile yet */ }
+
+        // Auto-attach brand reference images if user didn't provide their own
+        const effectiveRefUrls = refUrls.length > 0 ? refUrls : brandRefImages.slice(0, 3);
 
         const groupId = numVariations > 1 ? `group_${Date.now()}_${Math.random().toString(36).substr(2, 6)}` : null;
         const tasks: { id: string; taskId: string; enhancedPrompt: string }[] = [];
 
         for (let i = 0; i < numVariations; i++) {
             const varPrompt = i === 0 ? prompt : prompt + VARIATION_SUFFIXES[i];
-            const generateReq: GenerateRequest = { prompt: varPrompt, style, aspectRatio, resolution, referenceImageUrls: refUrls, brandContext, includeBrandLogo: !!includeBrandLogo };
+            const generateReq: GenerateRequest = { prompt: varPrompt, style, aspectRatio, resolution, referenceImageUrls: effectiveRefUrls, brandContext, includeBrandLogo: !!includeBrandLogo };
 
             const { taskId, enhancedPrompt } = await createImageTask(generateReq);
             const id = `creative_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;

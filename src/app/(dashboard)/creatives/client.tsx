@@ -227,7 +227,20 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // Brand profile state
-    const [brandProfile, setBrandProfile] = useState<{ brandVoice: string; visualThemes: string[]; topTreatments: string[]; contentPillars: string[]; promptEnhancement: string; generatedAt: string; basedOnPosts: number } | null>(null);
+    const [brandProfile, setBrandProfile] = useState<{
+        brandVoice: string;
+        visualStyle?: string;
+        colorPalette?: string[];
+        lightingStyle?: string;
+        compositionNotes?: string;
+        visualThemes: string[];
+        topTreatments: string[];
+        contentPillars: string[];
+        promptEnhancement: string;
+        referenceImageUrls?: string[];
+        generatedAt: string;
+        basedOnPosts: number;
+    } | null>(null);
     const [brandExpanded, setBrandExpanded] = useState(false);
     const [brandLoading, setBrandLoading] = useState(false);
 
@@ -475,6 +488,55 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
                     </button>
                     {brandExpanded && (
                         <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {/* Visual Style (from vision analysis) */}
+                            {brandProfile.visualStyle && (
+                                <div>
+                                    <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: '#E1306C', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Visual Style</span>
+                                    <p style={{ margin: '4px 0 0', fontSize: '0.8125rem', color: '#ccc', lineHeight: 1.5 }}>{brandProfile.visualStyle}</p>
+                                </div>
+                            )}
+                            {/* Color Palette */}
+                            {brandProfile.colorPalette && brandProfile.colorPalette.length > 0 && (
+                                <div>
+                                    <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Color Palette</span>
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
+                                        {brandProfile.colorPalette.map((c, i) => (
+                                            <span key={i} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '12px', fontSize: '0.6875rem', background: 'rgba(255,255,255,0.06)', color: '#ccc' }}>
+                                                <span style={{ width: 10, height: 10, borderRadius: '50%', background: c.startsWith('#') ? c : undefined, border: '1px solid rgba(255,255,255,0.2)', flexShrink: 0 }} />
+                                                {c}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {/* Lighting & Composition */}
+                            {(brandProfile.lightingStyle || brandProfile.compositionNotes) && (
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                    {brandProfile.lightingStyle && (
+                                        <div>
+                                            <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Lighting</span>
+                                            <p style={{ margin: '4px 0 0', fontSize: '0.8125rem', color: '#ccc', lineHeight: 1.5 }}>{brandProfile.lightingStyle}</p>
+                                        </div>
+                                    )}
+                                    {brandProfile.compositionNotes && (
+                                        <div>
+                                            <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Composition</span>
+                                            <p style={{ margin: '4px 0 0', fontSize: '0.8125rem', color: '#ccc', lineHeight: 1.5 }}>{brandProfile.compositionNotes}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {/* Reference Images */}
+                            {brandProfile.referenceImageUrls && brandProfile.referenceImageUrls.length > 0 && (
+                                <div>
+                                    <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reference Images (auto-applied)</span>
+                                    <div style={{ display: 'flex', gap: '6px', marginTop: '6px', overflowX: 'auto' }}>
+                                        {brandProfile.referenceImageUrls.map((url, i) => (
+                                            <img key={i} src={url} alt={`Brand ref ${i + 1}`} style={{ width: 56, height: 56, borderRadius: 8, objectFit: 'cover', border: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }} />
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             <div>
                                 <span style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Brand Voice</span>
                                 <p style={{ margin: '4px 0 0', fontSize: '0.8125rem', color: '#ccc', lineHeight: 1.5 }}>{brandProfile.brandVoice}</p>
@@ -501,7 +563,7 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                                 <span style={{ fontSize: '0.625rem', color: 'var(--text-muted)' }}>
-                                    Auto-applied to all generations · Updated {new Date(brandProfile.generatedAt).toLocaleDateString()}
+                                    {brandProfile.visualStyle ? 'Vision-analyzed' : 'Caption-analyzed'} · {brandProfile.basedOnPosts} posts · Updated {new Date(brandProfile.generatedAt).toLocaleDateString()}
                                 </span>
                                 <button
                                     onClick={refreshBrandProfile}
