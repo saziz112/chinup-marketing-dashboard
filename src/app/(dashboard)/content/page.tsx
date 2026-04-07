@@ -281,7 +281,7 @@ export default function ContentPage() {
                                 <XAxis dataKey="hour" stroke="#475569" fontSize={11} tickMargin={10} />
                                 <YAxis stroke="#475569" fontSize={11} tickFormatter={(v) => `${v}%`} width={35} />
                                 <RechartsTooltip
-                                    contentStyle={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px' }}
+                                    contentStyle={{ backgroundColor: '#1a2332', border: '1px solid var(--border-color)', borderRadius: '8px' }}
                                     formatter={(value: any) => [`${value}%`, 'Avg Engagement']}
                                 />
                                 <Area type="monotone" dataKey="engagementRate" stroke="var(--accent)" fillOpacity={1} fill="url(#colorEng)" />

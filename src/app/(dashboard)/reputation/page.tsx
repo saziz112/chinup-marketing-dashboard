@@ -1047,7 +1047,7 @@ export default function ReputationPage() {
                         </button>
 
                         {locationDropdownOpen && (
-                            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '0.5rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)', zIndex: 50, minWidth: '150px', overflow: 'hidden' }}>
+                            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '0.5rem', backgroundColor: '#1a2332', border: '1px solid var(--border-color)', borderRadius: '8px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.6)', zIndex: 50, minWidth: '150px', overflow: 'hidden' }}>
                                 {LOCATIONS.map(loc => (
                                     <div
                                         key={loc.id}

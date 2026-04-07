@@ -606,7 +606,7 @@ function CustomTooltip({ active, payload, label, isAdmin }: {
 }) {
     if (!active || !payload?.length) return null;
     return (
-        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
+        <div style={{ background: '#1a2332', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
             <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>{label}</p>
             {payload.map(p => (
                 <p key={p.name} style={{ color: p.color }}>
@@ -1001,7 +1001,7 @@ export default function AdsPage() {
                                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
                                     <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
                                     <YAxis dataKey="name" type="category" width={200} tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} />
-                                    <Tooltip contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
+                                    <Tooltip contentStyle={{ background: '#1a2332', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
                                     <Bar dataKey="Leads" fill="var(--accent)" radius={[0, 4, 4, 0]} maxBarSize={24} />
                                 </BarChart>
                             </ResponsiveContainer>
@@ -1040,11 +1040,11 @@ export default function AdsPage() {
             {showRoasModal && roasData && (
                 <div style={{
                     position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100,
-                    background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+                    background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24
                 }}>
                     <div style={{
-                        background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 16,
+                        background: '#1a2332', border: '1px solid var(--border)', borderRadius: 16,
                         width: '100%', maxWidth: 900, maxHeight: '90vh', display: 'flex', flexDirection: 'column',
                         boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
                     }}>
