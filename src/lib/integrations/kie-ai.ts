@@ -11,7 +11,7 @@ const KIE_API_BASE = 'https://api.kie.ai/api/v1/jobs';
 // --- Types ---
 
 export type CreativeModel = 'nano-banana-2' | 'nano-banana-pro';
-export type CreativeStyle = 'photorealistic' | 'cinematic' | 'product-shot' | 'fashion' | 'beauty-closeup' | 'logo-design';
+export type CreativeStyle = 'educational' | 'before-after' | 'treatment' | 'product-spotlight' | 'lifestyle' | 'carousel-graphic' | 'reel-thumbnail';
 export type AspectRatio = '1:1' | '4:5' | '9:16' | '3:4' | '4:3' | '16:9';
 export type Resolution = '1024' | '2048' | '4096';
 
@@ -66,13 +66,39 @@ export function isKieAiConfigured(): boolean {
     return !!process.env.KIE_AI_API_KEY;
 }
 
+// ─── Chin Up! Brand Guidelines (from Chin_Up_Aesthetics_Brand_Guidelines_AI.md) ───
+
+const BRAND_BASE = {
+    // Always-on color rules
+    colorAnchors: 'Color palette: champagne gold (#D8B41D) accents, rich black (#0A0A0A) or clean cream (#FDF8E0)/ivory (#FAF9F5) backgrounds, pure white text on dark, black text on light. Gold as accent only, never dominant background. No neon, bright blues, greens, or saturated colors outside palette.',
+    // Core visual identity
+    visualIdentity: 'Luxury medical spa aesthetic blending clinical credibility with editorial warmth. Modern minimalist interiors, warm ambient lighting, gold hardware accents, cream walls. Not sterile or hospital-like, not overly glamorous.',
+    // Subject guidelines
+    subjects: 'Diverse women (Black, Latina, Asian, White), ages 25-55, natural beauty with healthy glowing skin, confident and approachable expressions. Staff in black scrubs or white lab coats. No overly retouched or doll-like subjects.',
+    // Composition rules
+    composition: 'Rule of thirds, shallow depth of field, eye-level or slightly above camera angle. Professional editorial quality.',
+    // Hard restrictions
+    restrictions: 'Do not include any text, logos, watermarks, brand names, or signage. No harsh fluorescent lighting. No busy or distracting backgrounds. No stock photography look. No cartoonish subjects.',
+};
+
+/** Warm/light mood anchor — used for lifestyle, educational, product content */
+const MOOD_WARM = 'warm golden lighting, cream and gold color palette, modern minimalist environment, soft natural tones, high-end editorial style, clean and sophisticated';
+
+/** Dark/bold mood anchor — used for carousel graphics, reel thumbnails, dramatic content */
+const MOOD_DARK = 'dramatic warm lighting, black and gold color palette, modern minimalist dark background, rich warm tones, high-end editorial style, elegant and sophisticated';
+
+/** Clinical/educational mood anchor — used for before/after, treatment content */
+const MOOD_CLINICAL = 'clean clinical lighting, neutral cream background, medical-grade aesthetic, authoritative and precise, warm undertones, professional healthcare photography, modern treatment environment';
+
+// Content-type templates from brand guidelines Section 5
 const STYLE_PREFIXES: Record<CreativeStyle, string> = {
-    'photorealistic': 'Ultra-realistic photograph taken with a DSLR camera, natural lighting, real skin texture with pores and natural imperfections, candid feel',
-    'cinematic': 'Cinematic film still, dramatic natural lighting, shallow depth of field, anamorphic lens, film grain',
-    'product-shot': 'Professional product photography, clean background, studio lighting, real product texture',
-    'fashion': 'High-end fashion editorial, luxury aesthetic, editorial lighting, real model with natural features',
-    'beauty-closeup': 'Professional beauty photography, macro detail, soft diffused lighting, real skin texture with natural pores, authentic not airbrushed',
-    'logo-design': 'Minimalist modern logo, vector-style, clean lines, professional branding',
+    'educational': `Professional female nurse practitioner or aesthetician, confident expert demeanor, direct eye contact with camera, modern luxury medical spa office background, warm ambient lighting, clean minimalist background with cream walls and gold accent details, ${MOOD_WARM}, authoritative and approachable presence`,
+    'before-after': `Clean split-screen portrait composition, professional studio lighting, neutral cream background, clinical documentation photography, consistent lighting on both sides, medical spa aesthetic, warm skin tones, ${MOOD_CLINICAL}`,
+    'treatment': `Aesthetic treatment in progress, professional gloved hands, medical-grade skincare procedure, soft clinical lighting, modern treatment room, patient appears relaxed and comfortable, shallow depth of field, clinical precision with warm tones, ${MOOD_CLINICAL}`,
+    'product-spotlight': `Medical-grade skincare product on minimalist surface, soft cream marble or black velvet background, warm golden side lighting, elegant luxury product photography, clean composition, single hero product, high-end beauty brand aesthetic, ${MOOD_WARM}`,
+    'lifestyle': `Confident woman with radiant glowing skin, soft natural lighting, warm golden tones, elegant home or spa environment, self-care moment, aspirational but authentic, luxury wellness lifestyle photography, ${MOOD_WARM}`,
+    'carousel-graphic': `Clean minimalist graphic design layout, rich black background, elegant gold accent lines, sophisticated and professional, luxury information card aesthetic, plenty of negative space, magazine-quality layout feel, ${MOOD_DARK}`,
+    'reel-thumbnail': `Diverse woman with confident expression looking at camera, modern medical spa setting, soft warm lighting, black and gold color scheme, composition with negative space on one side for text overlay, luxury aesthetic clinic environment, editorial style photography, ${MOOD_DARK}`,
 };
 
 const ASPECT_RATIO_CONTEXT: Record<AspectRatio, string> = {
@@ -104,15 +130,24 @@ function getResolutionForAspect(resolution: Resolution, aspectRatio: AspectRatio
 
 // --- Prompt Enhancement ---
 
-export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRatio: AspectRatio, brandContext?: string, includeBrandLogo?: boolean): string {
-    const styleHint = STYLE_PREFIXES[style];
+export function enhancePrompt(userPrompt: string, style: CreativeStyle, aspectRatio: AspectRatio, brandContext?: string, _includeBrandLogo?: boolean): string {
+    // Layer 1: Brand DNA (always on — color palette, visual identity, subject rules)
+    const brandDna = `${BRAND_BASE.visualIdentity} ${BRAND_BASE.colorAnchors} ${BRAND_BASE.subjects}`;
+
+    // Layer 2: Content-type template (from brand guidelines Section 5)
+    const contentTemplate = STYLE_PREFIXES[style];
+
+    // Layer 3: Composition + aspect ratio
     const arContext = ASPECT_RATIO_CONTEXT[aspectRatio];
-    // Brand context goes FIRST so the model prioritizes the brand's actual visual identity
-    // over generic style defaults (prevents generic spa robes, etc.)
-    const brand = brandContext ? `IMPORTANT - Match this exact visual style: ${brandContext}. ` : '';
-    const antihallucination = 'Do not include any text, logos, watermarks, brand names, or signage in the image.';
-    const suffix = 'Shot on professional camera, natural imperfections, realistic skin texture with pores, authentic lighting, editorial quality';
-    return `${brand}${styleHint}, ${arContext}. ${userPrompt}. ${antihallucination} ${suffix}`;
+    const compositionRules = BRAND_BASE.composition;
+
+    // Layer 4: Supplementary IG-analyzed brand context (if available — adds nuance, doesn't override)
+    const igContext = brandContext ? `Additional style reference: ${brandContext}` : '';
+
+    // Layer 5: Quality + restrictions
+    const quality = 'Shot on professional camera, natural imperfections, realistic skin texture with pores, authentic lighting, editorial quality';
+
+    return `${brandDna}. ${contentTemplate}, ${arContext}. ${compositionRules}. ${userPrompt}. ${igContext} ${BRAND_BASE.restrictions}. ${quality}`.replace(/\s{2,}/g, ' ').trim();
 }
 
 // --- API Calls ---

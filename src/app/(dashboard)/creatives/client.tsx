@@ -10,7 +10,7 @@ import { PLATFORM_COLORS } from '@/lib/constants';
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type CreativeModel = 'nano-banana-pro' | 'nano-banana-2';
-type CreativeStyle = 'photorealistic' | 'cinematic' | 'product-shot' | 'fashion' | 'beauty-closeup' | 'logo-design';
+type CreativeStyle = 'educational' | 'before-after' | 'treatment' | 'product-spotlight' | 'lifestyle' | 'carousel-graphic' | 'reel-thumbnail';
 type AspectRatio = '1:1' | '4:5' | '9:16' | '3:4' | '4:3' | '16:9';
 type Resolution = '1024' | '2048' | '4096';
 
@@ -55,12 +55,13 @@ interface UsageData {
 const SUGGESTED_TAGS = ['microneedling', 'midface', 'hydrafacial', 'promo', 'before-after', 'skincare', 'lips', 'botox', 'dermal-filler', 'chemical-peel'];
 
 const STYLES: { value: CreativeStyle; label: string; desc: string }[] = [
-    { value: 'photorealistic', label: 'Photorealistic', desc: 'Before/after, facility photos' },
-    { value: 'cinematic', label: 'Cinematic', desc: 'Dramatic mood, promos' },
-    { value: 'product-shot', label: 'Product Shot', desc: 'Skincare, treatments' },
-    { value: 'fashion', label: 'Fashion', desc: 'Transformation content' },
-    { value: 'beauty-closeup', label: 'Beauty Close-up', desc: 'Skin, lips, results' },
-    { value: 'logo-design', label: 'Logo Design', desc: 'Branding, graphics' },
+    { value: 'educational', label: 'Educational', desc: 'Staff speaking to camera, expert content' },
+    { value: 'before-after', label: 'Before & After', desc: 'Split-screen clinical documentation' },
+    { value: 'treatment', label: 'Treatment', desc: 'Procedures in progress, close-ups' },
+    { value: 'product-spotlight', label: 'Product Spotlight', desc: 'Skincare, elegant still life' },
+    { value: 'lifestyle', label: 'Lifestyle', desc: 'Self-care, aspirational, golden tones' },
+    { value: 'carousel-graphic', label: 'Carousel Graphic', desc: 'Dark bg, gold accents, info cards' },
+    { value: 'reel-thumbnail', label: 'Reel Thumbnail', desc: 'Hook image with text space' },
 ];
 
 const ASPECT_RATIOS: { value: AspectRatio; label: string; use: string }[] = [
@@ -209,7 +210,7 @@ function GenerateTab({ prefill, onPrefillConsumed }: { prefill: PrefillData | nu
     const router = useRouter();
     const [prompt, setPrompt] = useState('');
     const [model, setModel] = useState<CreativeModel>('nano-banana-pro');
-    const [style, setStyle] = useState<CreativeStyle>('photorealistic');
+    const [style, setStyle] = useState<CreativeStyle>('educational');
     const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
     const [resolution, setResolution] = useState<Resolution>('2048');
     const [variations, setVariations] = useState<number>(1);

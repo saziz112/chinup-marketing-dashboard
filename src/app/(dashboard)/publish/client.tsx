@@ -176,7 +176,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
     const [showAiGenerate, setShowAiGenerate] = useState(false);
     const [showGalleryPicker, setShowGalleryPicker] = useState(false);
     const [genPrompt, setGenPrompt] = useState('');
-    const [genStyle, setGenStyle] = useState('photorealistic');
+    const [genStyle, setGenStyle] = useState('educational');
     const [genGenerating, setGenGenerating] = useState(false);
     const [genError, setGenError] = useState<string | null>(null);
     const [galleryImages, setGalleryImages] = useState<Array<{ id: string; blobUrl: string; prompt: string; style: string; tags: string[] }>>([]);
@@ -1136,12 +1136,13 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                                     color: '#ccc', outline: 'none',
                                 }}
                             >
-                                <option value="photorealistic">Photorealistic</option>
-                                <option value="cinematic">Cinematic</option>
-                                <option value="product-shot">Product Shot</option>
-                                <option value="fashion">Fashion</option>
-                                <option value="beauty-closeup">Beauty Close-up</option>
-                                <option value="logo-design">Logo Design</option>
+                                <option value="educational">Educational</option>
+                                <option value="before-after">Before & After</option>
+                                <option value="treatment">Treatment</option>
+                                <option value="product-spotlight">Product Spotlight</option>
+                                <option value="lifestyle">Lifestyle</option>
+                                <option value="carousel-graphic">Carousel Graphic</option>
+                                <option value="reel-thumbnail">Reel Thumbnail</option>
                             </select>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
