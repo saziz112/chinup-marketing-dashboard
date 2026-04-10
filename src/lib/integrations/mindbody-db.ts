@@ -102,9 +102,10 @@ export async function getClientEmailMapFromDB(
                c.referred_by, c.creation_date,
                COALESCE(SUM(s.total_amount), 0) as revenue
         FROM mb_clients_cache c
-        JOIN mb_sales_history s ON s.client_id = c.client_id
-        WHERE s.sale_date BETWEEN ${start} AND ${end}
-          AND c.email IS NOT NULL AND c.email != ''
+        LEFT JOIN mb_sales_history s
+            ON s.client_id = c.client_id
+           AND s.sale_date BETWEEN ${start} AND ${end}
+        WHERE c.email IS NOT NULL AND c.email != ''
         GROUP BY c.client_id, c.email, c.first_name, c.last_name, c.phone,
                  c.referred_by, c.creation_date
     `;
