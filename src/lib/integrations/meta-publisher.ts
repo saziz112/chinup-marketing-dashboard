@@ -590,15 +590,18 @@ export async function publishFacebookMultiPhoto(
         }
 
         // Step 2: Create multi-photo post with attached_media
-        const attachedMedia = mediaFbIds.map(id => ({ media_fbid: id }));
+        // Facebook Graph API requires attached_media as indexed form fields,
+        // not a JSON array — JSON format silently fails or errors.
+        const params = new URLSearchParams();
+        params.append('message', caption);
+        params.append('access_token', token);
+        for (let i = 0; i < mediaFbIds.length; i++) {
+            params.append(`attached_media[${i}]`, JSON.stringify({ media_fbid: mediaFbIds[i] }));
+        }
         const postRes = await fetch(`${GRAPH_API_BASE}/${pageId}/feed`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: caption,
-                attached_media: attachedMedia,
-                access_token: token,
-            }),
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString(),
         });
         const postData = await postRes.json();
 

@@ -407,7 +407,7 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
     };
 
     const handleCreate = async () => {
-        if (!caption || platforms.length === 0) return;
+        if ((!caption && mediaUrls.length === 0) || platforms.length === 0) return;
 
         // Schedule validation
         if ((scheduleDate && !scheduleTime) || (!scheduleDate && scheduleTime)) {
@@ -1272,12 +1272,12 @@ function CreatePostForm({ onPostCreated, editingPost, onCancelEdit }: {
                     </button>
                     <button
                         onClick={handleCreate}
-                        disabled={!caption || platforms.length === 0 || submitting || uploading}
+                        disabled={(!caption && mediaUrls.length === 0) || platforms.length === 0 || submitting || uploading}
                         style={{
                             padding: '12px 28px', borderRadius: '10px', border: 'none', cursor: 'pointer',
                             fontSize: '0.9375rem', fontWeight: 600,
-                            background: (!caption || platforms.length === 0 || uploading) ? 'rgba(255,255,255,0.05)' : 'var(--accent)',
-                            color: (!caption || platforms.length === 0 || uploading) ? 'var(--text-muted)' : '#000',
+                            background: ((!caption && mediaUrls.length === 0) || platforms.length === 0 || uploading) ? 'rgba(255,255,255,0.05)' : 'var(--accent)',
+                            color: ((!caption && mediaUrls.length === 0) || platforms.length === 0 || uploading) ? 'var(--text-muted)' : '#000',
                             display: 'flex', alignItems: 'center', gap: '8px',
                             opacity: submitting ? 0.7 : 1, transition: 'all 0.2s',
                         }}
