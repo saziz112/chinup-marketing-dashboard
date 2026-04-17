@@ -706,7 +706,10 @@ export async function getConversationsIntelligence(
         mbEmailMap = matchMaps.emailMap;
         mbPhoneMap = matchMaps.phoneMap;
         mbNameMap = matchMaps.nameMap;
-        // Build last sale date per client
+        // Build last activity date per client (used by findMindbodyMatch → isActive).
+        // "Last activity" = MAX(last sale, last completed appointment). This captures
+        // package redemptions, complimentary visits, and cross-location visits that
+        // didn't generate a new sale row.
         mbSalesByClient = new Map();
         for (const sale of mbData.sales) {
             const existing = mbSalesByClient.get(sale.ClientId);
@@ -714,6 +717,29 @@ export async function getConversationsIntelligence(
             if (!existing || saleDate > existing) {
                 mbSalesByClient.set(sale.ClientId, saleDate);
             }
+        }
+
+        // Enrich with completed appointments from Postgres (if sync data present).
+        try {
+            const { hasSyncData } = await import('./mindbody-sync');
+            if (await hasSyncData()) {
+                const { sql: pgSql } = await import('@vercel/postgres');
+                const apptResult = await pgSql`
+                    SELECT client_id, MAX(start_date) AS last_activity
+                    FROM mb_appointments_history
+                    WHERE status IN ('Completed', 'Arrived')
+                    GROUP BY client_id
+                `;
+                for (const row of apptResult.rows) {
+                    const apptDate = row.last_activity as string;
+                    const existing = mbSalesByClient.get(row.client_id);
+                    if (!existing || apptDate > existing) {
+                        mbSalesByClient.set(row.client_id, apptDate);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('[ghl-conversations] Appointment-based activity enrichment skipped:', err);
         }
     } catch (err) {
         console.warn('[ghl-conversations] MindBody cross-reference unavailable:', err);
@@ -1381,7 +1407,9 @@ export async function getLapsedPatients(
     locationFilter?: LocationKey,
     treatmentFilter?: string,
 ): Promise<LapsedPatient[]> {
-    const cacheKey = `lapsed_${minDaysSinceVisit}_${locationFilter || 'all'}_${treatmentFilter || 'any'}`;
+    // v2 cache key: activity definition changed to include completed appointments
+    // (package redemptions, cross-location visits) — force fresh results post-deploy.
+    const cacheKey = `lapsed_v2_${minDaysSinceVisit}_${locationFilter || 'all'}_${treatmentFilter || 'any'}`;
 
     // Tier 1: in-memory cache
     const cached = lapsedCache.get(cacheKey);

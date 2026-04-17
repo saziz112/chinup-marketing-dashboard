@@ -425,23 +425,54 @@ export interface LapsedPatientDB {
 
 /**
  * Query lapsed patients from Postgres (unlimited lookback, zero API calls).
- * Joins sales history with appointment history for treatment type detection.
+ *
+ * "Last visit" is MAX over sales AND completed/arrived appointments, so that
+ * package redemptions, complimentary visits, and account-credit visits — none
+ * of which generate a new sale row — correctly suppress the lapse flag. This
+ * also covers cross-location visits (MindBody is one site; any location's
+ * activity counts), which was the original motivation for the fix.
+ *
+ * Anyone with a future booking (status Booked/Confirmed, start_date > NOW())
+ * is excluded — they're scheduled, not lapsed.
+ *
+ * Revenue is still computed from sales only; appointments don't add revenue.
  */
 export async function getLapsedPatientsFromDB(
     minDaysSinceVisit: number = 60,
     treatmentFilter?: string,
 ): Promise<LapsedPatientDB[]> {
-    // Get all clients with their revenue stats from the sales history
+    // Unified activity view (sales + completed appointments) + revenue from sales +
+    // exclude anyone with a future-booked appointment (they're scheduled, not lapsed).
     const salesResult = await sql`
+        WITH client_activity AS (
+            SELECT client_id, sale_date AS activity_date FROM mb_sales_history
+            UNION ALL
+            SELECT client_id, start_date AS activity_date
+            FROM mb_appointments_history
+            WHERE status IN ('Completed', 'Arrived')
+        ),
+        revenue AS (
+            SELECT client_id, SUM(total_amount) AS total_revenue
+            FROM mb_sales_history
+            GROUP BY client_id
+        ),
+        future_booked AS (
+            SELECT DISTINCT client_id
+            FROM mb_appointments_history
+            WHERE status IN ('Booked', 'Confirmed')
+              AND start_date > NOW()
+        )
         SELECT
-            s.client_id,
-            SUM(s.total_amount) as total_revenue,
-            MAX(s.sale_date) as last_sale_date,
-            EXTRACT(DAY FROM NOW() - MAX(s.sale_date))::INTEGER as days_since
-        FROM mb_sales_history s
-        GROUP BY s.client_id
-        HAVING EXTRACT(DAY FROM NOW() - MAX(s.sale_date))::INTEGER >= ${minDaysSinceVisit}
-        ORDER BY SUM(s.total_amount) DESC
+            a.client_id,
+            COALESCE(r.total_revenue, 0) AS total_revenue,
+            MAX(a.activity_date) AS last_sale_date,
+            EXTRACT(DAY FROM NOW() - MAX(a.activity_date))::INTEGER AS days_since
+        FROM client_activity a
+        LEFT JOIN revenue r ON r.client_id = a.client_id
+        WHERE a.client_id NOT IN (SELECT client_id FROM future_booked)
+        GROUP BY a.client_id, r.total_revenue
+        HAVING EXTRACT(DAY FROM NOW() - MAX(a.activity_date))::INTEGER >= ${minDaysSinceVisit}
+        ORDER BY COALESCE(r.total_revenue, 0) DESC
     `;
 
     if (salesResult.rows.length === 0) return [];
