@@ -51,53 +51,81 @@ export interface PublishResult {
     platform: 'facebook' | 'instagram';
 }
 
-// ─── Instagram Image Auto-Resize ────────────────────────────────────────────
+// ─── Media Pre-flight Validation ────────────────────────────────────────────
 
-async function ensureInstagramAspectRatio(imageUrl: string): Promise<string> {
+/**
+ * Quick pre-flight HEAD check. Returns { ok, contentType } so callers can fail
+ * fast with a clear error instead of sending a dead URL to Meta and getting
+ * back an opaque "Invalid parameter" / "Only photo or video accepted" error.
+ */
+async function preflightMedia(url: string): Promise<{ ok: true; contentType: string } | { ok: false; error: string }> {
+    try {
+        const res = await fetch(url, { method: 'HEAD' });
+        if (!res.ok) {
+            return { ok: false, error: `Media URL returned ${res.status} — it may have expired. Re-upload the file.` };
+        }
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        if (!contentType) return { ok: true, contentType: '' };
+
+        const okPrefix = contentType.startsWith('image/') || contentType.startsWith('video/');
+        if (!okPrefix) {
+            return { ok: false, error: `Media URL returned content-type "${contentType}" — expected image/* or video/*.` };
+        }
+        return { ok: true, contentType };
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        return { ok: false, error: `Could not reach media URL (${msg}). Re-upload the file.` };
+    }
+}
+
+/**
+ * Fetch + transform an image for Instagram. Transcodes non-JPEG/PNG (e.g. WebP,
+ * which IG Stories rejects) and crops if aspect ratio is outside 4:5 – 1.91:1.
+ * Returns the original URL if no transform needed, otherwise uploads to blob
+ * and returns the new URL.
+ */
+async function prepareImageForInstagram(imageUrl: string): Promise<string> {
     try {
         const res = await fetch(imageUrl);
         if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
         const buffer = Buffer.from(await res.arrayBuffer());
 
         const metadata = await sharp(buffer).metadata();
-        const { width, height } = metadata;
+        const { width, height, format } = metadata;
         if (!width || !height) return imageUrl;
 
         const ratio = width / height;
-        console.log(`[IG Resize] Image ${width}x${height}, ratio ${ratio.toFixed(3)} (valid: ${IG_MIN_RATIO}-${IG_MAX_RATIO})`);
+        const isJpegOrPng = format === 'jpeg' || format === 'png';
+        const ratioOk = ratio >= IG_MIN_RATIO && ratio <= IG_MAX_RATIO;
 
-        if (ratio >= IG_MIN_RATIO && ratio <= IG_MAX_RATIO) return imageUrl;
+        console.log(`[IG Prepare] ${format} ${width}x${height}, ratio ${ratio.toFixed(3)}, needsTranscode=${!isJpegOrPng}, ratioOk=${ratioOk}`);
 
-        let cropWidth = width;
-        let cropHeight = height;
+        if (isJpegOrPng && ratioOk) return imageUrl;
 
-        if (ratio > IG_MAX_RATIO) {
-            cropWidth = Math.round(height * IG_MAX_RATIO);
-        } else {
-            cropHeight = Math.round(width / IG_MIN_RATIO);
+        let pipeline = sharp(buffer);
+        if (!ratioOk) {
+            let cropWidth = width;
+            let cropHeight = height;
+            if (ratio > IG_MAX_RATIO) cropWidth = Math.round(height * IG_MAX_RATIO);
+            else cropHeight = Math.round(width / IG_MIN_RATIO);
+            const left = Math.round((width - cropWidth) / 2);
+            const top = Math.round((height - cropHeight) / 2);
+            pipeline = pipeline.extract({ left, top, width: cropWidth, height: cropHeight });
         }
+        const processed = await pipeline.jpeg({ quality: 92 }).toBuffer();
 
-        const left = Math.round((width - cropWidth) / 2);
-        const top = Math.round((height - cropHeight) / 2);
-
-        console.log(`[IG Resize] Cropping to ${cropWidth}x${cropHeight} (from ${width}x${height})`);
-
-        const cropped = await sharp(buffer)
-            .extract({ left, top, width: cropWidth, height: cropHeight })
-            .jpeg({ quality: 92 })
-            .toBuffer();
-
-        const filename = `publish/ig_cropped_${Date.now()}.jpg`;
-        const blob = await put(filename, cropped, {
+        const filename = `publish/ig_prepared_${Date.now()}.jpg`;
+        const blob = await put(filename, processed, {
             access: 'public',
             addRandomSuffix: false,
             contentType: 'image/jpeg',
         });
 
-        console.log(`[IG Resize] Cropped image uploaded: ${blob.url}`);
+        console.log(`[IG Prepare] Transformed → ${blob.url}`);
         return blob.url;
-    } catch (err: any) {
-        console.error('[IG Resize] Error:', err.message);
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        console.error('[IG Prepare] Error:', msg);
         return imageUrl;
     }
 }
@@ -276,6 +304,11 @@ export async function publishFacebookStory(
     const token = getEnv('META_PAGE_ACCESS_TOKEN');
     const isVideo = mediaType === 'video' || isVideoUrl(mediaUrl);
 
+    const preflight = await preflightMedia(mediaUrl);
+    if (!preflight.ok) {
+        return { success: false, error: preflight.error, platform: 'facebook' };
+    }
+
     try {
         if (isVideo) {
             // Video Story: 3-step
@@ -366,10 +399,15 @@ export async function publishToInstagram(
 
     const isVideo = mediaType === 'video' || isVideoUrl(mediaUrl);
 
+    const preflight = await preflightMedia(mediaUrl);
+    if (!preflight.ok) {
+        return { success: false, error: preflight.error, platform: 'instagram' };
+    }
+
     try {
         let finalMediaUrl = mediaUrl;
         if (!isVideo) {
-            finalMediaUrl = await ensureInstagramAspectRatio(mediaUrl);
+            finalMediaUrl = await prepareImageForInstagram(mediaUrl);
         }
 
         const containerBody: Record<string, string> = { caption, access_token: token };
@@ -411,9 +449,9 @@ export async function publishToInstagram(
     }
 }
 
-/** Instagram Story — photo or video (media_type=STORIES) */
+/** Instagram Story — photo or video (media_type=STORIES). Caption is not displayed on IG Stories. */
 export async function publishInstagramStory(
-    caption: string,
+    _caption: string,
     mediaUrl: string,
     mediaType?: 'photo' | 'video'
 ): Promise<PublishResult> {
@@ -429,12 +467,22 @@ export async function publishInstagramStory(
 
     const isVideo = mediaType === 'video' || isVideoUrl(mediaUrl);
 
+    // Pre-flight: confirm URL is reachable and is the right MIME class
+    const preflight = await preflightMedia(mediaUrl);
+    if (!preflight.ok) {
+        return { success: false, error: preflight.error, platform: 'instagram' };
+    }
+
     try {
+        // IG Stories reject WebP and other non-JPEG/PNG formats — transcode if needed
+        let finalMediaUrl = mediaUrl;
+        if (!isVideo) finalMediaUrl = await prepareImageForInstagram(mediaUrl);
+
         const containerBody: Record<string, string> = { media_type: 'STORIES', access_token: token };
         if (isVideo) {
-            containerBody.video_url = mediaUrl;
+            containerBody.video_url = finalMediaUrl;
         } else {
-            containerBody.image_url = mediaUrl;
+            containerBody.image_url = finalMediaUrl;
         }
 
         console.log(`[Meta Publish IG Story] Creating ${isVideo ? 'video' : 'photo'} story container`);
@@ -492,7 +540,7 @@ export async function publishInstagramCarousel(
         // Step 1: Create child containers for each image
         const childIds: string[] = [];
         for (const url of imageUrls) {
-            const resizedUrl = await ensureInstagramAspectRatio(url);
+            const resizedUrl = await prepareImageForInstagram(url);
             const childRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -621,6 +669,50 @@ export async function publishFacebookMultiPhoto(
 // ═══════════════════════════════════════════════════════════════════════════
 // MULTI-PLATFORM PUBLISH
 // ═══════════════════════════════════════════════════════════════════════════
+
+/** True if an error message matches Meta's generic transient error pattern. */
+function isTransientMetaError(error: string | undefined): boolean {
+    if (!error) return false;
+    const lower = error.toLowerCase();
+    return lower.includes('unexpected error has occurred') && lower.includes('please retry');
+}
+
+/**
+ * Wrapper around publishToMultiplePlatforms that auto-retries ONCE for any
+ * platform that returned a transient Meta error. Covers the bulk of historical
+ * failures on IG carousels where Meta returns "unexpected error, please retry".
+ */
+export async function publishWithTransientRetry(
+    platforms: string[],
+    caption: string,
+    mediaUrls?: string | string[],
+    mediaType?: 'photo' | 'video',
+    postType: PostType = 'feed',
+    gbpLocations?: string[],
+): Promise<PublishResult[]> {
+    const results = await publishToMultiplePlatforms(platforms, caption, mediaUrls, mediaType, postType, gbpLocations);
+
+    const transientIndices: number[] = [];
+    for (let i = 0; i < results.length; i++) {
+        if (!results[i].success && isTransientMetaError(results[i].error)) {
+            transientIndices.push(i);
+        }
+    }
+    if (transientIndices.length === 0) return results;
+
+    const retryPlatforms = transientIndices.map(i => platforms[i]);
+    console.log(`[Publish Retry] Auto-retrying ${retryPlatforms.length} transient Meta failure(s): ${retryPlatforms.join(', ')}`);
+
+    await new Promise(r => setTimeout(r, 3000));
+
+    const retryResults = await publishToMultiplePlatforms(retryPlatforms, caption, mediaUrls, mediaType, postType, gbpLocations);
+
+    const merged = [...results];
+    for (let i = 0; i < transientIndices.length; i++) {
+        merged[transientIndices[i]] = retryResults[i];
+    }
+    return merged;
+}
 
 export async function publishToMultiplePlatforms(
     platforms: string[],

@@ -4,10 +4,20 @@ import { useState, useMemo } from 'react';
 import {
     Clock, LayoutTemplate, ChevronLeft, ChevronRight, Plus,
     Edit3, Archive, User, MapPin, Loader2, Zap, CheckCircle, Target,
-    Instagram, Facebook, Youtube,
+    Instagram, Facebook, Youtube, RefreshCw, AlertCircle,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
-import { PostRecord } from '@/lib/content-publisher';
+import { PostRecord, categorizeError } from '@/lib/content-publisher';
+
+const bucketColor: Record<string, string> = {
+    transient_meta: '#eab308',
+    token_expired: '#ef4444',
+    media_invalid: '#f97316',
+    ratio_invalid: '#f97316',
+    config_missing: '#8b5cf6',
+    rate_limited: '#eab308',
+    unknown: '#94a3b8',
+};
 import { PLATFORM_COLORS } from '@/lib/constants';
 import { USERS } from '@/lib/config';
 
@@ -314,12 +324,43 @@ export function QueueList({ posts, onUpdate, onEdit }: { posts: PostRecord[], on
 
 // ─── History List (Rich Cards + Archive) ────────────────────────────────────
 
-export function HistoryList({ posts, showArchived, onToggleArchived }: {
+export function HistoryList({ posts, showArchived, onToggleArchived, onUpdate }: {
     posts: PostRecord[];
     showArchived: boolean;
     onToggleArchived: () => void;
+    onUpdate?: () => void;
 }) {
     const [statusFilter, setStatusFilter] = useState<string>('ALL');
+    const [retrying, setRetrying] = useState<Record<string, boolean>>({});
+    const [retryFeedback, setRetryFeedback] = useState<Record<string, { type: 'success' | 'error'; message: string }>>({});
+
+    const handleRetry = async (postId: string) => {
+        setRetrying(prev => ({ ...prev, [postId]: true }));
+        setRetryFeedback(prev => { const next = { ...prev }; delete next[postId]; return next; });
+        try {
+            const res = await fetch('/api/content/publish/retry', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: postId }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                setRetryFeedback(prev => ({ ...prev, [postId]: { type: 'error', message: data.error || 'Retry failed' } }));
+            } else if (data.status === 'PUBLISHED') {
+                setRetryFeedback(prev => ({ ...prev, [postId]: { type: 'success', message: 'Retry succeeded on all platforms!' } }));
+            } else if (data.status === 'PARTIAL') {
+                setRetryFeedback(prev => ({ ...prev, [postId]: { type: 'success', message: 'Retry succeeded on some platforms.' } }));
+            } else {
+                setRetryFeedback(prev => ({ ...prev, [postId]: { type: 'error', message: 'Retry failed again — see details.' } }));
+            }
+            if (onUpdate) onUpdate();
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Network error';
+            setRetryFeedback(prev => ({ ...prev, [postId]: { type: 'error', message: msg } }));
+        } finally {
+            setRetrying(prev => ({ ...prev, [postId]: false }));
+        }
+    };
 
     const statusStyles: Record<string, { bg: string; color: string; label: string }> = {
         PUBLISHED: { bg: 'rgba(34,197,94,0.1)', color: '#22c55e', label: 'Live' },
@@ -467,17 +508,74 @@ export function HistoryList({ posts, showArchived, onToggleArchived }: {
                                         )}
                                     </div>
 
-                                    {/* Inline errors */}
+                                    {/* Inline errors — bucketed */}
                                     {hasErrors && (
-                                        <div style={{ marginTop: '8px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.12)' }}>
-                                            {Object.entries(errors).map(([platform, error]) => (
-                                                <p key={platform} style={{ margin: '2px 0', fontSize: '0.75rem', color: '#ef4444' }}>
-                                                    {platform}: {error}
-                                                </p>
-                                            ))}
+                                        <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                            {Object.entries(errors).map(([platform, error]) => {
+                                                const info = categorizeError(error as string);
+                                                const color = bucketColor[info.bucket];
+                                                return (
+                                                    <div key={platform} style={{
+                                                        padding: '10px 12px', borderRadius: '8px',
+                                                        background: `${color}10`, border: `1px solid ${color}30`,
+                                                    }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                                            <AlertCircle size={12} style={{ color, flexShrink: 0 }} />
+                                                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color, textTransform: 'capitalize' }}>
+                                                                {platform} · {info.label}
+                                                            </span>
+                                                            {info.retryable && (
+                                                                <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                                                    · retryable
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p style={{ margin: '0 0 2px', fontSize: '0.75rem', color: '#ddd', lineHeight: 1.4 }}>
+                                                            {info.suggestion}
+                                                        </p>
+                                                        <p style={{ margin: 0, fontSize: '0.6875rem', color: 'var(--text-muted)', fontFamily: 'monospace', lineHeight: 1.4 }}>
+                                                            {(error as string).substring(0, 200)}
+                                                            {(error as string).length > 200 ? '…' : ''}
+                                                        </p>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+
+                                    {/* Retry feedback */}
+                                    {retryFeedback[post.id] && (
+                                        <div style={{
+                                            marginTop: '8px', padding: '8px 12px', borderRadius: '8px',
+                                            background: retryFeedback[post.id].type === 'success' ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+                                            border: `1px solid ${retryFeedback[post.id].type === 'success' ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                                            fontSize: '0.75rem',
+                                            color: retryFeedback[post.id].type === 'success' ? '#22c55e' : '#ef4444',
+                                        }}>
+                                            {retryFeedback[post.id].message}
                                         </div>
                                     )}
                                 </div>
+
+                                {/* Retry button for FAILED/PARTIAL posts */}
+                                {(post.status === 'FAILED' || post.status === 'PARTIAL') && !isArchived && (
+                                    <button
+                                        onClick={() => handleRetry(post.id)}
+                                        disabled={retrying[post.id]}
+                                        style={{
+                                            background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                            cursor: retrying[post.id] ? 'wait' : 'pointer', color: '#eab308',
+                                            fontSize: '0.75rem', fontWeight: 600, padding: '6px 12px', borderRadius: '6px',
+                                            display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, alignSelf: 'flex-start',
+                                            opacity: retrying[post.id] ? 0.6 : 1,
+                                        }}
+                                    >
+                                        {retrying[post.id]
+                                            ? <Loader2 size={12} style={{ animation: 'spin 0.8s linear infinite' }} />
+                                            : <RefreshCw size={12} />}
+                                        {retrying[post.id] ? 'Retrying…' : 'Retry'}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     );

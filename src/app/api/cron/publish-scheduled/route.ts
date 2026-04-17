@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { publishToMultiplePlatforms } from '@/lib/integrations/meta-publisher';
+import { publishWithTransientRetry } from '@/lib/integrations/meta-publisher';
 import { archiveOldPosts } from '@/lib/content-publisher';
 
 export async function GET(req: NextRequest) {
@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
 
                 // Publish to all platforms — pass full mediaUrls array for carousel support
                 const postType = row.post_type || 'feed';
-                const results = await publishToMultiplePlatforms(platforms, caption, mediaUrls, undefined, postType, gbpLocations);
+                const results = await publishWithTransientRetry(platforms, caption, mediaUrls, undefined, postType, gbpLocations);
 
                 const allSucceeded = results.every(r => r.success);
                 const someSucceeded = results.some(r => r.success);

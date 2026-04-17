@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { publishToMultiplePlatforms } from '@/lib/integrations/meta-publisher';
+import { publishWithTransientRetry } from '@/lib/integrations/meta-publisher';
 
 export const maxDuration = 60;
 
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
             try {
                 await sql`UPDATE content_posts SET status = 'PUBLISHING' WHERE id = ${row.id}`;
 
-                const results = await publishToMultiplePlatforms(
+                const results = await publishWithTransientRetry(
                     platforms, caption, mediaUrls, undefined, postType, gbpLocations
                 );
 

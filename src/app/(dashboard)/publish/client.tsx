@@ -134,6 +134,7 @@ export default function PublishDashboardClient() {
                         posts={history}
                         showArchived={showArchived}
                         onToggleArchived={() => setShowArchived(v => !v)}
+                        onUpdate={fetchData}
                     />
                 )}
                 {activeTab === 'goals' && <GoalsScorecard goals={goals} />}

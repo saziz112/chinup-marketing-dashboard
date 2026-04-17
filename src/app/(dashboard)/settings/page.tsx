@@ -109,7 +109,7 @@ export default function SettingsPage() {
             });
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.error || 'Failed to add user');
-            showFlash(`User ${addEmail} added. Default password: chinup2026`, 'success');
+            showFlash(`User ${addEmail} added. They will receive a password reset email.`, 'success');
             setAddEmail(''); setAddStaffId(''); setAddRole('marketing_manager'); setShowAddUser(false);
             // Refresh
             const r2 = await fetch('/api/admin/users');

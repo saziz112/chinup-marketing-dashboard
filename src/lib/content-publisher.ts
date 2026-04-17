@@ -6,13 +6,91 @@
  * Calls real Meta Graph API for Facebook and Instagram publishing.
  */
 
-import { publishToMultiplePlatforms, PublishResult, PostType } from '@/lib/integrations/meta-publisher';
+import { publishWithTransientRetry, PublishResult, PostType } from '@/lib/integrations/meta-publisher';
 import { sql } from '@vercel/postgres';
 
 export type MediaType = 'photo' | 'video';
 
 export type Platform = 'instagram' | 'facebook' | 'youtube' | 'google-business';
 export type PostStatus = 'DRAFT' | 'SCHEDULED' | 'PUBLISHING' | 'PUBLISHED' | 'PARTIAL' | 'FAILED';
+
+// ─── Failure Categorization ─────────────────────────────────────────────────
+
+export type FailureBucket =
+    | 'transient_meta'
+    | 'token_expired'
+    | 'media_invalid'
+    | 'ratio_invalid'
+    | 'config_missing'
+    | 'rate_limited'
+    | 'unknown';
+
+export interface FailureInfo {
+    bucket: FailureBucket;
+    label: string;
+    suggestion: string;
+    retryable: boolean;
+}
+
+/** Map a raw platform error message to a human-friendly failure bucket. */
+export function categorizeError(raw: string): FailureInfo {
+    const msg = (raw || '').toLowerCase();
+
+    if (msg.includes('unexpected error has occurred') || msg.includes('please retry')) {
+        return {
+            bucket: 'transient_meta',
+            label: 'Meta hiccup',
+            suggestion: 'Temporary Meta server error. Retry — usually succeeds on the second attempt.',
+            retryable: true,
+        };
+    }
+    if (msg.includes('access token') || msg.includes('session has been invalidated') || msg.includes('expired')) {
+        return {
+            bucket: 'token_expired',
+            label: 'API token expired',
+            suggestion: 'Regenerate META_PAGE_ACCESS_TOKEN in Vercel env vars. Retry will not help until token is refreshed.',
+            retryable: false,
+        };
+    }
+    if (msg.includes('aspect ratio')) {
+        return {
+            bucket: 'ratio_invalid',
+            label: 'Aspect ratio rejected',
+            suggestion: 'Instagram requires 4:5 to 1.91:1. Re-crop the image manually and re-upload.',
+            retryable: false,
+        };
+    }
+    if (msg.includes('not configured') || msg.includes('invalid accountid') || msg.includes('invalid parameter')) {
+        return {
+            bucket: 'config_missing',
+            label: 'Platform not configured',
+            suggestion: 'API credentials or account IDs missing/invalid. Check env vars for this platform.',
+            retryable: false,
+        };
+    }
+    if (msg.includes('only photo or video') || msg.includes('media type') || msg.includes('media processing failed')) {
+        return {
+            bucket: 'media_invalid',
+            label: 'Media rejected',
+            suggestion: 'Media URL expired or file type not supported. Re-upload the image/video.',
+            retryable: false,
+        };
+    }
+    if (msg.includes('rate limit') || msg.includes('too many requests')) {
+        return {
+            bucket: 'rate_limited',
+            label: 'Rate limited',
+            suggestion: 'Too many API calls. Wait a few minutes and retry.',
+            retryable: true,
+        };
+    }
+    return {
+        bucket: 'unknown',
+        label: 'Unknown error',
+        suggestion: 'Unclassified error. See raw message below.',
+        retryable: true,
+    };
+}
 
 export interface PublishRequest {
     platforms: Platform[];
@@ -121,7 +199,7 @@ export async function createPost(req: PublishRequest): Promise<PostRecord> {
 
     // If not scheduled, publish immediately
     if (!isScheduled) {
-        publishResults = await publishToMultiplePlatforms(req.platforms, req.caption, req.mediaUrls || [], req.mediaType, req.postType || 'feed', req.gbpLocations);
+        publishResults = await publishWithTransientRetry(req.platforms, req.caption, req.mediaUrls || [], req.mediaType, req.postType || 'feed', req.gbpLocations);
 
         const allSucceeded = publishResults.every(r => r.success);
         const someSucceeded = publishResults.some(r => r.success);
@@ -301,6 +379,90 @@ export async function updatePost(id: string, fields: {
 
     if (result.rows.length === 0) return null;
     return rowToPost(result.rows[0]);
+}
+
+/**
+ * Retry publishing for failed platforms on a FAILED or PARTIAL post.
+ * Keeps successful platforms untouched, re-runs the publish only for failed ones,
+ * merges results, and recomputes status.
+ */
+export async function retryFailedPlatforms(id: string): Promise<PostRecord | null> {
+    await ensurePostsTable();
+
+    const result = await sql`SELECT * FROM content_posts WHERE id = ${id}`;
+    if (result.rows.length === 0) return null;
+    const post = rowToPost(result.rows[0]);
+
+    if (post.status !== 'FAILED' && post.status !== 'PARTIAL') return null;
+
+    const priorResults = post.publishResults || [];
+
+    // Use index-based matching: publishWithTransientRetry preserves platform order,
+    // which is critical because GBP results return platform: 'facebook' (type constraint),
+    // making label-based disambiguation unreliable for FB+GBP posts.
+    const retryIndices: number[] = [];
+    const retryPlatforms: Platform[] = [];
+    for (let i = 0; i < post.platforms.length; i++) {
+        const r = priorResults[i];
+        if (!r || !r.success) {
+            retryIndices.push(i);
+            retryPlatforms.push(post.platforms[i]);
+        }
+    }
+
+    if (retryPlatforms.length === 0) return post;
+
+    const metaGbp = (post.metadata as { gbpLocations?: string[] } | undefined)?.gbpLocations;
+
+    const retryResults = await publishWithTransientRetry(
+        retryPlatforms,
+        post.caption,
+        post.mediaUrls || [],
+        post.mediaType,
+        (post.postType as PostType) || 'feed',
+        metaGbp,
+    );
+
+    // Rebuild full results array in original platform order
+    const merged: PublishResult[] = [];
+    const retrySet = new Set(retryIndices);
+    let nextRetry = 0;
+    for (let i = 0; i < post.platforms.length; i++) {
+        if (retrySet.has(i)) {
+            merged.push(retryResults[nextRetry++]);
+        } else {
+            merged.push(priorResults[i]);
+        }
+    }
+
+    const allSucceeded = merged.every(r => r.success) && merged.length === post.platforms.length;
+    const someSucceeded = merged.some(r => r.success);
+
+    let newStatus: PostStatus;
+    if (allSucceeded) newStatus = 'PUBLISHED';
+    else if (someSucceeded) newStatus = 'PARTIAL';
+    else newStatus = 'FAILED';
+
+    const errors: Record<string, string> = {};
+    for (const r of merged) {
+        if (!r.success && r.error) errors[r.platform] = r.error;
+    }
+
+    const publishedAt = newStatus === 'PUBLISHED' || newStatus === 'PARTIAL'
+        ? (post.publishedAt || new Date().toISOString())
+        : null;
+
+    const updated = await sql`
+        UPDATE content_posts
+        SET status = ${newStatus},
+            errors = ${JSON.stringify(errors)},
+            publish_results = ${JSON.stringify(merged)},
+            published_at = ${publishedAt}
+        WHERE id = ${id}
+        RETURNING *
+    `;
+
+    return updated.rows.length > 0 ? rowToPost(updated.rows[0]) : null;
 }
 
 export async function archiveOldPosts(daysOld = 7): Promise<number> {
