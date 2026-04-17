@@ -14,6 +14,7 @@ import {
     type Period, type PlatformTab, type IGData, type YTData, type ContentPost, type FBData,
     YouTubeTab, TikTokTab, ContentTab,
 } from '@/components/organic/OrganicHelpers';
+import MetaTokenBanner from '@/components/MetaTokenBanner';
 
 const PLATFORMS: PlatformTab[] = ['All Platforms', 'Instagram', 'Facebook', 'YouTube', 'TikTok', 'Content'];
 
@@ -581,6 +582,8 @@ export default function OrganicPage() {
                     ))}
                 </div>
             </div>
+
+            <MetaTokenBanner />
 
             <div className="sub-tabs">
                 {PLATFORMS.map(platform => (

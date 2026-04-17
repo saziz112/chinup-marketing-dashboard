@@ -10,6 +10,7 @@ import {
 import { format, parseISO, subDays } from 'date-fns';
 import { DateRangePicker } from '@/components/DateRangePicker';
 import { SkeletonKpiCard, SkeletonChart, SkeletonTable } from '@/components/Skeleton';
+import MetaTokenBanner from '@/components/MetaTokenBanner';
 import { fmt$, fmtNum, fmtPct } from '@/lib/format';
 import { gradeAllMetrics } from '@/lib/ads-benchmarks';
 import {
@@ -258,6 +259,8 @@ export default function AdsPage() {
                 </div>
                 <p className="subtitle">Campaign performance and ROI across ad platforms</p>
             </div>
+
+            <MetaTokenBanner />
 
             {/* Tab + Period Controls */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
