@@ -7,7 +7,8 @@ import {
     Instagram, Facebook, Youtube, RefreshCw, AlertCircle,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
-import { PostRecord, categorizeError } from '@/lib/content-publisher';
+import type { PostRecord } from '@/lib/content-publisher';
+import { categorizeError } from '@/lib/publish-errors';
 
 const bucketColor: Record<string, string> = {
     transient_meta: '#eab308',
