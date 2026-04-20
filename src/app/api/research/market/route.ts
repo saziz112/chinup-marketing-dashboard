@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 

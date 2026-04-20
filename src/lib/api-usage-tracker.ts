@@ -1,7 +1,7 @@
 // API Usage Tracker — in-memory + Postgres persistent tracking for monitoring
 // API call counts, cache efficiency, and quota consumption across all integrations.
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 
 type ApiName = 'mindbody' | 'meta' | 'metaAds' | 'youtube' | 'googleAds' | 'googleBusiness' | 'ghl' | 'yelp' | 'realself' | 'googleSearchConsole' | 'kieAi' | 'apify';
 

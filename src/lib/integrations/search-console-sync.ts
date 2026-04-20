@@ -4,7 +4,7 @@
  * Follows the same chunked backfill pattern as mindbody-sync.ts.
  */
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { subDays, format, addDays } from 'date-fns';
 import { google } from 'googleapis';
 import { isGscConfigured } from './search-console';

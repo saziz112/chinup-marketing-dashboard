@@ -1,6 +1,6 @@
 'use server';
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import bcrypt from 'bcryptjs';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';

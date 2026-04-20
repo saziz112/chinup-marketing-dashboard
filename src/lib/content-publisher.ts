@@ -7,7 +7,7 @@
  */
 
 import { publishWithTransientRetry, PublishResult, PostType } from '@/lib/integrations/meta-publisher';
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 
 export type MediaType = 'photo' | 'video';
 

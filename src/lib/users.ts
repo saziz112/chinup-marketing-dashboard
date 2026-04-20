@@ -3,7 +3,7 @@
  * Simplified for 2 users: Admin (Sam) + Marketing Manager (Sharia)
  */
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import bcrypt from 'bcryptjs';
 import { USERS } from '@/lib/config';
 

@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { createImageTask, getTaskStatus, isKieAiConfigured, type GenerateRequest } from '@/lib/integrations/kie-ai';
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { put } from '@vercel/blob';
 import { pgCacheGet } from '@/lib/pg-cache';
 import sharp from 'sharp';

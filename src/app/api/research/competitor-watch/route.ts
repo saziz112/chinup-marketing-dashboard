@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { getIGCompetitorMetrics, type IGCompetitorMetrics } from '@/lib/integrations/meta-organic';
 import type { LocationId } from '@/lib/integrations/google-business';
 import { SERVICE_KEYWORDS } from '../trends/route';

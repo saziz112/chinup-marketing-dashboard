@@ -6,7 +6,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 
 const PRICING: Record<string, number> = {
     '1024': 0.04,

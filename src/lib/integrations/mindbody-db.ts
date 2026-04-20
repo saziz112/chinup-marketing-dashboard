@@ -8,7 +8,7 @@
  * Tables populated by Phase 27 backfill + mindbody-sync.ts incrementalSync().
  */
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { normalizePhone } from './mindbody';
 
 // ---------------------------------------------------------------------------

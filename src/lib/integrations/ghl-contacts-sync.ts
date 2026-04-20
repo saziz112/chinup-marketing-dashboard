@@ -5,7 +5,7 @@
  * Uses v1 JWT tokens (GET /v1/contacts/?limit=100, paginated).
  */
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { getLocations, type LocationKey } from './gohighlevel';
 import { normalizePhone } from './mindbody';
 import type { PhoneMapEntry } from './ghl-conversations';

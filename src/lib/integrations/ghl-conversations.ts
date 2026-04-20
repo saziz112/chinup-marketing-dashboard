@@ -723,7 +723,7 @@ export async function getConversationsIntelligence(
         try {
             const { hasSyncData } = await import('./mindbody-sync');
             if (await hasSyncData()) {
-                const { sql: pgSql } = await import('@vercel/postgres');
+                const { sql: pgSql } = await import('@/lib/db/sql');
                 const apptResult = await pgSql`
                     SELECT client_id, MAX(start_date) AS last_activity
                     FROM mb_appointments_history

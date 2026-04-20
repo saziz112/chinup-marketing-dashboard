@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { type LocationKey, isGHLConfigured, getLocations } from '@/lib/integrations/gohighlevel';
 import {
     getConversationsIntelligence,
@@ -638,7 +638,7 @@ export async function GET(req: NextRequest) {
             // Get all MindBody client phones for cross-reference
             let mbPhones = new Set<string>();
             try {
-                const { sql: pgSql } = await import('@vercel/postgres');
+                const { sql: pgSql } = await import('@/lib/db/sql');
                 const mbResult = await pgSql`SELECT DISTINCT phone FROM mb_clients_cache WHERE phone IS NOT NULL AND phone != ''`;
                 mbPhones = new Set(mbResult.rows.map(r => r.phone));
             } catch {

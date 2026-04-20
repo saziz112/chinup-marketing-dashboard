@@ -7,7 +7,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 
 const PLATFORM_MAP: Record<string, string> = {
     'IG': 'instagram', 'Instagram': 'instagram',

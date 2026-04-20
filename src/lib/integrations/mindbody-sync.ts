@@ -4,7 +4,7 @@
  * Stores data in Vercel Postgres for unlimited lookback without API cost.
  */
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { getSales, getAppointments, getClients, normalizePhone } from './mindbody';
 import type { Sale, StaffAppointment, Client } from './mindbody';
 

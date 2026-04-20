@@ -3,7 +3,7 @@
  * Survives Vercel cold starts via Postgres fallback.
  */
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 
 /* ── In-Memory Tier ──────────────────────────────────────── */
 

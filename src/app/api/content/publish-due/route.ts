@@ -4,7 +4,7 @@
 // Auth: PUBLISH_SECRET bearer token (for n8n) or authenticated session (for browser).
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { publishWithTransientRetry } from '@/lib/integrations/meta-publisher';

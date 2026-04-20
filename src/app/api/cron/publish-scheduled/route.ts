@@ -5,7 +5,7 @@
 // Also archives old posts (>7 days) after publishing.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { publishWithTransientRetry } from '@/lib/integrations/meta-publisher';

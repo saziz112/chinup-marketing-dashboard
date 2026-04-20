@@ -3,7 +3,7 @@
  * Initializes all tables for the Marketing Dashboard.
  */
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 
 export async function initAllTables() {
     // Phase 1: tables with no FK dependencies (parallel)

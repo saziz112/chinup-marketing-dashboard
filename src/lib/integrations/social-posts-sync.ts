@@ -4,7 +4,7 @@
  * Follows the same chunked backfill pattern as mindbody-sync.ts.
  */
 
-import { sql } from '@vercel/postgres';
+import { sql } from '@/lib/db/sql';
 import { IGMedia, isMetaConfigured } from './meta-organic';
 
 const GRAPH_API_VERSION = 'v22.0';
