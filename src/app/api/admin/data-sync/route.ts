@@ -54,13 +54,14 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ treatments });
     }
 
-    // Return full sync status
-    const [mbStats, ghlStats, socialStats, gscStats] = await Promise.all([
-        getSyncStats(),
-        getGhlSyncStats(),
-        getSocialPostsStats().catch(() => ({ totalPosts: 0, lastSync: null, platforms: [] })),
-        getSearchConsoleStats().catch(() => ({ totalRows: 0, lastSync: null, dateRange: { earliest: null, latest: null } })),
-    ]);
+    // Return full sync status — serialized to fit within postgres.js pool (max:5).
+    // Parallel fan-out here runs 4×3-5 queries simultaneously, exceeding the pool
+    // and hanging against Supabase transaction pooler. Each function internally
+    // fans out ≤5 queries which fits in the pool.
+    const mbStats = await getSyncStats();
+    const ghlStats = await getGhlSyncStats();
+    const socialStats = await getSocialPostsStats().catch(() => ({ totalPosts: 0, lastSync: null, platforms: [] }));
+    const gscStats = await getSearchConsoleStats().catch(() => ({ totalRows: 0, lastSync: null, dateRange: { earliest: null, latest: null } }));
 
     return NextResponse.json({
         mindbody: {
