@@ -91,7 +91,7 @@ export interface MindbodyMatch {
     totalRevenue: number;
     lastSaleDate: string | null;
     daysSinceLastVisit: number | null;
-    isActive: boolean; // had a purchase within last 90 days
+    isActive: boolean; // had a sale or completed appointment within last 120 days
 }
 
 export interface EngagementGap {
@@ -735,6 +735,52 @@ export async function getConversationsIntelligence(
                     const existing = mbSalesByClient.get(row.client_id);
                     if (!existing || apptDate > existing) {
                         mbSalesByClient.set(row.client_id, apptDate);
+                    }
+                }
+
+                // Also enrich match maps with appointment-only clients.
+                // getClientMatchMaps only includes clients with SALES in the window,
+                // so package redemptions / complimentary visits / cross-location visits
+                // that never generate a sale row are invisible to findMindbodyMatch —
+                // causing isActive to stay undefined and the patient to stay in
+                // conversation-based campaign pools even after recent visits.
+                const apptOnlyResult = await pgSql`
+                    SELECT DISTINCT c.client_id, c.first_name, c.last_name, c.email, c.phone
+                    FROM mb_clients_cache c
+                    WHERE c.client_id IN (
+                        SELECT DISTINCT client_id FROM mb_appointments_history
+                        WHERE status IN ('Completed', 'Arrived')
+                          AND start_date > NOW() - INTERVAL '365 days'
+                    )
+                `;
+                for (const row of apptOnlyResult.rows) {
+                    const clientId = row.client_id as string;
+                    const firstName = (row.first_name || '') as string;
+                    const lastName = (row.last_name || '') as string;
+                    const email = (row.email || '') as string;
+                    const phone = (row.phone || '') as string;
+                    const entry = {
+                        client: {
+                            Id: clientId,
+                            FirstName: firstName,
+                            LastName: lastName,
+                            Email: email,
+                            MobilePhone: phone,
+                            HomePhone: '',
+                        } as Client,
+                        revenue: 0,
+                    };
+                    if (mbEmailMap && email) {
+                        const key = email.toLowerCase().trim();
+                        if (key && !mbEmailMap.has(key)) mbEmailMap.set(key, entry);
+                    }
+                    if (mbPhoneMap && phone) {
+                        const key = normalizePhone(phone);
+                        if (key.length === 10 && !mbPhoneMap.has(key)) mbPhoneMap.set(key, entry);
+                    }
+                    if (mbNameMap && firstName && lastName) {
+                        const key = `${firstName.toLowerCase().trim()} ${lastName.toLowerCase().trim()}`;
+                        if (!mbNameMap.has(key)) mbNameMap.set(key, entry);
                     }
                 }
             }
@@ -1395,7 +1441,7 @@ export interface LapsedPatient {
 }
 
 const lapsedCache = new Map<string, CacheEntry<LapsedPatient[]>>();
-const LAPSED_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const LAPSED_CACHE_TTL = 15 * 60 * 1000; // 15 min — short so cron-invalidated pgCache is consulted quickly
 
 /**
  * Find MindBody purchasing clients who haven't visited recently.
@@ -1459,9 +1505,9 @@ export async function getLapsedPatients(
             // Sort by revenue
             locationFiltered.sort((a, b) => b.totalRevenue - a.totalRevenue);
 
-            // Cache result
+            // Cache result — short TTL so MindBody visits reflect quickly in campaigns
             lapsedCache.set(cacheKey, { data: locationFiltered, timestamp: Date.now() });
-            await pgCacheSet(cacheKey, locationFiltered).catch(() => {});
+            await pgCacheSet(cacheKey, locationFiltered, { ttlHours: 2 }).catch(() => {});
             console.log(`[ghl-conversations] Found ${locationFiltered.length} lapsed patients from Postgres (${locationFiltered.filter(l => l.ghlContactId).length} matched to GHL)`);
             return locationFiltered;
         }
@@ -1542,9 +1588,9 @@ export async function getLapsedPatients(
     // Sort by revenue (highest value first)
     lapsed.sort((a, b) => b.totalRevenue - a.totalRevenue);
 
-    // Save to both caches
+    // Save to both caches — short TTL so MindBody visits reflect quickly in campaigns
     lapsedCache.set(cacheKey, { data: lapsed, timestamp: now });
-    await pgCacheSet(cacheKey, lapsed).catch(() => {});
+    await pgCacheSet(cacheKey, lapsed, { ttlHours: 2 }).catch(() => {});
     console.log(`[ghl-conversations] Found ${lapsed.length} lapsed patients (${lapsed.filter(l => l.ghlContactId).length} matched to GHL)`);
 
     return lapsed;
@@ -1814,9 +1860,9 @@ export async function getCancelledAppointments(
 
     withPhone.sort((a, b) => b.appointmentDate.localeCompare(a.appointmentDate));
 
-    // Save to both caches
+    // Save to both caches — short TTL so reschedules/completed visits invalidate quickly
     cancelledCache.set(cacheKey, { data: withPhone, timestamp: now });
-    await pgCacheSet(cacheKey, withPhone).catch(() => {});
+    await pgCacheSet(cacheKey, withPhone, { ttlHours: 2 }).catch(() => {});
     console.log(`[ghl-conversations] Found ${withPhone.length} cancelled/no-show appointments (${withPhone.filter(c => c.ghlContactId).length} matched to GHL)`);
 
     return withPhone;
@@ -1996,9 +2042,9 @@ export async function getConsultOnlyPatients(
 
     result.sort((a, b) => b.consultDate.localeCompare(a.consultDate));
 
-    // Save to both caches
+    // Save to both caches — short TTL so same-day sales/bookings invalidate quickly
     consultCache.set(cacheKey, { data: result, timestamp: now });
-    await pgCacheSet(cacheKey, result).catch(() => {});
+    await pgCacheSet(cacheKey, result, { ttlHours: 2 }).catch(() => {});
     console.log(`[ghl-conversations] Found ${result.length} consult-only patients (${result.filter(c => c.ghlContactId).length} matched to GHL)`);
 
     return result;

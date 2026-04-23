@@ -45,9 +45,15 @@ export async function pgCacheGet<T>(key: string): Promise<T | null> {
 
 /**
  * Set cache in both memory and Postgres.
- * @param ttlDays — Postgres TTL in days (default 3)
+ * Pass either { ttlHours } or { ttlDays }. If both omitted, defaults to 3 days.
  */
-export async function pgCacheSet(key: string, data: unknown, ttlDays = 3): Promise<void> {
+export async function pgCacheSet(
+    key: string,
+    data: unknown,
+    opts: { ttlHours?: number; ttlDays?: number } = {},
+): Promise<void> {
+    const ttlHours = opts.ttlHours ?? (opts.ttlDays ?? 3) * 24;
+
     // Tier 1: memory
     memCache.set(key, { data, expiresAt: Date.now() + MEM_TTL_MS });
 
@@ -55,7 +61,7 @@ export async function pgCacheSet(key: string, data: unknown, ttlDays = 3): Promi
     try {
         await sql`
             INSERT INTO sms_data_cache (cache_key, cache_data, expires_at)
-            VALUES (${key}, ${JSON.stringify(data)}::jsonb, NOW() + ${`${ttlDays} days`}::interval)
+            VALUES (${key}, ${JSON.stringify(data)}::jsonb, NOW() + ${`${ttlHours} hours`}::interval)
             ON CONFLICT (cache_key) DO UPDATE SET
                 cache_data = EXCLUDED.cache_data,
                 expires_at = EXCLUDED.expires_at,

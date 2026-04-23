@@ -635,12 +635,18 @@ export async function GET(req: NextRequest) {
         if (segment === 'never-booked') {
             const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
 
-            // Get all MindBody client phones for cross-reference
+            // Get all MindBody client phones for cross-reference.
+            // Normalize in JS (not just trusting the stored value) — older rows may
+            // predate the sync-side normalization, and any non-10-digit values must
+            // be discarded so they can't mask a legitimate GHL phone.
             let mbPhones = new Set<string>();
             try {
                 const { sql: pgSql } = await import('@/lib/db/sql');
                 const mbResult = await pgSql`SELECT DISTINCT phone FROM mb_clients_cache WHERE phone IS NOT NULL AND phone != ''`;
-                mbPhones = new Set(mbResult.rows.map(r => r.phone));
+                for (const row of mbResult.rows) {
+                    const p = normalizePhone(row.phone || '');
+                    if (p.length === 10) mbPhones.add(p);
+                }
             } catch {
                 // Fallback: use current API-based purchasing clients
                 try {
@@ -650,7 +656,7 @@ export async function GET(req: NextRequest) {
                     const { clients } = await getPurchasingClients(startDate, endDate);
                     for (const c of clients) {
                         const phone = normalizePhone(c.MobilePhone || c.HomePhone || '');
-                        if (phone.length >= 10) mbPhones.add(phone);
+                        if (phone.length === 10) mbPhones.add(phone);
                     }
                 } catch { /* empty set = no filtering */ }
             }

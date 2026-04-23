@@ -12,6 +12,7 @@ import { incrementalSocialSync } from '@/lib/integrations/social-posts-sync';
 import { incrementalSearchConsoleSync } from '@/lib/integrations/search-console-sync';
 import { incrementalSync as incrementalMbSync } from '@/lib/integrations/mindbody-sync';
 import { incrementalGhlSync } from '@/lib/integrations/ghl-contacts-sync';
+import { pgCacheInvalidatePrefix } from '@/lib/pg-cache';
 
 export const maxDuration = 60;
 
@@ -54,6 +55,14 @@ export async function GET(req: NextRequest) {
         ]);
 
         console.log(`[sync-research] Social: ${social.chunkLabel} | GSC: ${gsc.chunkLabel} | MB: ${mb.newSales} sales, ${mb.newAppts} appts, ${mb.newClients} clients | GHL: ${ghl.newContacts} new contacts`);
+
+        // Fresh MindBody/GHL data just landed — drop campaign-segment caches so the next
+        // request rebuilds from the updated tables (prevents targeting patients who just visited).
+        await Promise.all([
+            pgCacheInvalidatePrefix('lapsed_v2_').catch(() => {}),
+            pgCacheInvalidatePrefix('cancelled_').catch(() => {}),
+            pgCacheInvalidatePrefix('consult_').catch(() => {}),
+        ]);
 
         return NextResponse.json({
             social,

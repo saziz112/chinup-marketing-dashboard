@@ -223,7 +223,7 @@ ${captionTexts.join('\n\n')}`;
         basedOnPosts: imageBlocks.length,
     };
 
-    await pgCacheSet(CACHE_KEY, profile, CACHE_TTL_DAYS);
+    await pgCacheSet(CACHE_KEY, profile, { ttlDays: CACHE_TTL_DAYS });
     return profile;
 }
 

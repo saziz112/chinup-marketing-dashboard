@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
         // Cache each lifecycle segment separately for fast lookups
         for (const [stage, contacts] of Object.entries(contactLifecycles)) {
             if (contacts.length > 0) {
-                await pgCacheSet(`conversation_${stage}`, contacts, 3); // 3-day TTL
+                await pgCacheSet(`conversation_${stage}`, contacts, { ttlDays: 3 });
             }
         }
 
