@@ -1460,14 +1460,24 @@ export async function getLapsedPatients(
     // Tier 1: in-memory cache
     const cached = lapsedCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < LAPSED_CACHE_TTL) {
-        return cached.data;
+        if (!Array.isArray(cached.data)) {
+            console.error(`[ghl-conversations] lapsedCache[${cacheKey}] is not an array:`, typeof cached.data);
+            lapsedCache.delete(cacheKey);
+        } else {
+            return cached.data;
+        }
     }
 
     // Tier 2: Postgres cache
     const pgCached = await pgCacheGet<LapsedPatient[]>(cacheKey);
     if (pgCached) {
-        lapsedCache.set(cacheKey, { data: pgCached, timestamp: Date.now() });
-        return pgCached;
+        if (!Array.isArray(pgCached)) {
+            console.error(`[ghl-conversations] pgCached[${cacheKey}] is not an array:`, typeof pgCached, Object.prototype.toString.call(pgCached));
+            // Fall through to rebuild from DB — cache is poisoned
+        } else {
+            lapsedCache.set(cacheKey, { data: pgCached, timestamp: Date.now() });
+            return pgCached;
+        }
     }
 
     // Tier 3: If historical sync data exists in Postgres, use it (unlimited lookback, 0 API calls)

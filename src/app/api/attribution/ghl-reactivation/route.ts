@@ -435,6 +435,9 @@ export async function GET(req: NextRequest) {
         if (segment === 'lapsed-vip' || segment === 'lapsed-long') {
             const minDays = segment === 'lapsed-vip' ? 120 : 180;
             const lapsedPatients = await getLapsedPatients(minDays, locationParam || undefined, treatmentParam);
+            if (!Array.isArray(lapsedPatients)) {
+                throw new Error(`getLapsedPatients(${minDays}) returned ${typeof lapsedPatients} (${Object.prototype.toString.call(lapsedPatients)}), expected array`);
+            }
 
             let filtered = lapsedPatients;
             if (segment === 'lapsed-vip') {
@@ -504,6 +507,9 @@ export async function GET(req: NextRequest) {
         // ── Campaign 7: Win-Back VIPs ($500+, 365+ days) ──
         if (segment === 'lapsed-winback') {
             const lapsedPatients = await getLapsedPatients(365, locationParam || undefined, treatmentParam);
+            if (!Array.isArray(lapsedPatients)) {
+                throw new Error(`getLapsedPatients(365) returned ${typeof lapsedPatients} (${Object.prototype.toString.call(lapsedPatients)}), expected array`);
+            }
             let filtered = lapsedPatients.filter(p => p.totalRevenue >= 500);
 
             // Phone-level dedup
@@ -571,6 +577,9 @@ export async function GET(req: NextRequest) {
             }
 
             const lapsedPatients = await getLapsedPatients(90, locationParam || undefined, treatmentParam);
+            if (!Array.isArray(lapsedPatients)) {
+                throw new Error(`getLapsedPatients(90) returned ${typeof lapsedPatients} (${Object.prototype.toString.call(lapsedPatients)}), expected array`);
+            }
 
             // Phone-level dedup
             const seenPhones = new Set<string>();
@@ -711,9 +720,10 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: `Unknown segment: ${segment}`, contacts: [], totalEligible: 0 }, { status: 400 });
 
     } catch (error: unknown) {
-        console.error('[ghl-reactivation] Error:', error);
+        const stack = error instanceof Error ? error.stack : undefined;
+        console.error('[ghl-reactivation] Error for segment', req.nextUrl.searchParams.get('segment'), ':', error, stack);
         const message = error instanceof Error ? error.message : 'Failed to fetch eligible contacts';
-        return NextResponse.json({ error: message }, { status: 500 });
+        return NextResponse.json({ error: message, stack: process.env.NODE_ENV !== 'production' ? stack : undefined }, { status: 500 });
     }
 }
 
