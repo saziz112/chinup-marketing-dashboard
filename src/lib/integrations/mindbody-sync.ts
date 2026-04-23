@@ -443,6 +443,12 @@ export async function getLapsedPatientsFromDB(
 ): Promise<LapsedPatientDB[]> {
     // Unified activity view (sales + completed appointments) + revenue from sales +
     // exclude anyone with a future-booked appointment (they're scheduled, not lapsed).
+    //
+    // Identity merge: MindBody allows multiple client_ids per real person (name
+    // variations, re-registrations). A person can be "lapsed" under one client_id
+    // and "active" under a duplicate. `active_contacts` gathers phones/emails for
+    // anyone with activity within the threshold, and the `NOT EXISTS` check
+    // excludes any lapsed client who shares a phone OR email with them.
     const salesResult = await sql`
         WITH client_activity AS (
             SELECT client_id, sale_date AS activity_date FROM mb_sales_history
@@ -461,6 +467,17 @@ export async function getLapsedPatientsFromDB(
             FROM mb_appointments_history
             WHERE status IN ('Booked', 'Confirmed')
               AND start_date > NOW()
+        ),
+        active_contacts AS (
+            SELECT DISTINCT
+                NULLIF(LOWER(TRIM(c.email)), '') AS email,
+                NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\D', '', 'g'), 10), '') AS phone
+            FROM mb_clients_cache c
+            WHERE c.client_id IN (
+                SELECT DISTINCT client_id
+                FROM client_activity
+                WHERE activity_date > NOW() - make_interval(days => ${minDaysSinceVisit})
+            )
         )
         SELECT
             a.client_id,
@@ -469,7 +486,18 @@ export async function getLapsedPatientsFromDB(
             EXTRACT(DAY FROM NOW() - MAX(a.activity_date))::INTEGER AS days_since
         FROM client_activity a
         LEFT JOIN revenue r ON r.client_id = a.client_id
+        LEFT JOIN mb_clients_cache c ON c.client_id = a.client_id
         WHERE a.client_id NOT IN (SELECT client_id FROM future_booked)
+          AND NOT EXISTS (
+              SELECT 1 FROM active_contacts ac
+              WHERE (
+                  ac.phone IS NOT NULL
+                  AND ac.phone = NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\D', '', 'g'), 10), '')
+              ) OR (
+                  ac.email IS NOT NULL
+                  AND ac.email = NULLIF(LOWER(TRIM(c.email)), '')
+              )
+          )
         GROUP BY a.client_id, r.total_revenue
         HAVING EXTRACT(DAY FROM NOW() - MAX(a.activity_date))::INTEGER >= ${minDaysSinceVisit}
         ORDER BY COALESCE(r.total_revenue, 0) DESC
