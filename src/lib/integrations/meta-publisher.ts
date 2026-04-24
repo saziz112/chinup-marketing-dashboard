@@ -186,7 +186,15 @@ async function prepareImageForInstagram(imageUrl: string, context: 'feed' | 'sto
         }
         if (!verified) throw new Error(`Blob not reachable after upload: ${blob.url}`);
 
-        console.log(`[IG Prepare] Uploaded + verified: ${blob.url}`);
+        // Local HEAD succeeds as soon as the blob is written, but Meta's ingestion
+        // fetches from a different region and often gets a 'Media download has
+        // failed' for URLs less than a few seconds old. This delay lets the blob
+        // propagate globally before Meta tries. 3s balances propagation vs the
+        // 60s function cap — a 6-image carousel runs sharp+delay+Meta POST
+        // sequentially so total time is ~45s, close to the limit.
+        await new Promise(r => setTimeout(r, 3000));
+
+        console.log(`[IG Prepare] Uploaded + verified + propagated: ${blob.url}`);
         return blob.url;
     } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown';
