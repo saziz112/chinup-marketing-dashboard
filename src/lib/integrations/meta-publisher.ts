@@ -528,7 +528,7 @@ export async function publishInstagramStory(
             containerBody.image_url = finalMediaUrl;
         }
 
-        console.log(`[Meta Publish IG Story] Creating ${isVideo ? 'video' : 'photo'} story container`);
+        console.log(`[Meta Publish IG Story] Creating ${isVideo ? 'video' : 'photo'} story container with url: ${finalMediaUrl}`);
 
         const containerRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media`, {
             method: 'POST',
@@ -538,7 +538,12 @@ export async function publishInstagramStory(
         const containerData = await containerRes.json();
 
         if (containerData.error) {
-            return { success: false, error: containerData.error.message, platform: 'instagram' };
+            console.error('[Meta Publish IG Story] Container error:', containerData.error, 'url was:', finalMediaUrl);
+            return {
+                success: false,
+                error: `${containerData.error.message} [url: ${finalMediaUrl}]`,
+                platform: 'instagram',
+            };
         }
 
         const containerId = containerData.id;
