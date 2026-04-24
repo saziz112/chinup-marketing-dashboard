@@ -165,7 +165,11 @@ async function prepareImageForInstagram(imageUrl: string, context: 'feed' | 'sto
         console.log(`[IG Prepare] ${format} ${width}x${height} → sRGB JPEG ${Math.round(processed.length / 1024)}KB (ratio ${ratio.toFixed(3)}, cropped=${!ratioOk})`);
 
         stage.current = 'blob-upload';
-        const filename = `publish/ig_prepared_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+        // Filename deliberately neutral. Earlier pattern `ig_prepared_*` correlated
+        // with Meta IG ingestion rejecting the URL even when it served a clean
+        // JPEG — likely pattern-matching heuristics after many such URLs failed
+        // fetch in a 24h window. Using a generic `img_*` prefix sidesteps it.
+        const filename = `publish/img_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.jpg`;
         const blob = await put(filename, processed, {
             access: 'public',
             addRandomSuffix: false,
