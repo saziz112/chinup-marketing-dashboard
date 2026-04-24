@@ -53,6 +53,14 @@ export function categorizeError(raw: string): FailureInfo {
             retryable: false,
         };
     }
+    if (msg.includes('image preparation failed')) {
+        return {
+            bucket: 'media_invalid',
+            label: 'Image processing failed',
+            suggestion: 'Sharp or Blob upload failed on our side — check Vercel function logs for the exact stage. Often BLOB_READ_WRITE_TOKEN expired or Blob quota hit.',
+            retryable: true,
+        };
+    }
     if (msg.includes('only photo or video') || msg.includes('media type') || msg.includes('media processing failed')) {
         return {
             bucket: 'media_invalid',

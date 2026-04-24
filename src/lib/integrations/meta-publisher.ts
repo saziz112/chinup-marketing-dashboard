@@ -92,18 +92,27 @@ async function preflightMedia(url: string): Promise<{ ok: true; contentType: str
 const IG_MAX_EDGE = 1440; // matches IG's 1440 recommended hi-res; well under their 8192 hard cap
 
 async function prepareImageForInstagram(imageUrl: string): Promise<string> {
+    // Each stage is logged individually so Vercel logs pinpoint exactly where
+    // this breaks (fetch vs sharp-decode vs sharp-encode vs blob-upload). The
+    // function now throws on failure instead of falling back to the original
+    // URL — a silent fallback masked a real pipeline break and let
+    // out-of-aspect-ratio images reach Meta, triggering 'Only photo or video
+    // can be accepted as media type'.
+    const stage = { current: 'fetch' };
     try {
         const res = await fetch(imageUrl);
-        if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
+        if (!res.ok) throw new Error(`Fetch returned ${res.status}`);
         const buffer = Buffer.from(await res.arrayBuffer());
 
+        stage.current = 'sharp-metadata';
         const metadata = await sharp(buffer).metadata();
         const { width, height, format } = metadata;
-        if (!width || !height) return imageUrl;
+        if (!width || !height) throw new Error(`sharp could not read image dimensions (format=${format})`);
 
         const ratio = width / height;
         const ratioOk = ratio >= IG_MIN_RATIO && ratio <= IG_MAX_RATIO;
 
+        stage.current = 'sharp-pipeline';
         let pipeline = sharp(buffer);
         if (!ratioOk) {
             let cropWidth = width;
@@ -119,6 +128,7 @@ async function prepareImageForInstagram(imageUrl: string): Promise<string> {
 
         console.log(`[IG Prepare] ${format} ${width}x${height} → JPEG ${Math.round(processed.length / 1024)}KB (ratio ${ratio.toFixed(3)}, cropped=${!ratioOk})`);
 
+        stage.current = 'blob-upload';
         const filename = `publish/ig_prepared_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
         const blob = await put(filename, processed, {
             access: 'public',
@@ -126,11 +136,12 @@ async function prepareImageForInstagram(imageUrl: string): Promise<string> {
             contentType: 'image/jpeg',
         });
 
+        console.log(`[IG Prepare] Uploaded: ${blob.url}`);
         return blob.url;
     } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown';
-        console.error('[IG Prepare] Error:', msg);
-        return imageUrl;
+        console.error(`[IG Prepare] FAILED at stage=${stage.current} for ${imageUrl}: ${msg}`);
+        throw new Error(`Image preparation failed (stage: ${stage.current}): ${msg}`);
     }
 }
 
