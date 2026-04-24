@@ -552,6 +552,63 @@ export async function publishInstagramStory(
     }
 }
 
+/**
+ * Instagram multi-story — a "story carousel" is actually N separate stories
+ * published back-to-back. IG's Story API is single-media; the feed-Carousel
+ * API (media_type=CAROUSEL) is NOT for stories and rejects with 'Only photo
+ * or video can be accepted as media type' if you try. This helper publishes
+ * each URL as its own story sequentially and returns a combined result.
+ */
+export async function publishInstagramStoryMulti(
+    caption: string,
+    mediaUrls: string[],
+    mediaType?: 'photo' | 'video',
+): Promise<PublishResult> {
+    if (mediaUrls.length === 0) {
+        return { success: false, error: 'At least one media required for story.', platform: 'instagram' };
+    }
+    const postIds: string[] = [];
+    for (let i = 0; i < mediaUrls.length; i++) {
+        const r = await publishInstagramStory(caption, mediaUrls[i], mediaType);
+        if (!r.success) {
+            return {
+                success: false,
+                error: `Story ${i + 1}/${mediaUrls.length} failed: ${r.error}`,
+                platform: 'instagram',
+            };
+        }
+        if (r.postId) postIds.push(r.postId);
+    }
+    return { success: true, postId: postIds.join(','), platform: 'instagram' };
+}
+
+/**
+ * Facebook multi-story — same idea as IG: FB Stories are single-media.
+ * publishFacebookMultiPhoto creates a FEED post with attached media, which
+ * is not what the user wants when they pick 'Story'.
+ */
+export async function publishFacebookStoryMulti(
+    mediaUrls: string[],
+    mediaType?: 'photo' | 'video',
+): Promise<PublishResult> {
+    if (mediaUrls.length === 0) {
+        return { success: false, error: 'At least one media required for story.', platform: 'facebook' };
+    }
+    const postIds: string[] = [];
+    for (let i = 0; i < mediaUrls.length; i++) {
+        const r = await publishFacebookStory(mediaUrls[i], mediaType);
+        if (!r.success) {
+            return {
+                success: false,
+                error: `Story ${i + 1}/${mediaUrls.length} failed: ${r.error}`,
+                platform: 'facebook',
+            };
+        }
+        if (r.postId) postIds.push(r.postId);
+    }
+    return { success: true, postId: postIds.join(','), platform: 'facebook' };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // INSTAGRAM CAROUSEL (up to 10 images)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -777,6 +834,13 @@ export async function publishToMultiplePlatforms(
 
     const tasks = platforms.map(async (platform) => {
         if (platform === 'facebook') {
+            // Story intent takes precedence over multi-image: a "story carousel"
+            // is N separate stories, not a feed multi-photo post.
+            if (postType === 'story') {
+                if (isCarousel) return publishFacebookStoryMulti(urls, mediaType);
+                if (!mediaUrl) return { success: false, error: 'Facebook Stories require media.', platform: 'facebook' as const };
+                return publishFacebookStory(mediaUrl, mediaType);
+            }
             if (isCarousel) {
                 return publishFacebookMultiPhoto(caption, urls);
             }
@@ -784,22 +848,24 @@ export async function publishToMultiplePlatforms(
                 if (!mediaUrl) return { success: false, error: 'Facebook Reels require a video.', platform: 'facebook' as const };
                 return publishFacebookReel(caption, mediaUrl);
             }
-            if (postType === 'story') {
-                if (!mediaUrl) return { success: false, error: 'Facebook Stories require media.', platform: 'facebook' as const };
-                return publishFacebookStory(mediaUrl, mediaType);
-            }
             return publishToFacebook(caption, mediaUrl, mediaType);
         }
 
         if (platform === 'instagram') {
+            // Story intent takes precedence over multi-image: a "story carousel"
+            // is N separate stories, not a feed carousel post.
+            if (postType === 'story') {
+                if (isCarousel) return publishInstagramStoryMulti(caption, urls, mediaType);
+                if (!mediaUrl || !mediaUrl.startsWith('http')) {
+                    return { success: false, error: 'Instagram requires media. Upload a file first.', platform: 'instagram' as const };
+                }
+                return publishInstagramStory(caption, mediaUrl, mediaType);
+            }
             if (isCarousel) {
                 return publishInstagramCarousel(caption, urls);
             }
             if (!mediaUrl || !mediaUrl.startsWith('http')) {
                 return { success: false, error: 'Instagram requires media. Upload a file first.', platform: 'instagram' as const };
-            }
-            if (postType === 'story') {
-                return publishInstagramStory(caption, mediaUrl, mediaType);
             }
             return publishToInstagram(caption, mediaUrl, mediaType);
         }
