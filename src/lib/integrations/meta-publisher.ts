@@ -79,11 +79,18 @@ async function preflightMedia(url: string): Promise<{ ok: true; contentType: str
 }
 
 /**
- * Fetch + transform an image for Instagram. Transcodes non-JPEG/PNG (e.g. WebP,
- * which IG Stories rejects) and crops if aspect ratio is outside 4:5 – 1.91:1.
- * Returns the original URL if no transform needed, otherwise uploads to blob
- * and returns the new URL.
+ * Fetch + normalize an image for Instagram. Always re-encodes to JPEG, caps the
+ * longest side at 1440px, and crops if the aspect ratio falls outside 4:5 – 1.91:1.
+ * Returns a fresh Vercel Blob URL.
+ *
+ * The short-circuit that returned the original URL for already-JPEG/PNG in-ratio
+ * images was removed because it let through files that were technically valid
+ * but exceeded Meta's unpublished limits (file size > 8MB, dimensions > 8192,
+ * or Content-Type/magic-byte mismatches) — yielding "Only photo or video can be
+ * accepted as media type" errors on the carousel child-container call.
  */
+const IG_MAX_EDGE = 1440; // matches IG's 1440 recommended hi-res; well under their 8192 hard cap
+
 async function prepareImageForInstagram(imageUrl: string): Promise<string> {
     try {
         const res = await fetch(imageUrl);
@@ -95,12 +102,7 @@ async function prepareImageForInstagram(imageUrl: string): Promise<string> {
         if (!width || !height) return imageUrl;
 
         const ratio = width / height;
-        const isJpegOrPng = format === 'jpeg' || format === 'png';
         const ratioOk = ratio >= IG_MIN_RATIO && ratio <= IG_MAX_RATIO;
-
-        console.log(`[IG Prepare] ${format} ${width}x${height}, ratio ${ratio.toFixed(3)}, needsTranscode=${!isJpegOrPng}, ratioOk=${ratioOk}`);
-
-        if (isJpegOrPng && ratioOk) return imageUrl;
 
         let pipeline = sharp(buffer);
         if (!ratioOk) {
@@ -112,16 +114,18 @@ async function prepareImageForInstagram(imageUrl: string): Promise<string> {
             const top = Math.round((height - cropHeight) / 2);
             pipeline = pipeline.extract({ left, top, width: cropWidth, height: cropHeight });
         }
-        const processed = await pipeline.jpeg({ quality: 92 }).toBuffer();
+        pipeline = pipeline.resize({ width: IG_MAX_EDGE, height: IG_MAX_EDGE, fit: 'inside', withoutEnlargement: true });
+        const processed = await pipeline.jpeg({ quality: 85 }).toBuffer();
 
-        const filename = `publish/ig_prepared_${Date.now()}.jpg`;
+        console.log(`[IG Prepare] ${format} ${width}x${height} → JPEG ${Math.round(processed.length / 1024)}KB (ratio ${ratio.toFixed(3)}, cropped=${!ratioOk})`);
+
+        const filename = `publish/ig_prepared_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
         const blob = await put(filename, processed, {
             access: 'public',
             addRandomSuffix: false,
             contentType: 'image/jpeg',
         });
 
-        console.log(`[IG Prepare] Transformed → ${blob.url}`);
         return blob.url;
     } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown';
