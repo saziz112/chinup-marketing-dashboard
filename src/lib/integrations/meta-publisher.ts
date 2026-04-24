@@ -92,6 +92,28 @@ async function preflightMedia(url: string): Promise<{ ok: true; contentType: str
 const IG_MAX_EDGE = 1440; // matches IG's 1440 recommended hi-res; well under their 8192 hard cap
 
 async function prepareImageForInstagram(imageUrl: string, context: 'feed' | 'story' = 'feed'): Promise<string> {
+    // Fast-path for stories: if the source is already a JPEG (matches extension
+    // or content-type), keep the ORIGINAL URL. Meta's ingestion fetches images
+    // from its own regions and has documented issues pulling freshly-created
+    // Vercel Blob URLs (< a few seconds old) — returns
+    // "Media download has failed. The media URI doesn't meet our requirements."
+    // The original user-uploaded URL is already globally propagated because
+    // it's been live since upload. Re-encoding is unnecessary for stories
+    // since Meta accepts the full aspect range and we're not cropping.
+    if (context === 'story') {
+        const ext = imageUrl.toLowerCase().split('?')[0].split('.').pop();
+        if (ext === 'jpg' || ext === 'jpeg') {
+            try {
+                const head = await fetch(imageUrl, { method: 'HEAD' });
+                const ct = head.headers.get('content-type') || '';
+                if (head.ok && ct.startsWith('image/jpeg')) {
+                    console.log(`[IG Prepare] Story fast-path: using original URL ${imageUrl}`);
+                    return imageUrl;
+                }
+            } catch { /* fall through to full pipeline */ }
+        }
+    }
+
     // Each stage is logged individually so Vercel logs pinpoint exactly where
     // this breaks (fetch vs sharp-decode vs sharp-encode vs blob-upload). The
     // function now throws on failure instead of falling back to the original
