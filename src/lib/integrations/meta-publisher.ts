@@ -91,7 +91,7 @@ async function preflightMedia(url: string): Promise<{ ok: true; contentType: str
  */
 const IG_MAX_EDGE = 1440; // matches IG's 1440 recommended hi-res; well under their 8192 hard cap
 
-async function prepareImageForInstagram(imageUrl: string): Promise<string> {
+async function prepareImageForInstagram(imageUrl: string, context: 'feed' | 'story' = 'feed'): Promise<string> {
     // Each stage is logged individually so Vercel logs pinpoint exactly where
     // this breaks (fetch vs sharp-decode vs sharp-encode vs blob-upload). The
     // function now throws on failure instead of falling back to the original
@@ -110,7 +110,12 @@ async function prepareImageForInstagram(imageUrl: string): Promise<string> {
         if (!width || !height) throw new Error(`sharp could not read image dimensions (format=${format})`);
 
         const ratio = width / height;
-        const ratioOk = ratio >= IG_MIN_RATIO && ratio <= IG_MAX_RATIO;
+        // Feed enforces 4:5–1.91:1. Stories accept a much wider range (Meta displays
+        // at 9:16 with letterboxing) — cropping them to feed bounds is unnecessary
+        // and arguably wrong, so skip it in the story context.
+        const ratioOk = context === 'story'
+            ? true
+            : ratio >= IG_MIN_RATIO && ratio <= IG_MAX_RATIO;
 
         stage.current = 'sharp-pipeline';
         let pipeline = sharp(buffer);
@@ -514,7 +519,7 @@ export async function publishInstagramStory(
     try {
         // IG Stories reject WebP and other non-JPEG/PNG formats — transcode if needed
         let finalMediaUrl = mediaUrl;
-        if (!isVideo) finalMediaUrl = await prepareImageForInstagram(mediaUrl);
+        if (!isVideo) finalMediaUrl = await prepareImageForInstagram(mediaUrl, 'story');
 
         const containerBody: Record<string, string> = { media_type: 'STORIES', access_token: token };
         if (isVideo) {
