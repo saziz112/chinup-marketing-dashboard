@@ -123,10 +123,19 @@ async function prepareImageForInstagram(imageUrl: string): Promise<string> {
             const top = Math.round((height - cropHeight) / 2);
             pipeline = pipeline.extract({ left, top, width: cropWidth, height: cropHeight });
         }
-        pipeline = pipeline.resize({ width: IG_MAX_EDGE, height: IG_MAX_EDGE, fit: 'inside', withoutEnlargement: true });
-        const processed = await pipeline.jpeg({ quality: 85 }).toBuffer();
+        // toColourspace('srgb') forces CMYK / Adobe RGB / ProPhoto sources to sRGB;
+        // Meta's IG ingestion rejects non-sRGB. flatten() drops alpha in case the
+        // source was a PNG/TIFF with transparency, which would otherwise survive
+        // into the JPEG as black artifacts Meta sometimes bails on.
+        pipeline = pipeline
+            .flatten({ background: '#ffffff' })
+            .toColourspace('srgb')
+            .resize({ width: IG_MAX_EDGE, height: IG_MAX_EDGE, fit: 'inside', withoutEnlargement: true });
+        const processed = await pipeline
+            .jpeg({ quality: 85, chromaSubsampling: '4:2:0', mozjpeg: false })
+            .toBuffer();
 
-        console.log(`[IG Prepare] ${format} ${width}x${height} → JPEG ${Math.round(processed.length / 1024)}KB (ratio ${ratio.toFixed(3)}, cropped=${!ratioOk})`);
+        console.log(`[IG Prepare] ${format} ${width}x${height} → sRGB JPEG ${Math.round(processed.length / 1024)}KB (ratio ${ratio.toFixed(3)}, cropped=${!ratioOk})`);
 
         stage.current = 'blob-upload';
         const filename = `publish/ig_prepared_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
@@ -136,7 +145,21 @@ async function prepareImageForInstagram(imageUrl: string): Promise<string> {
             contentType: 'image/jpeg',
         });
 
-        console.log(`[IG Prepare] Uploaded: ${blob.url}`);
+        stage.current = 'blob-verify';
+        // Vercel Blob can have a brief propagation lag. HEAD the URL up to 3 times
+        // with 500ms backoff so we don't hand Meta a URL that's not yet live.
+        let verified = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const head = await fetch(blob.url, { method: 'HEAD' });
+            if (head.ok && head.headers.get('content-type')?.startsWith('image/')) {
+                verified = true;
+                break;
+            }
+            await new Promise(r => setTimeout(r, 500));
+        }
+        if (!verified) throw new Error(`Blob not reachable after upload: ${blob.url}`);
+
+        console.log(`[IG Prepare] Uploaded + verified: ${blob.url}`);
         return blob.url;
     } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown';
