@@ -543,8 +543,10 @@ export async function publishInstagramCarousel(
     try {
         // Step 1: Create child containers for each image
         const childIds: string[] = [];
-        for (const url of imageUrls) {
+        for (let i = 0; i < imageUrls.length; i++) {
+            const url = imageUrls[i];
             const resizedUrl = await prepareImageForInstagram(url);
+            console.log(`[Meta Publish IG Carousel] Child ${i + 1}/${imageUrls.length} prepared: ${resizedUrl}`);
             const childRes = await fetch(`${GRAPH_API_BASE}/${igUserId}/media`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -556,11 +558,15 @@ export async function publishInstagramCarousel(
             });
             const childData = await childRes.json();
             if (childData.error) {
-                console.error('[Meta Publish IG Carousel] Child container error:', childData.error);
-                return { success: false, error: `Carousel image failed: ${childData.error.message}`, platform: 'instagram' };
+                console.error(`[Meta Publish IG Carousel] Child ${i + 1}/${imageUrls.length} error:`, childData.error, 'url was:', resizedUrl);
+                return {
+                    success: false,
+                    error: `Carousel image ${i + 1}/${imageUrls.length} failed: ${childData.error.message}`,
+                    platform: 'instagram',
+                };
             }
             if (!childData.id) {
-                return { success: false, error: 'No container ID for carousel image', platform: 'instagram' };
+                return { success: false, error: `No container ID for carousel image ${i + 1}/${imageUrls.length}`, platform: 'instagram' };
             }
             childIds.push(childData.id);
         }
@@ -707,7 +713,10 @@ export async function publishWithTransientRetry(
     const retryPlatforms = transientIndices.map(i => platforms[i]);
     console.log(`[Publish Retry] Auto-retrying ${retryPlatforms.length} transient Meta failure(s): ${retryPlatforms.join(', ')}`);
 
-    await new Promise(r => setTimeout(r, 3000));
+    // 10s delay — Meta's carousel item endpoint sometimes needs tens of seconds to
+    // shake off a transient; 3s wasn't long enough in practice. Still fits inside
+    // the 60s function cap for a 6-image carousel.
+    await new Promise(r => setTimeout(r, 10000));
 
     const retryResults = await publishToMultiplePlatforms(retryPlatforms, caption, mediaUrls, mediaType, postType, gbpLocations);
 
