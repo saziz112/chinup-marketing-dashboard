@@ -2063,9 +2063,20 @@ export async function getConsultOnlyPatients(
 /* ── 7-Day Outbound Message Cooldown ─────────────────────── */
 
 /**
- * Returns contactIds that received an outbound message (SMS/email) within the last N days.
- * Uses conversation-level lastMessageDirection + lastMessageDate for efficiency.
- * ~3-6 API calls total (1-2 pages per location). 30-min in-memory cache.
+ * Returns contactIds that have ANY active conversation within the last N days.
+ *
+ * Originally this filtered to lastMessageDirection === 'outbound', but that misses
+ * a critical case: when we (or staff) text a patient and they reply, the conversation's
+ * lastMessageDirection becomes 'inbound' — so the contact would slip through the
+ * cooldown and get re-texted by the next campaign.
+ *
+ * Now we exclude anyone with a recent conversation regardless of direction. Trade-offs:
+ *   - Catches manual GHL outbound texts (the original goal)
+ *   - Catches patients who replied to us (was the bug)
+ *   - Also catches purely inbound new leads — desirable, since blasting a marketing
+ *     SMS to a patient mid-inquiry feels worse than letting staff respond first
+ *
+ * ~3-6 API calls total. 30-min in-memory cache.
  */
 export async function getRecentOutboundContactIds(daysCutoff: number = 7): Promise<Set<string>> {
     const now = Date.now();
@@ -2115,7 +2126,9 @@ export async function getRecentOutboundContactIds(daysCutoff: number = 7): Promi
                         hasMore = false;
                         break;
                     }
-                    if (conv.lastMessageDirection === 'outbound' && conv.contactId) {
+                    // Exclude any contact with a recent conversation, regardless of direction —
+                    // this catches outbound-then-replied threads that the old direction filter missed.
+                    if (conv.contactId) {
                         contactIds.add(conv.contactId);
                     }
                 }
@@ -2134,7 +2147,7 @@ export async function getRecentOutboundContactIds(daysCutoff: number = 7): Promi
         }
     }));
 
-    console.log(`[ghl-conversations] Found ${contactIds.size} contacts with outbound messages in last ${daysCutoff} days`);
+    console.log(`[ghl-conversations] Found ${contactIds.size} contacts with conversation activity in last ${daysCutoff} days`);
     outboundCooldownCache = { data: contactIds, timestamp: now };
     return contactIds;
 }

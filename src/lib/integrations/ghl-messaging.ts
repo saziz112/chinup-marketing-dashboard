@@ -588,6 +588,12 @@ export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: st
                 strategy: 'No offer, no CTA pressure. Use after a previous offer-led message had no reply.',
                 template: "Hi {{firstName}}, Chin Up! {{locationName}} — just thinking of you. It's been a while. Reply YES if you'd like to chat. Reply STOP to opt out.",
             },
+            {
+                id: 'seasonal',
+                label: 'Seasonal warmth',
+                strategy: 'Spring/seasonal hook + tease at VIP promos. Multi-line, emoji-friendly — feels personal, not corporate. Multi-segment SMS (~270 chars).',
+                template: "Hi {{firstName}}! It’s Chin Up! {{locationName}} 🌸\n\nSpring is here… perfect time for a little refresh, right?\n\nIt’s been over a year since we’ve seen you, so we put together some VIP promos just for our returning patients 👀\n\nReply YES to see them or STOP to opt out.",
+            },
         ],
     },
     'lapsed-treatment': {

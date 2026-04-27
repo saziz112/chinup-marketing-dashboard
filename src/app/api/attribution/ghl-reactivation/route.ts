@@ -213,7 +213,7 @@ export async function GET(req: NextRequest) {
         const [recentHashes, lastRuns, recentOutboundIds] = await Promise.all([
             getRecentlyContactedHashes(),
             getLastCampaignRuns(),
-            getRecentOutboundContactIds(7),
+            getRecentOutboundContactIds(14),
         ]);
 
         // ── Campaign 1: Let's Reschedule (Cancelled / No-Show) ──

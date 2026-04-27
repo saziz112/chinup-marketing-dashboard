@@ -1193,7 +1193,7 @@ export default function LeadsPipelinePage() {
                                         <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
                                             {smsData.dndFiltered > 0 && <span>{smsData.dndFiltered} DND excluded | </span>}
                                             {smsData.cooldownExcluded > 0 && <span>{smsData.cooldownExcluded} cooldown excluded | </span>}
-                                            {smsData.outboundExcluded > 0 && <span>{smsData.outboundExcluded} recent outbound excluded</span>}
+                                            {smsData.outboundExcluded > 0 && <span>{smsData.outboundExcluded} recently texted/active excluded (14d)</span>}
                                         </div>
 
                                         <button
