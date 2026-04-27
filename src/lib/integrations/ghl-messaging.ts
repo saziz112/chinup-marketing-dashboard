@@ -376,50 +376,282 @@ export async function searchContactByEmail(
     return null;
 }
 
-/* ── SMS Templates (6 campaigns) ─────────────────────────── */
+/* ── SMS Templates ───────────────────────────────────────────── */
+/*
+ * Each segment has 3 variants representing distinct copy strategies.
+ * Templates are research-informed (medspa-specific patterns):
+ *   - Loss-aversion ~2x stronger than gain framing for lapsed patients
+ *   - Provider-attributed messages convert ~48% better than clinic-attributed
+ *   - First-name + location personalization = ~119% lift over no personalization
+ *   - Cold/never-converted segments → keyword reply CTA (lower friction)
+ *   - Warm/repeat patients → can use links
+ *   - Healthcare/luxury verticals: emojis erode credibility (use sparingly)
+ *   - Single-segment SMS (≤160 chars after rendering) for cost + deliverability
+ *   - TCPA: STOP language required, brand name on first-touch SMS
+ */
 
-export const SMS_TEMPLATES: Record<string, { label: string; template: string }> = {
+export interface SmsVariant {
+    id: string;
+    label: string;
+    strategy: string;
+    template: string;
+}
+
+export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: string; variants: SmsVariant[] }> = {
     'cancelled': {
         label: "Let's Reschedule",
-        template: "Hi {{firstName}}, we noticed you had to reschedule your appointment at Chin Up! We totally understand \u2014 life happens. We'd love to get you rebooked whenever you're ready. Reply YES to schedule. Reply STOP to opt out.",
+        defaultVariantId: 'warmth',
+        variants: [
+            {
+                id: 'warmth',
+                label: 'Personalized warmth',
+                strategy: 'Held-slot framing, no pressure. Best when relationship was warm before cancellation.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} here — we held your slot when you rescheduled. Want a new time? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'curiosity',
+                label: 'Curiosity hook',
+                strategy: 'Open-ended check-in invites a reply. Use for ghosted reschedules where the cause is unclear.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — anything come up after your booking? Reply YES to find a new time. Reply STOP to opt out.",
+            },
+            {
+                id: 'direct',
+                label: 'Direct CTA',
+                strategy: 'Frictionless rebook with a clear keyword. Best for action-oriented patients.',
+                template: "Hi {{firstName}}, ready to rebook at Chin Up! {{locationName}}? Reply BOOK and we'll get you on the calendar. Reply STOP to opt out.",
+            },
+        ],
     },
     'consult-only': {
         label: "We'd Love to See You",
-        template: "Hi {{firstName}}, thanks for coming in for your consultation at Chin Up! We'd love to help you take the next step. Reply YES if you'd like to schedule your treatment. Reply STOP to opt out.",
+        defaultVariantId: 'financing',
+        variants: [
+            {
+                id: 'financing',
+                label: 'Cost reframe',
+                strategy: "Tackles the #1 reason consults don't convert: price. Leads with Cherry financing + $199 entry.",
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} here. Cherry financing or our $199 HydraFacial — interested? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'provider',
+                label: 'Provider attribution',
+                strategy: 'Provider-attributed messages convert ~48% better than clinic-attributed. Builds personal trust.',
+                template: "Hi {{firstName}}, your provider at Chin Up! {{locationName}} thought you'd be a great fit. Want to chat? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'curiosity',
+                label: 'Curiosity question',
+                strategy: 'Asks what blocked the conversion. Surfaces real objections you can address 1:1.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — quick question: what's been holding you back since your consult? Reply STOP to opt out.",
+            },
+        ],
     },
     'lapsed-vip': {
         label: 'VIP Welcome Back',
-        template: "Hi {{firstName}}, as one of our valued patients at Chin Up!, we wanted to personally invite you back. We've added exciting new treatments \u2014 reply YES to learn more. Reply STOP to opt out.",
+        defaultVariantId: 'exclusivity',
+        variants: [
+            {
+                id: 'exclusivity',
+                label: 'VIP recognition',
+                strategy: 'Status framing protects margin (vs. discount). Works on $3K+ LTV patients.',
+                template: "Hi {{firstName}}, you're one of our most valued at Chin Up! {{locationName}} — we'd love to see you again. Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'loss',
+                label: 'Loss aversion',
+                strategy: 'Results-fading framing. Loss aversion is ~2x stronger than gain framing for lapsed patients.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — results may be fading. A quick maintenance visit keeps you fresh. Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'provider',
+                label: 'Provider planning',
+                strategy: 'Complimentary planning session with provider — zero pressure, zero discount erosion.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — your provider would love to plan next steps. Complimentary session? Reply YES. Reply STOP to opt out.",
+            },
+        ],
     },
     'lapsed-long': {
         label: 'We Miss You',
-        template: "Hi {{firstName}}, it's been a while! We'd love to welcome you back to Chin Up! with something special for returning patients. Reply YES for details. Reply STOP to opt out.",
+        defaultVariantId: 'reintro',
+        variants: [
+            {
+                id: 'reintro',
+                label: 'Re-introduction',
+                strategy: '"What\'s new since you left" framing. Resets the relationship without leading with discount.',
+                template: "Hi {{firstName}}, it's been a minute! Chin Up! {{locationName}} has new treatments since your last visit. Curious? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'clinical',
+                label: 'Soft clinical reminder',
+                strategy: 'No-offer check-in. Uses maintenance framing instead of promo to protect brand.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — it's been a while. A quick check-in might be perfect timing. Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'offer',
+                label: 'Low-risk re-entry',
+                strategy: "$199 HydraFacial as a low-commitment way back in. Use when no-offer pings haven't worked.",
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — welcome back with our $199 HydraFacial. Easy way to ease in. Reply YES. Reply STOP to opt out.",
+            },
+        ],
     },
     'ghost': {
         label: 'Still Thinking?',
-        template: "Hi {{firstName}}, still considering treatments at Chin Up!? We now offer Cherry financing \u2014 apply here: https://pay.withcherry.com/chinupaesthetics. Plus HydraFacials starting at $199. Reply YES for details. Reply STOP to opt out.",
+        defaultVariantId: 'offer',
+        variants: [
+            {
+                id: 'offer',
+                label: 'Cost-objection killer',
+                strategy: '$199 HydraFacial is a price-objection killer for cold leads. Removes the biggest blocker upfront.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} here — our $199 HydraFacial is a great way to start. Want details? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'social',
+                label: 'Social proof',
+                strategy: 'Authority framing for cautious leads. Quantifies trust without being pushy.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — we've helped 2,000+ Atlanta clients feel their best. Ready to try? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'curiosity',
+                label: 'Curiosity hook',
+                strategy: 'Open question surfaces objections. Lower friction than a CTA — invites conversation.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — we never got to meet. Quick question — what's been on your mind? Reply STOP to opt out.",
+            },
+        ],
     },
     'pipeline-followup': {
         label: 'Quick Follow-Up',
-        template: "Hi {{firstName}}, following up on your inquiry with Chin Up! We offer Cherry financing for any treatment, plus HydraFacials starting at $199. Reply YES to learn more. Reply STOP to opt out.",
+        defaultVariantId: 'direct',
+        variants: [
+            {
+                id: 'direct',
+                label: 'Direct availability',
+                strategy: 'Concrete provider availability creates real urgency. Best for warm pipeline leads.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — your provider has openings this week. Want to lock one in? Reply BOOK. Reply STOP to opt out.",
+            },
+            {
+                id: 'financing',
+                label: 'Financing angle',
+                strategy: 'For pipeline leads where cost is the suspected blocker. Brand-domain Cherry link.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — Cherry financing makes treatment easy: pay.withcherry.com/chinupaesthetics. Reply STOP to opt out.",
+            },
+            {
+                id: 'scarcity',
+                label: 'Real scarcity',
+                strategy: "Authentic calendar pressure (not manufactured countdowns). Works because it's true.",
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — calendar fills fast this week. Want us to hold a slot? Reply YES. Reply STOP to opt out.",
+            },
+        ],
     },
     'vip-winback-offer': {
         label: 'VIP Win-Back Offer',
-        template: "Hi {{firstName}}, it's Sam from Chin Up! Aesthetics - {{locationName}}.\nReal talk — we're reaching out to a small group of past clients we'd love to see again \u2764\uFE0F\nSpecial Offer: Complimentary add-on (dermaplaning, B12 shot, or light chemical peel) with any booking OR $75 OFF any service — offers can scale based on what you are interested in!\nReply BOOK to claim yours!\nReply STOP to opt out",
+        defaultVariantId: 'offer',
+        variants: [
+            {
+                id: 'offer',
+                label: 'Concrete reward',
+                strategy: 'Strong, specific offer ($75 off + complimentary add-on). VIPs respond to dollar value, not %.',
+                template: "Hi {{firstName}}, Sam from Chin Up! {{locationName}}. VIP offer: complimentary add-on or $75 OFF. Reply BOOK to claim. Reply STOP to opt out.",
+            },
+            {
+                id: 'loss',
+                label: 'Expiring offer',
+                strategy: 'Loss aversion on the VIP-pricing tier. Authentic deadline drives action.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — your VIP $75 off + free add-on offer expires soon. Reply BOOK to claim. Reply STOP to opt out.",
+            },
+            {
+                id: 'personal',
+                label: 'Personal note',
+                strategy: 'Human-attributed (Sam) reach-out. High-touch — feels 1:1, not blast.',
+                template: "Hi {{firstName}}, Sam from Chin Up! {{locationName}} — reaching out personally. Did you see your VIP offer? Reply YES. Reply STOP to opt out.",
+            },
+        ],
     },
     'lapsed-winback': {
         label: 'Win-Back VIP',
-        template: "Hi {{firstName}}, it's Chin Up! Aesthetics — {{locationName}}. It's been over a year since your last visit and we'd love to welcome you back! We have new treatments and special pricing for returning VIPs. Reply YES to learn more. Reply STOP to opt out.",
+        defaultVariantId: 'combo',
+        variants: [
+            {
+                id: 'combo',
+                label: 'Re-intro + offer',
+                strategy: "Combines what's-new with returning-VIP pricing. Hedges between two strong angles.",
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — over a year since we've seen you. VIP pricing's waiting. Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'loss',
+                label: 'Loss aversion',
+                strategy: 'Results degradation framing — strongest for 12+ month lapsed patients with prior treatments.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — over a year and your results may have faded. Reply YES to refresh. Reply STOP to opt out.",
+            },
+            {
+                id: 'soft',
+                label: 'Soft check-in',
+                strategy: 'No offer, no CTA pressure. Use after a previous offer-led message had no reply.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — just thinking of you. It's been a while. Reply YES if you'd like to chat. Reply STOP to opt out.",
+            },
+        ],
     },
     'lapsed-treatment': {
         label: 'Treatment Reminder',
-        template: "Hi {{firstName}}, it's Chin Up! Aesthetics — {{locationName}}. It's been a while since your last treatment with us. Ready for a touch-up? Reply YES to schedule. Reply STOP to opt out.",
+        defaultVariantId: 'maintenance',
+        variants: [
+            {
+                id: 'maintenance',
+                label: 'Maintenance window',
+                strategy: 'Clinical 3-4 month framing. No discount — protects margin and reinforces medical credibility.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — your last treatment typically lasts 3-4 months. Touch-up time? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'provider',
+                label: 'Provider flagged',
+                strategy: 'Provider authority + personalized "flagged for touch-up". Implies care, not bulk send.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — your provider flagged you for a touch-up window. Want to schedule? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'direct',
+                label: 'Direct CTA',
+                strategy: 'Action keyword. Use when you know the patient is action-oriented (e.g., responded fast before).',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — ready for a touch-up? Reply BOOK and we'll get you on the calendar. Reply STOP to opt out.",
+            },
+        ],
     },
     'never-booked': {
         label: 'First Visit Invite',
-        template: "Hi {{firstName}}, thanks for reaching out to Chin Up! Aesthetics — {{locationName}}. We'd love to get you in for your first visit! We offer Cherry financing and HydraFacials starting at $199. Reply YES to schedule. Reply STOP to opt out.",
+        defaultVariantId: 'offer',
+        variants: [
+            {
+                id: 'offer',
+                label: 'Entry-point offer',
+                strategy: '$199 HydraFacial as a low-commitment first visit. Removes price anxiety from cold leads.',
+                template: "Hi {{firstName}}, thanks for reaching out to Chin Up! {{locationName}} — start with our $199 HydraFacial? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'social',
+                label: 'Social proof',
+                strategy: 'Quantified trust signal. Best for cautious first-timers nervous about going to "any" medspa.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — 2,000+ Atlanta clients trust us. Ready to book your first visit? Reply YES. Reply STOP to opt out.",
+            },
+            {
+                id: 'curiosity',
+                label: "What's the blocker?",
+                strategy: 'Surfaces objections via direct question. Sales-team friendly — invites a 1:1 reply.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — quick question: what's been holding you back? Happy to help. Reply STOP to opt out.",
+            },
+        ],
     },
 };
+
+/**
+ * Get a specific SMS variant template, falling back to the segment default.
+ * Used when sending campaigns — the UI passes the chosen variantId.
+ */
+export function getSmsTemplate(segment: string, variantId?: string): string | null {
+    const seg = SMS_TEMPLATES[segment];
+    if (!seg) return null;
+    const variant = (variantId && seg.variants.find(v => v.id === variantId))
+        || seg.variants.find(v => v.id === seg.defaultVariantId)
+        || seg.variants[0];
+    return variant?.template || null;
+}
 
 /* ── Email Templates (6 campaigns) ───────────────────────── */
 

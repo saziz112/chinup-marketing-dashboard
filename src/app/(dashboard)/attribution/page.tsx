@@ -115,6 +115,8 @@ export default function LeadsPipelinePage() {
     const [smsLocationFilter, setSmsLocationFilter] = useState<string>('all');
     const [smsTestSending, setSmsTestSending] = useState(false);
     const [smsTestResult, setSmsTestResult] = useState<{ success: boolean; message: string } | null>(null);
+    const [smsProgress, setSmsProgress] = useState<{ current: number; total: number; locKey: string; sentSoFar: number } | null>(null);
+    const [smsVariantId, setSmsVariantId] = useState<string | null>(null);
     const [campaignHistory, setCampaignHistory] = useState<Record<string, { runAt: string; totalSent: number; channel: string }>>({});
     const [treatmentFilter, setTreatmentFilter] = useState('');
     const [treatments, setTreatments] = useState<string[]>([]);
@@ -210,9 +212,14 @@ export default function LeadsPipelinePage() {
             if (smsChannel === 'email') {
                 const etmpl = data.emailTemplates?.[segment];
                 if (etmpl?.template) { setSmsMessage(etmpl.template); setSmsSubject(etmpl.subject || ''); }
+                setSmsVariantId(null);
             } else {
                 const tmpl = data.templates?.[segment];
-                if (tmpl?.template) setSmsMessage(tmpl.template);
+                const defaultVariant = tmpl?.variants?.find((v: any) => v.id === tmpl.defaultVariantId) || tmpl?.variants?.[0];
+                if (defaultVariant?.template) {
+                    setSmsMessage(defaultVariant.template);
+                    setSmsVariantId(defaultVariant.id);
+                }
             }
             if (data.lastCampaign) {
                 setCampaignHistory(prev => ({ ...prev, [segment]: data.lastCampaign }));
@@ -228,6 +235,7 @@ export default function LeadsPipelinePage() {
         if (!smsData?.contacts || smsSelected.size === 0 || !smsMessage) return;
         setSmsSending(true);
         setSmsError(null);
+        setSmsProgress(null);
         try {
             const visibleContacts = smsLocationFilter === 'all'
                 ? smsData.contacts
@@ -245,9 +253,24 @@ export default function LeadsPipelinePage() {
                 list.push(c);
                 contactsByLocation.set(locKey, list);
             }
+
+            // Auto-batching: SMS API caps at 200 contacts per request, email at 50.
+            // Chunk per-location into batches and send sequentially with progress.
+            const BATCH_SIZE = smsChannel === 'sms' ? 200 : 50;
+            const batches: { locKey: string; contacts: any[] }[] = [];
+            for (const [locKey, contacts] of contactsByLocation) {
+                for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
+                    batches.push({ locKey, contacts: contacts.slice(i, i + BATCH_SIZE) });
+                }
+            }
+
             const allResults: any[] = [];
             const allErrors: string[] = [];
-            for (const [locKey, contacts] of contactsByLocation) {
+            let sentSoFar = 0;
+
+            for (let b = 0; b < batches.length; b++) {
+                const { locKey, contacts } = batches[b];
+                setSmsProgress({ current: b + 1, total: batches.length, locKey, sentSoFar });
                 try {
                     const res = await fetch('/api/attribution/ghl-reactivation', {
                         method: 'POST',
@@ -262,21 +285,32 @@ export default function LeadsPipelinePage() {
                             subject: smsChannel === 'email' ? smsSubject : undefined,
                         }),
                     });
-                    if (res.ok) allResults.push(await res.json());
-                    else {
+                    if (res.ok) {
+                        const data = await res.json();
+                        allResults.push(data);
+                        sentSoFar += data.sent || 0;
+                    } else {
                         const errData = await res.json().catch(() => ({}));
-                        allErrors.push(errData.error || `API error ${res.status} for ${locKey}`);
+                        allErrors.push(errData.error || `API error ${res.status} for ${locKey} batch ${b + 1}`);
                     }
                 } catch (fetchErr: unknown) {
-                    allErrors.push(`${locKey}: ${fetchErr instanceof Error ? fetchErr.message : 'Network error'}`);
+                    allErrors.push(`${locKey} batch ${b + 1}: ${fetchErr instanceof Error ? fetchErr.message : 'Network error'}`);
+                }
+
+                // Brief pause between batches to stay well under GHL's burst limit (100 req/10s)
+                if (b < batches.length - 1) {
+                    await new Promise(r => setTimeout(r, 1500));
                 }
             }
+
+            setSmsProgress(null);
             setSmsResults({
                 sent: allResults.reduce((s, r) => s + (r.sent || 0), 0),
                 failed: allResults.reduce((s, r) => s + (r.failed || 0), 0),
                 skipped: allResults.reduce((s, r) => s + (r.skipped || 0), 0),
                 channel: smsChannel,
                 emailCapped: allResults.some(r => r.emailCapped),
+                batches: batches.length,
                 errors: allErrors.length > 0 ? allErrors : undefined,
             });
             setSmsStep(3);
@@ -284,6 +318,7 @@ export default function LeadsPipelinePage() {
             setSmsError(`Send failed: ${err instanceof Error ? err.message : 'Unknown'}`);
         } finally {
             setSmsSending(false);
+            setSmsProgress(null);
         }
     }, [smsData, smsSelected, smsMessage, smsChannel, smsSegment, smsSubject, smsLocationFilter]);
 
@@ -1115,9 +1150,14 @@ export default function LeadsPipelinePage() {
                                                         if (ch === 'email') {
                                                             const et = smsData.emailTemplates?.[smsSegment];
                                                             if (et?.template) { setSmsMessage(et.template); setSmsSubject(et.subject || ''); }
+                                                            setSmsVariantId(null);
                                                         } else {
                                                             const t = smsData.templates?.[smsSegment];
-                                                            if (t?.template) setSmsMessage(t.template);
+                                                            const defaultVariant = t?.variants?.find((v: any) => v.id === t.defaultVariantId) || t?.variants?.[0];
+                                                            if (defaultVariant?.template) {
+                                                                setSmsMessage(defaultVariant.template);
+                                                                setSmsVariantId(defaultVariant.id);
+                                                            }
                                                         }
                                                     }}
                                                 >
@@ -1192,6 +1232,61 @@ export default function LeadsPipelinePage() {
                                     ))}
                                 </div>
 
+                                {/* Variant picker (SMS only) */}
+                                {smsChannel === 'sms' && (() => {
+                                    const segTemplate = smsData.templates?.[smsSegment];
+                                    const variants = segTemplate?.variants || [];
+                                    if (variants.length === 0) return null;
+                                    const activeVariant = variants.find((v: any) => v.id === smsVariantId);
+                                    return (
+                                        <div style={{ marginBottom: '16px' }}>
+                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
+                                                Message Variant — pick a copy strategy
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                                                {variants.map((v: any) => {
+                                                    const isActive = v.id === smsVariantId;
+                                                    return (
+                                                        <button
+                                                            key={v.id}
+                                                            onClick={() => {
+                                                                setSmsVariantId(v.id);
+                                                                setSmsMessage(v.template);
+                                                            }}
+                                                            style={{
+                                                                padding: '8px 14px',
+                                                                borderRadius: '8px',
+                                                                border: `1px solid ${isActive ? 'var(--accent-primary)' : 'rgba(255,255,255,0.1)'}`,
+                                                                background: isActive ? 'rgba(34,197,94,0.08)' : 'rgba(255,255,255,0.03)',
+                                                                color: isActive ? '#34D399' : 'var(--text-primary)',
+                                                                fontSize: '0.8125rem',
+                                                                fontWeight: isActive ? 600 : 400,
+                                                                cursor: 'pointer',
+                                                                transition: 'all 0.15s ease',
+                                                            }}
+                                                        >
+                                                            {v.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                            {activeVariant && (
+                                                <div style={{
+                                                    fontSize: '0.75rem',
+                                                    color: 'var(--text-muted)',
+                                                    fontStyle: 'italic',
+                                                    padding: '8px 12px',
+                                                    background: 'rgba(255,255,255,0.02)',
+                                                    border: '1px solid rgba(255,255,255,0.05)',
+                                                    borderRadius: '6px',
+                                                }}>
+                                                    {activeVariant.strategy}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+
                                 {/* Message editor */}
                                 <div style={{ marginBottom: '16px' }}>
                                     {smsChannel === 'email' && (
@@ -1219,7 +1314,12 @@ export default function LeadsPipelinePage() {
                                         }}
                                     />
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                                        Use {'{{firstName}}'} for personalization. {smsChannel === 'sms' ? `${smsMessage.length}/160 chars` : ''}
+                                        Use {'{{firstName}}'} and {'{{locationName}}'} for personalization.
+                                        {smsChannel === 'sms' && (
+                                            <span style={{ marginLeft: '8px', color: smsMessage.length > 160 ? '#FBBF24' : 'var(--text-muted)' }}>
+                                                {smsMessage.length}/160 chars{smsMessage.length > 160 ? ' (multi-segment — costs more, lower deliverability)' : ''}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
 
@@ -1280,14 +1380,59 @@ export default function LeadsPipelinePage() {
                                         </tbody>
                                     </table>
                                 </div>
+                                {filteredContacts.length > 50 && (
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px', marginTop: '-8px' }}>
+                                        Showing first 50 of {filteredContacts.length.toLocaleString()} contacts. Select-all targets all {filteredContacts.length.toLocaleString()}.
+                                    </div>
+                                )}
+
+                                {/* Batch info */}
+                                {(() => {
+                                    const batchSize = smsChannel === 'sms' ? 200 : 50;
+                                    const batches = Math.ceil(filteredSelectedCount / batchSize);
+                                    if (filteredSelectedCount > batchSize) {
+                                        return (
+                                            <div style={{
+                                                fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px',
+                                                padding: '8px 12px', background: 'rgba(251,191,36,0.08)',
+                                                borderRadius: '6px', border: '1px solid rgba(251,191,36,0.2)',
+                                            }}>
+                                                {filteredSelectedCount.toLocaleString()} contacts will be sent in {batches} batches of up to {batchSize} ({smsChannel === 'sms' ? '~40s' : '~50s'} each, ~1.5s between batches). Keep this tab open until complete.
+                                            </div>
+                                        );
+                                    }
+                                    return null;
+                                })()}
+
+                                {/* Live progress while sending */}
+                                {smsSending && smsProgress && (
+                                    <div style={{
+                                        marginBottom: '12px', padding: '10px 14px',
+                                        background: 'rgba(52,211,153,0.08)',
+                                        border: '1px solid rgba(52,211,153,0.25)',
+                                        borderRadius: '8px',
+                                        fontSize: '0.8125rem', color: '#34D399',
+                                    }}>
+                                        Sending batch {smsProgress.current} of {smsProgress.total} ({smsProgress.locKey}) · {smsProgress.sentSoFar} delivered so far
+                                        <div style={{
+                                            marginTop: '6px', height: '4px', background: 'rgba(255,255,255,0.06)',
+                                            borderRadius: '2px', overflow: 'hidden',
+                                        }}>
+                                            <div style={{
+                                                width: `${(smsProgress.current / smsProgress.total) * 100}%`,
+                                                height: '100%', background: '#34D399', transition: 'width 0.3s',
+                                            }} />
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Action buttons */}
                                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                    <button className="period-btn" onClick={() => setSmsStep(1)}>Back</button>
+                                    <button className="period-btn" onClick={() => setSmsStep(1)} disabled={smsSending}>Back</button>
                                     <button
                                         className="period-btn"
                                         onClick={sendTestMessage}
-                                        disabled={smsTestSending}
+                                        disabled={smsTestSending || smsSending}
                                         style={{ borderColor: '#FBBF24', color: '#FBBF24' }}
                                     >
                                         {smsTestSending ? 'Sending...' : 'Send Test'}
@@ -1325,6 +1470,11 @@ export default function LeadsPipelinePage() {
                                 )}
                                 {smsResults.skipped > 0 && (
                                     <div style={{ color: '#FBBF24', marginBottom: '8px' }}>{smsResults.skipped} skipped (DND/missing)</div>
+                                )}
+                                {smsResults.batches > 1 && (
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', marginBottom: '8px' }}>
+                                        Sent across {smsResults.batches} batches
+                                    </div>
                                 )}
                                 {smsResults.errors?.length > 0 && (
                                     <div style={{ color: '#F87171', fontSize: '0.8125rem', marginTop: '8px' }}>
