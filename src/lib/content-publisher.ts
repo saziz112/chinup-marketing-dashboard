@@ -407,6 +407,17 @@ export async function archiveOldPosts(daysOld = 7): Promise<number> {
     return result.rowCount ?? 0;
 }
 
+export async function setPostArchived(id: string, archived: boolean): Promise<PostRecord | null> {
+    await ensurePostsTable();
+
+    const result = archived
+        ? await sql`UPDATE content_posts SET archived_at = NOW() WHERE id = ${id} RETURNING *`
+        : await sql`UPDATE content_posts SET archived_at = NULL WHERE id = ${id} RETURNING *`;
+
+    if (result.rows.length === 0) return null;
+    return rowToPost(result.rows[0]);
+}
+
 // ─── Publishing Stats for Goals ─────────────────────────────────────────────
 
 export async function getPostCountByPlatform(

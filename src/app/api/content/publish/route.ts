@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import {
     createPost, getPosts, updatePostStatus, deletePost, updatePost,
+    setPostArchived,
     PublishRequest, PostStatus, getPostCountByPlatform
 } from '@/lib/content-publisher';
 import { startOfWeek, endOfWeek, format } from 'date-fns';
@@ -110,6 +111,15 @@ export async function PUT(req: Request) {
 
         if (!id) {
             return NextResponse.json({ error: 'Post ID is required' }, { status: 400 });
+        }
+
+        // Archive / unarchive (works on any status, including PUBLISHED/FAILED/PARTIAL)
+        if (typeof fields.archived === 'boolean' && Object.keys(fields).length === 1) {
+            const updated = await setPostArchived(id, fields.archived);
+            if (!updated) {
+                return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+            }
+            return NextResponse.json({ post: updated });
         }
 
         // If only status is being updated, use the simpler function

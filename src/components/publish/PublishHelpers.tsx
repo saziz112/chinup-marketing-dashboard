@@ -4,9 +4,9 @@ import { useState, useMemo } from 'react';
 import {
     Clock, LayoutTemplate, ChevronLeft, ChevronRight, Plus,
     Edit3, Archive, User, MapPin, Loader2, Zap, CheckCircle, Target,
-    Instagram, Facebook, Youtube, RefreshCw, AlertCircle,
+    Instagram, Facebook, Youtube, RefreshCw, AlertCircle, X,
 } from 'lucide-react';
-import { format, formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
 import type { PostRecord } from '@/lib/content-publisher';
 import { categorizeError } from '@/lib/publish-errors';
 
@@ -334,6 +334,23 @@ export function HistoryList({ posts, showArchived, onToggleArchived, onUpdate }:
     const [statusFilter, setStatusFilter] = useState<string>('ALL');
     const [retrying, setRetrying] = useState<Record<string, boolean>>({});
     const [retryFeedback, setRetryFeedback] = useState<Record<string, { type: 'success' | 'error'; message: string }>>({});
+    const [archiving, setArchiving] = useState<Record<string, boolean>>({});
+
+    const handleArchive = async (postId: string, archive: boolean) => {
+        setArchiving(prev => ({ ...prev, [postId]: true }));
+        try {
+            await fetch('/api/content/publish', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: postId, archived: archive }),
+            });
+            if (onUpdate) onUpdate();
+        } catch (e) {
+            console.error('Archive failed', e);
+        } finally {
+            setArchiving(prev => ({ ...prev, [postId]: false }));
+        }
+    };
 
     const handleRetry = async (postId: string) => {
         setRetrying(prev => ({ ...prev, [postId]: true }));
@@ -380,6 +397,39 @@ export function HistoryList({ posts, showArchived, onToggleArchived, onUpdate }:
     ];
 
     const filteredPosts = statusFilter === 'ALL' ? posts : posts.filter(p => p.status === statusFilter);
+
+    // Group by ET calendar date, using publishedAt when available, otherwise createdAt
+    const groupedByDate = useMemo(() => {
+        const groups = new Map<string, { label: string; posts: PostRecord[]; sortKey: number }>();
+        const now = new Date();
+
+        for (const post of filteredPosts) {
+            const refDate = new Date(post.publishedAt || post.createdAt);
+            const dateKey = refDate.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+            let label: string;
+            if (isToday(refDate)) label = 'Today';
+            else if (isYesterday(refDate)) label = 'Yesterday';
+            else if (refDate.getFullYear() === now.getFullYear()) label = format(refDate, 'EEE, MMM d');
+            else label = format(refDate, 'MMM d, yyyy');
+
+            const existing = groups.get(dateKey);
+            if (existing) existing.posts.push(post);
+            else groups.set(dateKey, { label, posts: [post], sortKey: refDate.getTime() });
+        }
+
+        // Sort posts inside each group (newest first), then sort groups (newest first)
+        for (const g of groups.values()) {
+            g.posts.sort((a, b) => {
+                const aT = new Date(a.publishedAt || a.createdAt).getTime();
+                const bT = new Date(b.publishedAt || b.createdAt).getTime();
+                return bT - aT;
+            });
+        }
+
+        return Array.from(groups.entries())
+            .sort((a, b) => b[1].sortKey - a[1].sortKey)
+            .map(([key, g]) => ({ key, label: g.label, posts: g.posts }));
+    }, [filteredPosts]);
 
     if (posts.length === 0) {
         return (
@@ -434,8 +484,23 @@ export function HistoryList({ posts, showArchived, onToggleArchived, onUpdate }:
                     </p>
                 </div>
             ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {filteredPosts.map(post => {
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {groupedByDate.map(group => (
+                    <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{
+                            display: 'flex', alignItems: 'center', gap: '10px',
+                            padding: '4px 2px',
+                            borderBottom: '1px solid rgba(255,255,255,0.06)',
+                            paddingBottom: '6px',
+                        }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#ccc', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                {group.label}
+                            </span>
+                            <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                                {group.posts.length} {group.posts.length === 1 ? 'post' : 'posts'}
+                            </span>
+                        </div>
+                        {group.posts.map(post => {
                     const st = statusStyles[post.status] || statusStyles.DRAFT;
                     const meta = post.metadata as any;
                     const gbpLocs: string[] = meta?.gbpLocations || [];
@@ -558,29 +623,51 @@ export function HistoryList({ posts, showArchived, onToggleArchived, onUpdate }:
                                     )}
                                 </div>
 
-                                {/* Retry button for FAILED/PARTIAL posts */}
-                                {(post.status === 'FAILED' || post.status === 'PARTIAL') && !isArchived && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flexShrink: 0, alignSelf: 'flex-start' }}>
+                                    {/* Retry button for FAILED/PARTIAL posts */}
+                                    {(post.status === 'FAILED' || post.status === 'PARTIAL') && !isArchived && (
+                                        <button
+                                            onClick={() => handleRetry(post.id)}
+                                            disabled={retrying[post.id]}
+                                            style={{
+                                                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                                cursor: retrying[post.id] ? 'wait' : 'pointer', color: '#eab308',
+                                                fontSize: '0.75rem', fontWeight: 600, padding: '6px 12px', borderRadius: '6px',
+                                                display: 'flex', alignItems: 'center', gap: '4px',
+                                                opacity: retrying[post.id] ? 0.6 : 1,
+                                            }}
+                                        >
+                                            {retrying[post.id]
+                                                ? <Loader2 size={12} style={{ animation: 'spin 0.8s linear infinite' }} />
+                                                : <RefreshCw size={12} />}
+                                            {retrying[post.id] ? 'Retrying…' : 'Retry'}
+                                        </button>
+                                    )}
+                                    {/* Archive / Restore button */}
                                     <button
-                                        onClick={() => handleRetry(post.id)}
-                                        disabled={retrying[post.id]}
+                                        onClick={() => handleArchive(post.id, !isArchived)}
+                                        disabled={archiving[post.id]}
+                                        title={isArchived ? 'Restore to active history' : 'Hide from history'}
                                         style={{
-                                            background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
-                                            cursor: retrying[post.id] ? 'wait' : 'pointer', color: '#eab308',
-                                            fontSize: '0.75rem', fontWeight: 600, padding: '6px 12px', borderRadius: '6px',
-                                            display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, alignSelf: 'flex-start',
-                                            opacity: retrying[post.id] ? 0.6 : 1,
+                                            background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
+                                            cursor: archiving[post.id] ? 'wait' : 'pointer', color: 'var(--text-muted)',
+                                            fontSize: '0.6875rem', fontWeight: 500, padding: '5px 10px', borderRadius: '6px',
+                                            display: 'flex', alignItems: 'center', gap: '4px',
+                                            opacity: archiving[post.id] ? 0.5 : 1,
                                         }}
                                     >
-                                        {retrying[post.id]
-                                            ? <Loader2 size={12} style={{ animation: 'spin 0.8s linear infinite' }} />
-                                            : <RefreshCw size={12} />}
-                                        {retrying[post.id] ? 'Retrying…' : 'Retry'}
+                                        {archiving[post.id]
+                                            ? <Loader2 size={11} style={{ animation: 'spin 0.8s linear infinite' }} />
+                                            : (isArchived ? <RefreshCw size={11} /> : <X size={11} />)}
+                                        {isArchived ? 'Restore' : 'Dismiss'}
                                     </button>
-                                )}
+                                </div>
                             </div>
                         </div>
                     );
                 })}
+                    </div>
+                ))}
             </div>
             )}
 
