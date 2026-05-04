@@ -106,8 +106,10 @@ export default function ResearchPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ month: selectedMonth, year: selectedYear, focus: trendFocus }),
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to generate trends');
+            const text = await res.text();
+            let data: any = {};
+            try { data = text ? JSON.parse(text) : {}; } catch { /* non-JSON body (e.g. Vercel timeout page) */ }
+            if (!res.ok) throw new Error(data.error || text.slice(0, 200) || `Failed to generate trends (${res.status})`);
             setTrends(data.topics || []);
             setFeedback(data.feedback || null);
             setTrendLastGenerated(new Date().toLocaleTimeString());
@@ -132,8 +134,10 @@ export default function ResearchPage() {
                     savedTopics: trends.length > 0 ? trends : undefined,
                 }),
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to generate calendar');
+            const text = await res.text();
+            let data: any = {};
+            try { data = text ? JSON.parse(text) : {}; } catch { /* non-JSON body (e.g. Vercel timeout page) */ }
+            if (!res.ok) throw new Error(data.error || text.slice(0, 200) || `Failed to generate calendar (${res.status})`);
             setCalendarDays(data.days || []);
             setCalendarLastGenerated(new Date().toLocaleTimeString());
         } catch (e: any) {

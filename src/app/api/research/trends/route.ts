@@ -25,6 +25,8 @@ import { getIGCompetitorMetrics, type IGCompetitorMetrics } from '@/lib/integrat
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
+export const maxDuration = 300;
+
 export const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
