@@ -7,6 +7,7 @@ import {
     getFBPageInfo,
     getFBInsights,
 } from '@/lib/integrations/meta-organic';
+import { generateAIFBCoachingPlan } from '@/lib/fb-coaching-ai';
 
 export async function GET(request: NextRequest) {
     try {
@@ -52,6 +53,25 @@ export async function GET(request: NextRequest) {
             ? Math.round((totalEngagements / totalVideoViews) * 10000) / 100
             : 0;
 
+        const followerChangePercent = pageInfo.followersCount > 0
+            ? Math.round((followerChange / pageInfo.followersCount) * 10000) / 100
+            : 0;
+
+        // AI coaching — cached 12h, returns null on failure
+        const aiCoachingPlan = await generateAIFBCoachingPlan({
+            period: periodParam as '7d' | '30d' | '90d',
+            pageName: pageInfo.name,
+            metrics: {
+                followers: pageInfo.followersCount,
+                followerChange,
+                followerChangePercent,
+                totalVideoViews,
+                totalEngagements,
+                totalPageViews,
+                engagementRate,
+            },
+        });
+
         return NextResponse.json({
             configured: true,
             page: {
@@ -64,15 +84,15 @@ export async function GET(request: NextRequest) {
             summary: {
                 followers: pageInfo.followersCount,
                 followerChange,
-                followerChangePercent: pageInfo.followersCount > 0
-                    ? Math.round((followerChange / pageInfo.followersCount) * 10000) / 100
-                    : 0,
+                followerChangePercent,
                 totalVideoViews,
                 totalEngagements,
                 totalPageViews,
                 engagementRate,
             },
             dailyInsights: insights,
+            aiCoachingPlan,
+            days,
             period: periodParam,
             since,
             until,

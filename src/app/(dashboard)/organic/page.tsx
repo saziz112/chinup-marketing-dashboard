@@ -6,17 +6,22 @@ import { useState, useEffect, useCallback } from 'react';
 import { SkeletonKpiCard, SkeletonChart } from '@/components/Skeleton';
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-    Tooltip, ResponsiveContainer, Legend,
+    Tooltip, ResponsiveContainer, Legend, Cell,
 } from 'recharts';
 import { formatNumber, formatDate } from '@/lib/format';
 import { TOOLTIP_STYLE } from '@/lib/constants';
 import {
-    type Period, type PlatformTab, type IGData, type YTData, type ContentPost, type FBData,
-    YouTubeTab, TikTokTab, ContentTab,
+    type Period, type PlatformTab, type IGData, type YTData, type FBData, type RepurposingData,
+    YouTubeTab, InboxTab, RepurposingTab,
+    IGScorecard, ContentMixBar, CoachingBanner, CoachingPanel, TopBottomPosts, ActiveStories,
 } from '@/components/organic/OrganicHelpers';
+import { generateCoachingPlan } from '@/lib/ig-coaching';
+import { generateFBCoachingPlan } from '@/lib/fb-coaching';
+import { generateYTCoachingPlan } from '@/lib/yt-coaching';
+import { generateAllPlatformsInsights } from '@/lib/all-platforms-insights';
 import MetaTokenBanner from '@/components/MetaTokenBanner';
 
-const PLATFORMS: PlatformTab[] = ['All Platforms', 'Instagram', 'Facebook', 'YouTube', 'TikTok', 'Content'];
+const PLATFORMS: PlatformTab[] = ['All Platforms', 'Instagram', 'Inbox', 'Facebook', 'YouTube', 'Repurposing'];
 
 export default function OrganicPage() {
     const { data: session } = useSession();
@@ -27,10 +32,10 @@ export default function OrganicPage() {
         const tab = searchParams.get('tab');
         const map: Record<string, PlatformTab> = {
             instagram: 'Instagram',
+            inbox: 'Inbox',
             facebook: 'Facebook',
             youtube: 'YouTube',
-            tiktok: 'TikTok',
-            content: 'Content',
+            repurposing: 'Repurposing',
         };
         return map[tab || ''] || 'All Platforms';
     };
@@ -42,30 +47,31 @@ export default function OrganicPage() {
     const [igData, setIGData] = useState<IGData | null>(null);
     const [fbData, setFBData] = useState<FBData | null>(null);
     const [ytData, setYTData] = useState<YTData | null>(null);
-    const [ttData, setTTData] = useState<any | null>(null);
 
-    // Content tab state
-    const [contentPosts, setContentPosts] = useState<ContentPost[]>([]);
-    const [contentLoading, setContentLoading] = useState(false);
-    const [contentFetched, setContentFetched] = useState(false);
-    const [contentPlatformFilter, setContentPlatformFilter] = useState<'all' | 'instagram' | 'youtube'>('all');
-    const [contentSortKey, setContentSortKey] = useState<keyof ContentPost>('publishedAt');
-    const [contentSortOrder, setContentSortOrder] = useState<'asc' | 'desc'>('desc');
+    // Repurposing tab state (lazy-loaded on tab open)
+    const [repurposingData, setRepurposingData] = useState<RepurposingData | null>(null);
+    const [repurposingLoading, setRepurposingLoading] = useState(false);
+    const [repurposingFetched, setRepurposingFetched] = useState(false);
+
+    // IG posts table state (Phase 2 — sort + filter)
+    type IGSortKey = 'timestamp' | 'engagementRate' | 'reach' | 'views' | 'likeCount' | 'commentsCount' | 'shares' | 'saved';
+    type IGFilter = 'all' | 'reels' | 'carousels' | 'photos';
+    const [igSortKey, setIGSortKey] = useState<IGSortKey>('timestamp');
+    const [igSortOrder, setIGSortOrder] = useState<'asc' | 'desc'>('desc');
+    const [igFilter, setIGFilter] = useState<IGFilter>('all');
 
     const fetchData = useCallback(async () => {
         setLoading(true);
 
-        const [igRes, fbRes, ytRes, ttRes] = await Promise.allSettled([
+        const [igRes, fbRes, ytRes] = await Promise.allSettled([
             fetch(`/api/organic/instagram?period=${period}`).then(r => r.json()),
             fetch(`/api/organic/facebook?period=${period}`).then(r => r.json()),
             fetch(`/api/organic/youtube?period=${period}`).then(r => r.json()),
-            fetch(`/api/organic/tiktok?period=${period}`).then(r => r.json()),
         ]);
 
         setIGData(igRes.status === 'fulfilled' ? igRes.value : null);
         setFBData(fbRes.status === 'fulfilled' ? fbRes.value : null);
         setYTData(ytRes.status === 'fulfilled' ? ytRes.value : null);
-        setTTData(ttRes.status === 'fulfilled' ? ttRes.value : null);
         setLoading(false);
     }, [period]);
 
@@ -73,22 +79,21 @@ export default function OrganicPage() {
         if (session) fetchData();
     }, [session, fetchData]);
 
-    // Lazy-fetch content data only when Content tab is first selected
+    // Lazy-fetch repurposing data only when Repurposing tab is first selected
     useEffect(() => {
-        if (activeTab === 'Content' && !contentFetched && !contentLoading) {
-            setContentLoading(true);
-            fetch('/api/content/posts')
+        if (activeTab === 'Repurposing' && !repurposingFetched && !repurposingLoading) {
+            setRepurposingLoading(true);
+            fetch('/api/organic/repurposing')
                 .then(r => r.json())
-                .then(data => { setContentPosts(data.posts || []); setContentFetched(true); })
-                .catch(() => {})
-                .finally(() => setContentLoading(false));
+                .then(data => { setRepurposingData(data); setRepurposingFetched(true); })
+                .catch(() => { setRepurposingData({ configured: false, error: 'Failed to load' }); })
+                .finally(() => setRepurposingLoading(false));
         }
-    }, [activeTab, contentFetched, contentLoading]);
+    }, [activeTab, repurposingFetched, repurposingLoading]);
 
     const igConfigured = igData?.configured && !igData?.error;
     const fbConfigured = fbData?.configured && !fbData?.error;
     const ytConfigured = ytData?.configured && !ytData?.error;
-    const ttConfigured = ttData?.configured && !ttData?.error;
 
     // Combined daily data for "All Platforms" view
     const combinedDaily = (() => {
@@ -144,65 +149,153 @@ export default function OrganicPage() {
             );
         }
 
+        // Compute cross-platform insights
+        const insights = generateAllPlatformsInsights({
+            ig: igConfigured && igData?.summary && igData?.cadence
+                ? {
+                    configured: true,
+                    engagementRate: igData.summary.engagementRate,
+                    followers: igData.summary.followers,
+                    followerChangePercent: igData.summary.followerChangePercent,
+                    reelsPerWeek: igData.cadence.reelsPerWeek,
+                    feedPostsPerWeek: igData.cadence.feedPostsPerWeek,
+                }
+                : null,
+            fb: fbConfigured && fbData?.summary
+                ? {
+                    configured: true,
+                    engagementRate: fbData.summary.engagementRate,
+                    followers: fbData.summary.followers,
+                    followerChangePercent: fbData.summary.followerChangePercent,
+                    videoViews: fbData.summary.totalVideoViews,
+                }
+                : null,
+            yt: ytConfigured && ytData?.summary
+                ? {
+                    configured: true,
+                    engagementRate: ytData.summary.engagementRate,
+                    subscribers: ytData.summary.subscribers,
+                    videosInPeriod: ytData.videosInPeriod || 0,
+                    avgViewsPerVideo: ytData.summary.avgViewsPerVideo,
+                }
+                : null,
+        });
+
+        // Honest aggregates
+        const totalFollowers = (igData?.summary?.followers || 0) + (fbData?.summary?.followers || 0) + (ytData?.summary?.subscribers || 0);
+        const totalEngagement = (igData?.summary?.totalInteractions || 0) + (fbData?.summary?.totalEngagements || 0) + (ytData?.summary?.recentVideoLikes || 0) + (ytData?.summary?.recentVideoComments || 0);
+
+        // Weighted follower-growth: weight each platform's % by its follower count
+        const followerGrowthWeighted = (() => {
+            const parts: Array<{ pct: number; w: number }> = [];
+            if (igData?.summary) parts.push({ pct: igData.summary.followerChangePercent, w: igData.summary.followers });
+            if (fbData?.summary) parts.push({ pct: fbData.summary.followerChangePercent, w: fbData.summary.followers });
+            // YT doesn't expose subscriber change
+            const totalW = parts.reduce((s, p) => s + p.w, 0);
+            if (totalW === 0) return 0;
+            return Math.round((parts.reduce((s, p) => s + p.pct * p.w, 0) / totalW) * 100) / 100;
+        })();
+
+        // Comparison chart data — engagement rate per platform
+        const comparisonData = insights.healthByPlatform.map(h => ({
+            platform: h.label,
+            engagementRate: h.primaryEngagementRate,
+            healthScore: Math.round(h.score),
+            color: h.color,
+        }));
+
         return (
             <>
-                {/* KPI Cards */}
+                {/* "Where to Focus" coaching panel */}
+                {insights.whereToFocus && (
+                    <div className="section-card" style={{
+                        marginBottom: 24,
+                        background: `linear-gradient(135deg, ${insights.whereToFocus.targetPlatform === 'instagram' ? 'rgba(225,48,108,0.06)' : insights.whereToFocus.targetPlatform === 'facebook' ? 'rgba(24,119,242,0.06)' : 'rgba(255,0,0,0.05)'} 0%, rgba(168,139,250,0.04) 100%)`,
+                        border: '1px solid rgba(168, 139, 250, 0.2)',
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                            <span style={{ fontSize: 20, lineHeight: '24px' }}>★</span>
+                            <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                                    <strong style={{ color: 'var(--text-primary)', fontSize: 15 }}>Where to Focus</strong>
+                                    <span style={{
+                                        fontSize: 10, padding: '2px 8px', borderRadius: 999,
+                                        background: 'rgba(168, 139, 250, 0.15)', color: '#a78bfa', fontWeight: 600,
+                                    }}>RECOMMENDATION</span>
+                                </div>
+                                <h4 style={{ margin: '4px 0 4px 0', color: 'var(--text-primary)' }}>{insights.whereToFocus.title}</h4>
+                                <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 8px 0', lineHeight: 1.5 }}>
+                                    {insights.whereToFocus.body}
+                                </p>
+                                <div style={{
+                                    color: 'var(--text-primary)', fontSize: 13, padding: '8px 12px',
+                                    background: 'rgba(255,255,255,0.04)', borderRadius: 6,
+                                    borderLeft: '3px solid #a78bfa',
+                                }}>
+                                    <strong style={{ color: '#a78bfa' }}>Action:</strong> {insights.whereToFocus.suggestedAction}
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setActiveTab(insights.whereToFocus!.targetPlatform === 'instagram' ? 'Instagram' : insights.whereToFocus!.targetPlatform === 'facebook' ? 'Facebook' : 'YouTube')}
+                                style={{
+                                    background: '#a78bfa', color: 'white', border: 'none',
+                                    padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500,
+                                    cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                                }}
+                            >
+                                Open →
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Top KPI cards */}
                 <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-                    <div className="metric-card">
+                    <div className="metric-card" title="Sum of followers across all connected platforms">
                         <div className="label">Total Followers</div>
-                        <div className="value">
-                            {formatNumber(
-                                (igData?.summary?.followers || 0) + (fbData?.summary?.followers || 0) + (ytData?.summary?.subscribers || 0)
-                            )}
+                        <div className="value">{formatNumber(totalFollowers)}</div>
+                        <div className={`change ${followerGrowthWeighted >= 0 ? 'positive' : 'negative'}`}>
+                            {followerGrowthWeighted >= 0 ? '+' : ''}{followerGrowthWeighted}% weighted
                         </div>
-                        <div className="change">Across connected platforms</div>
                     </div>
-                    <div className="metric-card">
-                        <div className="label">Total Reach</div>
-                        <div className="value">
-                            {formatNumber(
-                                (igData?.summary?.totalReach || 0) + (fbData?.summary?.totalVideoViews || 0) + (ytData?.summary?.recentVideoViews || 0)
-                            )}
-                        </div>
-                        <div className="change">IG reach + FB/YT views</div>
-                    </div>
-                    <div className="metric-card">
+                    <div className="metric-card" title="Total interactions: IG (likes+comments+shares+saves) + FB engagements + YT likes+comments">
                         <div className="label">Total Engagement</div>
-                        <div className="value">
-                            {formatNumber(
-                                (igData?.summary?.totalInteractions || 0) + (fbData?.summary?.totalEngagements || 0) + (ytData?.summary?.recentVideoLikes || 0) + (ytData?.summary?.recentVideoComments || 0)
-                            )}
-                        </div>
-                        <div className="change">Interactions + engagements</div>
+                        <div className="value">{formatNumber(totalEngagement)}</div>
+                        <div className="change">All interactions</div>
                     </div>
-                    <div className="metric-card">
-                        <div className="label">Avg Engagement Rate</div>
-                        <div className="value">
-                            {(() => {
-                                const rates = [
-                                    igConfigured ? igData?.summary?.engagementRate : null,
-                                    fbConfigured ? fbData?.summary?.engagementRate : null,
-                                    ytConfigured ? ytData?.summary?.engagementRate : null,
-                                ].filter((r): r is number => r !== null && r !== undefined);
-                                return rates.length > 0
-                                    ? `${(rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(2)}%`
-                                    : '--%';
-                            })()}
+                    <div className="metric-card" title={insights.bestPlatform ? `Highest health score across configured platforms (${Math.round(insights.bestPlatform.score)}/100)` : ''}>
+                        <div className="label">Best Platform</div>
+                        <div className="value" style={{ color: insights.bestPlatform?.color || 'var(--text-primary)' }}>
+                            {insights.bestPlatform?.label || '—'}
                         </div>
-                        <div className="change">Weighted average</div>
+                        <div className="change">
+                            {insights.bestPlatform ? `${Math.round(insights.bestPlatform.score)}/100 health · ${insights.bestPlatform.primaryEngagementRate}% ER` : ''}
+                        </div>
+                    </div>
+                    <div className="metric-card" title="Platform with highest output cadence right now">
+                        <div className="label">Most Active</div>
+                        <div className="value">{insights.mostActivePlatform?.label || '—'}</div>
+                        <div className="change">{insights.mostActivePlatform?.activityLabel || ''}</div>
                     </div>
                 </div>
 
                 {/* Platform Summary Cards */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                    {igConfigured && igData?.summary && (
+                    {igConfigured && igData?.summary && (() => {
+                        const igHealth = insights.healthByPlatform.find(h => h.key === 'instagram');
+                        return (
                         <div className={`section-card ${activeTab === 'Instagram' ? 'active-tab-card' : ''}`} style={{ cursor: 'pointer', borderColor: activeTab === 'Instagram' ? 'var(--accent-primary)' : 'var(--border)' }} onClick={() => setActiveTab('Instagram')}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                                 <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(225, 48, 108, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '1rem', color: '#E1306C' }}>I</div>
-                                <div>
+                                <div style={{ flex: 1 }}>
                                     <div style={{ fontWeight: 600 }}>Instagram</div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>@{igData.profile?.username}</div>
                                 </div>
+                                {igHealth && (
+                                    <span title={`Health: ${igHealth.grade.label} (${Math.round(igHealth.score)}/100)`} style={{
+                                        width: 10, height: 10, borderRadius: '50%', background: igHealth.grade.color, flexShrink: 0,
+                                    }} />
+                                )}
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
                                 <div>
@@ -222,16 +315,23 @@ export default function OrganicPage() {
                                 </div>
                             </div>
                         </div>
-                    )}
+                    );})()}
 
-                    {fbConfigured && fbData?.summary && (
+                    {fbConfigured && fbData?.summary && (() => {
+                        const fbHealth = insights.healthByPlatform.find(h => h.key === 'facebook');
+                        return (
                         <div className={`section-card ${activeTab === 'Facebook' ? 'active-tab-card' : ''}`} style={{ cursor: 'pointer', borderColor: activeTab === 'Facebook' ? 'var(--accent-primary)' : 'var(--border)' }} onClick={() => setActiveTab('Facebook')}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                                 <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(24, 119, 242, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '1rem', color: '#1877F2' }}>F</div>
-                                <div>
+                                <div style={{ flex: 1 }}>
                                     <div style={{ fontWeight: 600 }}>Facebook</div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{fbData.page?.name}</div>
                                 </div>
+                                {fbHealth && (
+                                    <span title={`Health: ${fbHealth.grade.label} (${Math.round(fbHealth.score)}/100)`} style={{
+                                        width: 10, height: 10, borderRadius: '50%', background: fbHealth.grade.color, flexShrink: 0,
+                                    }} />
+                                )}
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
                                 <div>
@@ -251,21 +351,31 @@ export default function OrganicPage() {
                                 </div>
                             </div>
                         </div>
-                    )}
+                    );})()}
 
-                    {ytConfigured && ytData?.summary && (
+                    {ytConfigured && ytData?.summary && (() => {
+                        const ytHealth = insights.healthByPlatform.find(h => h.key === 'youtube');
+                        return (
                         <div className={`section-card ${activeTab === 'YouTube' ? 'active-tab-card' : ''}`} style={{ cursor: 'pointer', borderColor: activeTab === 'YouTube' ? 'var(--accent-primary)' : 'var(--border)' }} onClick={() => setActiveTab('YouTube')}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                                 <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(255, 0, 0, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '1rem', color: '#FF0000' }}>Y</div>
-                                <div>
+                                <div style={{ flex: 1 }}>
                                     <div style={{ fontWeight: 600 }}>YouTube</div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{ytData.channel?.title}</div>
                                 </div>
+                                {ytHealth && (
+                                    <span title={`Health: ${ytHealth.grade.label} (${Math.round(ytHealth.score)}/100)`} style={{
+                                        width: 10, height: 10, borderRadius: '50%', background: ytHealth.grade.color, flexShrink: 0,
+                                    }} />
+                                )}
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
                                 <div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Subscribers</div>
                                     <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{formatNumber(ytData.summary.subscribers)}</div>
+                                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                                        {ytData.videosInPeriod || 0} videos / {period}
+                                    </div>
                                 </div>
                                 <div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Views</div>
@@ -277,72 +387,40 @@ export default function OrganicPage() {
                                 </div>
                             </div>
                         </div>
-                    )}
-
-                    {ttConfigured && ttData?.summary && (
-                        <div className={`section-card ${activeTab === 'TikTok' ? 'active-tab-card' : ''}`} style={{ cursor: 'pointer', borderColor: activeTab === 'TikTok' ? 'var(--accent-primary)' : 'var(--border)' }} onClick={() => setActiveTab('TikTok')}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(0, 0, 0, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '1rem', color: '#fff', backgroundImage: 'linear-gradient(135deg, #25F4EE, #FE2C55)' }}>T</div>
-                                <div>
-                                    <div style={{ fontWeight: 600 }}>TikTok</div>
-                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>@{ttData.profile?.username}</div>
-                                </div>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-                                <div>
-                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Followers</div>
-                                    <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{formatNumber(ttData.summary.followers)}</div>
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Avg Views</div>
-                                    <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{formatNumber(ttData.summary.avgViews)}</div>
-                                </div>
-                                <div>
-                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Engagement</div>
-                                    <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{(ttData.summary.engagementRate * 100).toFixed(1)}%</div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
+                    );})()}
 
                 </div>
 
-                {/* Combined Trend Charts */}
-                {combinedDaily.length > 0 && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-                        <div className="chart-container">
-                            <div className="chart-header">
-                                <h3>Reach & Views</h3>
-                                <span className="badge info">{period}</span>
-                            </div>
-                            <ResponsiveContainer width="100%" height={280}>
-                                <LineChart data={combinedDaily} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                                    <XAxis dataKey="date" tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={formatDate} />
-                                    <YAxis tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
-                                    <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(label) => formatDate(String(label))} />
-                                    <Legend wrapperStyle={{ color: '#E4E4E7', fontSize: '0.8125rem' }} />
-                                    {igConfigured && <Line type="monotone" dataKey="igReach" name="IG Reach" stroke="#E1306C" strokeWidth={2} dot={false} />}
-                                    {fbConfigured && <Line type="monotone" dataKey="fbVideoViews" name="FB Video Views" stroke="#1877F2" strokeWidth={2} dot={false} />}
-                                </LineChart>
-                            </ResponsiveContainer>
+                {/* Platform Comparison Chart — engagement rate side-by-side */}
+                {comparisonData.length > 0 && (
+                    <div className="chart-container">
+                        <div className="chart-header">
+                            <h3>Platform Comparison — Engagement Rate</h3>
+                            <span className="badge info">{period}</span>
                         </div>
-
-                        <div className="chart-container">
-                            <div className="chart-header">
-                                <h3>Engagement</h3>
-                                <span className="badge info">{period}</span>
-                            </div>
-                            <ResponsiveContainer width="100%" height={280}>
-                                <BarChart data={combinedDaily} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                                    <XAxis dataKey="date" tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={formatDate} />
-                                    <YAxis tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
-                                    <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(label) => formatDate(String(label))} />
-                                    <Legend wrapperStyle={{ color: '#E4E4E7', fontSize: '0.8125rem' }} />
-                                    {fbConfigured && <Bar dataKey="fbEngagements" name="FB Engagements" fill="#1877F2" radius={[4, 4, 0, 0]} />}
-                                </BarChart>
-                            </ResponsiveContainer>
+                        <ResponsiveContainer width="100%" height={240}>
+                            <BarChart data={comparisonData} margin={{ top: 16, right: 20, left: 10, bottom: 5 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                <XAxis dataKey="platform" tick={{ fill: '#A1A1AA', fontSize: 12 }} />
+                                <YAxis tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+                                <Tooltip
+                                    contentStyle={TOOLTIP_STYLE}
+                                    formatter={(value) => [`${value}%`, 'ER']}
+                                />
+                                <Bar dataKey="engagementRate" radius={[4, 4, 0, 0]}>
+                                    {comparisonData.map((d, i) => (
+                                        <Cell key={i} fill={d.color} />
+                                    ))}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 8, flexWrap: 'wrap', gap: 12 }}>
+                            {comparisonData.map(d => (
+                                <div key={d.platform} style={{ textAlign: 'center', fontSize: 11 }}>
+                                    <div style={{ color: d.color, fontWeight: 600 }}>{d.platform}</div>
+                                    <div style={{ color: 'var(--text-muted)' }}>Health: {d.healthScore}/100</div>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 )}
@@ -355,39 +433,100 @@ export default function OrganicPage() {
         if (igData?.error) return renderError('Instagram', igData.error);
         if (!igConfigured) return renderNotConnected('Instagram');
         const s = igData!.summary!;
+        const deltas = igData!.deltas;
+        const cadence = igData!.cadence;
+        const contentMix = igData!.contentMix;
+        const stories = igData!.stories || [];
+        const commentReplyStats = igData!.commentReplyStats;
         const insights = igData!.dailyInsights || [];
         const posts = igData!.posts || [];
 
+        // Render delta change line ("+12.3% vs prev")
+        const renderDelta = (pct: number | undefined): React.ReactNode => {
+            if (pct === undefined || pct === null) return null;
+            const positive = pct >= 0;
+            return (
+                <span className={positive ? 'positive' : 'negative'}>
+                    {positive ? '+' : ''}{pct}% vs prev
+                </span>
+            );
+        };
+
+        // Filter + sort posts for the table
+        const filteredPosts = posts.filter(p => {
+            if (igFilter === 'all') return true;
+            if (igFilter === 'reels') return p.mediaType === 'VIDEO';
+            if (igFilter === 'carousels') return p.mediaType === 'CAROUSEL_ALBUM';
+            if (igFilter === 'photos') return p.mediaType === 'IMAGE';
+            return true;
+        });
+        const sortedPosts = [...filteredPosts].sort((a, b) => {
+            const av = igSortKey === 'timestamp' ? new Date(a.timestamp).getTime() : (a as any)[igSortKey] || 0;
+            const bv = igSortKey === 'timestamp' ? new Date(b.timestamp).getTime() : (b as any)[igSortKey] || 0;
+            return igSortOrder === 'asc' ? av - bv : bv - av;
+        });
+        const handleSort = (key: IGSortKey) => {
+            if (igSortKey === key) {
+                setIGSortOrder(igSortOrder === 'asc' ? 'desc' : 'asc');
+            } else {
+                setIGSortKey(key);
+                setIGSortOrder('desc');
+            }
+        };
+        const sortIndicator = (key: IGSortKey) => igSortKey === key ? (igSortOrder === 'asc' ? ' ▲' : ' ▼') : '';
+
         return (
             <>
-                {/* KPI Cards */}
-                <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
-                    <div className="metric-card">
+                {/* Coaching + Health Scorecard */}
+                {cadence && (
+                    <>
+                        <CoachingBanner cadence={cadence} summary={s} deltas={deltas} commentReplyStats={commentReplyStats} />
+                        <CoachingPanel
+                            platformLabel="Instagram"
+                            plan={generateCoachingPlan({
+                                reelsPerWeek: cadence.reelsPerWeek,
+                                feedPostsPerWeek: cadence.feedPostsPerWeek,
+                                carouselMixPercent: cadence.carouselMixPercent,
+                                storiesActive: cadence.storiesActive,
+                                engagementRate: s.engagementRate,
+                                saveRate: s.saveRate,
+                                sendRate: s.sendRate,
+                                replyRate: commentReplyStats?.replyRate,
+                                avgReplyHours: commentReplyStats?.avgResponseHours,
+                                totalComments: commentReplyStats?.totalComments,
+                                followerChange: s.followerChange,
+                                followerChangePercent: s.followerChangePercent,
+                            })}
+                            aiPlan={igData!.aiCoachingPlan}
+                        />
+                        <IGScorecard cadence={cadence} summary={s} deltas={deltas} commentReplyStats={commentReplyStats} />
+                        {contentMix && <ContentMixBar contentMix={contentMix} />}
+                    </>
+                )}
+
+                {/* KPI Cards — Views leads (Meta primary metric since April 2025) */}
+                <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+                    <div className="metric-card" title="Total profile followers">
                         <div className="label">Followers</div>
                         <div className="value">{formatNumber(s.followers)}</div>
                         <div className={`change ${s.followerChange >= 0 ? 'positive' : 'negative'}`}>
                             {s.followerChange >= 0 ? '+' : ''}{formatNumber(s.followerChange)} ({s.followerChangePercent}%)
                         </div>
                     </div>
-                    <div className="metric-card">
-                        <div className="label">Reach</div>
-                        <div className="value">{formatNumber(s.totalReach)}</div>
-                        <div className="change">Unique accounts</div>
-                    </div>
-                    <div className="metric-card">
+                    <div className="metric-card" title="Meta's primary metric since April 2025 — strongest algorithm signal across Reels, Stories, carousels, and photos">
                         <div className="label">Views</div>
                         <div className="value">{formatNumber(s.totalViews)}</div>
-                        <div className="change">Total content views</div>
+                        <div className="change">{renderDelta(deltas?.viewsPct) || 'Total content views'}</div>
                     </div>
-                    <div className="metric-card">
-                        <div className="label">Interactions</div>
-                        <div className="value">{formatNumber(s.totalInteractions)}</div>
-                        <div className="change">Likes, comments, shares, saves</div>
+                    <div className="metric-card" title="Unique accounts that saw content (one count per person, regardless of repeat exposures)">
+                        <div className="label">Reach</div>
+                        <div className="value">{formatNumber(s.totalReach)}</div>
+                        <div className="change">{renderDelta(deltas?.reachPct) || 'Unique accounts'}</div>
                     </div>
-                    <div className="metric-card">
+                    <div className="metric-card" title="Interactions (likes + comments + shares + saves) divided by reach. 2026 industry: 1–2% avg, 3–6% good, 6%+ excellent.">
                         <div className="label">Engagement Rate</div>
                         <div className="value">{s.engagementRate}%</div>
-                        <div className="change">Interactions / Reach</div>
+                        <div className="change">{renderDelta(deltas?.engagementRatePct) || 'Interactions / Reach'}</div>
                     </div>
                 </div>
 
@@ -428,26 +567,55 @@ export default function OrganicPage() {
                     </div>
                 )}
 
-                {/* Top Posts Table */}
+                {/* Active Stories */}
+                <ActiveStories stories={stories} />
+
+                {/* Top / Bottom Posts Leaderboard */}
+                {posts.length >= 3 && <TopBottomPosts posts={posts} />}
+
+                {/* Posts Table */}
                 {posts.length > 0 && (
                     <div className="section-card">
-                        <h3>Recent Posts ({posts.length})</h3>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 12 }}>
+                            <h3 style={{ margin: 0 }}>Recent Posts ({sortedPosts.length}{filteredPosts.length !== posts.length ? ` of ${posts.length}` : ''})</h3>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                                {(['all', 'reels', 'carousels', 'photos'] as const).map(f => (
+                                    <button
+                                        key={f}
+                                        onClick={() => setIGFilter(f)}
+                                        style={{
+                                            background: igFilter === f ? 'var(--accent-primary)' : 'transparent',
+                                            color: igFilter === f ? 'white' : 'var(--text-muted)',
+                                            border: '1px solid var(--border)',
+                                            padding: '4px 12px',
+                                            borderRadius: 6,
+                                            fontSize: 12,
+                                            cursor: 'pointer',
+                                            textTransform: 'capitalize',
+                                        }}
+                                    >
+                                        {f}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                         <div className="data-table-wrapper"><table className="data-table">
                             <thead>
                                 <tr>
                                     <th>Caption</th>
                                     <th>Type</th>
-                                    <th style={{ textAlign: 'right' }}>Likes</th>
-                                    <th style={{ textAlign: 'right' }}>Comments</th>
-                                    <th style={{ textAlign: 'right' }}>Shares</th>
-                                    <th style={{ textAlign: 'right' }}>Saves</th>
-                                    <th style={{ textAlign: 'right' }}>Reach</th>
-                                    <th style={{ textAlign: 'right' }}>Views</th>
-                                    <th>Date</th>
+                                    <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('engagementRate')}>ER%{sortIndicator('engagementRate')}</th>
+                                    <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('reach')}>Reach{sortIndicator('reach')}</th>
+                                    <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('views')}>Views{sortIndicator('views')}</th>
+                                    <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('likeCount')}>Likes{sortIndicator('likeCount')}</th>
+                                    <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('commentsCount')}>Comments{sortIndicator('commentsCount')}</th>
+                                    <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('shares')}>Shares{sortIndicator('shares')}</th>
+                                    <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('saved')}>Saves{sortIndicator('saved')}</th>
+                                    <th style={{ cursor: 'pointer' }} onClick={() => handleSort('timestamp')}>Date{sortIndicator('timestamp')}</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {posts.map(post => (
+                                {sortedPosts.map(post => (
                                     <tr key={post.id}>
                                         <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                             <a href={post.permalink} target="_blank" rel="noopener noreferrer"
@@ -460,12 +628,32 @@ export default function OrganicPage() {
                                                 {post.mediaType === 'VIDEO' ? 'Reel' : post.mediaType === 'CAROUSEL_ALBUM' ? 'Carousel' : 'Photo'}
                                             </span>
                                         </td>
-                                        <td style={{ textAlign: 'right' }}>{formatNumber(post.likeCount)}</td>
-                                        <td style={{ textAlign: 'right' }}>{formatNumber(post.commentsCount)}</td>
-                                        <td style={{ textAlign: 'right' }}>{formatNumber(post.shares)}</td>
-                                        <td style={{ textAlign: 'right' }}>{formatNumber(post.saved)}</td>
+                                        <td style={{ textAlign: 'right' }}>
+                                            <span style={{
+                                                padding: '2px 8px', borderRadius: 6, fontSize: '0.8125rem', fontWeight: 500,
+                                                background: post.engagementRate >= 5 ? 'rgba(34,197,94,0.15)' : post.engagementRate >= 2 ? 'rgba(234,179,8,0.15)' : 'rgba(255,255,255,0.05)',
+                                                color: post.engagementRate >= 5 ? '#22c55e' : post.engagementRate >= 2 ? '#eab308' : 'var(--text-muted)',
+                                            }}>
+                                                {post.engagementRate.toFixed(1)}%
+                                            </span>
+                                        </td>
                                         <td style={{ textAlign: 'right' }}>{formatNumber(post.reach)}</td>
                                         <td style={{ textAlign: 'right' }}>{formatNumber(post.views)}</td>
+                                        <td style={{ textAlign: 'right' }}>{formatNumber(post.likeCount)}</td>
+                                        <td style={{ textAlign: 'right' }}>
+                                            {formatNumber(post.commentsCount)}
+                                            {post.unrepliedCount && post.unrepliedCount > 0 ? (
+                                                <span title={`${post.unrepliedCount} unreplied comment${post.unrepliedCount > 1 ? 's' : ''}`} style={{
+                                                    marginLeft: 6, padding: '1px 6px', borderRadius: 999,
+                                                    background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444',
+                                                    fontSize: 10, fontWeight: 600,
+                                                }}>
+                                                    {post.unrepliedCount} unreplied
+                                                </span>
+                                            ) : null}
+                                        </td>
+                                        <td style={{ textAlign: 'right' }}>{formatNumber(post.shares)}</td>
+                                        <td style={{ textAlign: 'right' }}>{formatNumber(post.saved)}</td>
                                         <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                                             {new Date(post.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                                         </td>
@@ -485,9 +673,25 @@ export default function OrganicPage() {
         if (!fbConfigured) return renderNotConnected('Facebook');
         const s = fbData!.summary!;
         const insights = fbData!.dailyInsights || [];
+        const fbDays = fbData!.days || (period === '7d' ? 7 : period === '90d' ? 90 : 30);
 
         return (
             <>
+                {/* FB Coach Panel */}
+                <CoachingPanel
+                    platformLabel="Facebook"
+                    plan={generateFBCoachingPlan({
+                        totalVideoViews: s.totalVideoViews,
+                        totalEngagements: s.totalEngagements,
+                        totalPageViews: s.totalPageViews,
+                        engagementRate: s.engagementRate,
+                        followerChange: s.followerChange,
+                        followerChangePercent: s.followerChangePercent,
+                        days: fbDays,
+                    })}
+                    aiPlan={fbData!.aiCoachingPlan}
+                />
+
                 {/* KPI Cards */}
                 <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
                     <div className="metric-card">
@@ -622,24 +826,17 @@ export default function OrganicPage() {
                 <>
                     {activeTab === 'All Platforms' && renderAllPlatforms()}
                     {activeTab === 'Instagram' && renderInstagram()}
+                    {activeTab === 'Inbox' && (
+                        igData?.error ? renderError('Instagram', igData.error)
+                        : !igConfigured ? renderNotConnected('Instagram')
+                        : <InboxTab unrepliedInbox={igData?.unrepliedInbox || []} />
+                    )}
                     {activeTab === 'Facebook' && renderFacebook()}
                     {activeTab === 'YouTube' && (
                         <YouTubeTab ytData={ytData} ytConfigured={!!ytConfigured} period={period} renderError={renderError} renderNotConnected={renderNotConnected} />
                     )}
-                    {activeTab === 'TikTok' && (
-                        <TikTokTab ttData={ttData} ttConfigured={!!ttConfigured} renderError={renderError} />
-                    )}
-                    {activeTab === 'Content' && (
-                        <ContentTab
-                            contentPosts={contentPosts}
-                            contentLoading={contentLoading}
-                            contentPlatformFilter={contentPlatformFilter}
-                            setContentPlatformFilter={setContentPlatformFilter}
-                            contentSortKey={contentSortKey}
-                            setContentSortKey={setContentSortKey}
-                            contentSortOrder={contentSortOrder}
-                            setContentSortOrder={setContentSortOrder}
-                        />
+                    {activeTab === 'Repurposing' && (
+                        <RepurposingTab data={repurposingData} loading={repurposingLoading} />
                     )}
                 </>
             )}

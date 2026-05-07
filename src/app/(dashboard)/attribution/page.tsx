@@ -52,20 +52,35 @@ const TAB_CONFIG: { id: Tab; label: string; adminOnly?: boolean }[] = [
     { id: 'campaigns', label: 'Campaigns', adminOnly: true },
 ];
 
-const CAMPAIGN_SEGMENTS = [
-    { id: 'untouched', label: 'Never Contacted', desc: 'Leads with zero outreach attempts', source: 'conversations' },
-    { id: 'attempted-no-reply', label: 'Attempted, No Reply', desc: 'Outbound sent 7+ days ago, no inbound', source: 'conversations' },
-    { id: 're-engage-ghost', label: 'Re-engage Ghosts', desc: 'Was engaged, silent 14-60 days', source: 'conversations' },
-    { id: 'quoted-followup', label: 'Quoted, Not Booked', desc: 'Discussed pricing 7+ days ago', source: 'conversations' },
-    { id: 'ghost', label: 'Ghosted (Legacy)', desc: 'Ghost lifecycle, 14+ days silent', source: 'conversations' },
-    { id: 'cancelled', label: 'Cancelled Appointments', desc: 'MindBody cancellations', source: 'mindbody' },
-    { id: 'consult-only', label: 'Consulted, Not Treated', desc: 'Had consult, never booked', source: 'mindbody' },
-    { id: 'lapsed-vip', label: 'Lapsed VIPs ($500+)', desc: '120-365 days since last visit', source: 'mindbody' },
-    { id: 'lapsed-long', label: 'Long-Lapsed', desc: '180+ days since last visit', source: 'mindbody' },
-    { id: 'lapsed-winback', label: 'Win-Back VIPs', desc: '$500+, 365+ days', source: 'mindbody' },
-    { id: 'lapsed-treatment', label: 'Treatment-Specific', desc: 'By treatment type, 90+ days', source: 'mindbody' },
-    { id: 'never-booked', label: 'Never Booked', desc: 'Inquired but never purchased', source: 'ghl' },
+// Channel strategy per segment (decided 2026-05-07):
+//   'sms+email' = warm enough for SMS reactivation
+//   'email'     = colder; SMS feels invasive at this distance, email-only
+//   'skip'      = low-conversion or compliance risk; hidden from picker
+const CAMPAIGN_SEGMENTS: Array<{
+    id: string;
+    label: string;
+    desc: string;
+    source: string;
+    channel: 'sms+email' | 'email' | 'skip';
+}> = [
+    // SMS-safe (warm)
+    { id: 'cancelled',         label: 'Cancelled Appointments', desc: 'MindBody cancellations',                 source: 'mindbody',      channel: 'sms+email' },
+    { id: 'consult-only',      label: 'Consulted, Not Treated', desc: 'Had consult, never booked',              source: 'mindbody',      channel: 'sms+email' },
+    { id: 'lapsed-vip',        label: 'Lapsed VIPs ($500+)',    desc: '120-365 days since last visit',          source: 'mindbody',      channel: 'sms+email' },
+    { id: 'lapsed-treatment',  label: 'Treatment-Specific',     desc: 'By treatment type, 90+ days',            source: 'mindbody',      channel: 'sms+email' },
+    // Email-only (colder, but recoverable)
+    { id: 'lapsed-winback',    label: 'Win-Back VIPs',          desc: '$500+, 365+ days — too cold for SMS',    source: 'mindbody',      channel: 'email' },
+    { id: 'ghost',             label: 'Ghosted',                desc: 'Silent 14+ days — email re-engages',     source: 'conversations', channel: 'email' },
+    // Skipped (hidden from picker)
+    { id: 'untouched',         label: 'Never Contacted',        desc: 'Zero outreach — low conversion',         source: 'conversations', channel: 'skip' },
+    { id: 'attempted-no-reply', label: 'Attempted, No Reply',   desc: 'Already ignored — diminishing returns',  source: 'conversations', channel: 'skip' },
+    { id: 're-engage-ghost',   label: 'Re-engage Ghosts',       desc: 'Conversation-based, timeout-prone',      source: 'conversations', channel: 'skip' },
+    { id: 'quoted-followup',   label: 'Quoted, Not Booked',     desc: 'Conversation-based, narrow window',      source: 'conversations', channel: 'skip' },
+    { id: 'lapsed-long',       label: 'Long-Lapsed',            desc: '180+ days, no value filter — cold',      source: 'mindbody',      channel: 'skip' },
+    { id: 'never-booked',      label: 'Never Booked',           desc: 'Cold inquiries, ~8% response',           source: 'ghl',           channel: 'skip' },
 ];
+
+const VISIBLE_SEGMENTS = CAMPAIGN_SEGMENTS.filter(s => s.channel !== 'skip');
 
 export default function LeadsPipelinePage() {
     const { data: session } = useSession();
@@ -933,8 +948,9 @@ export default function LeadsPipelinePage() {
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
-                        {CAMPAIGN_SEGMENTS.map(seg => {
+                        {VISIBLE_SEGMENTS.map(seg => {
                             const lastRun = campaignHistory[seg.id];
+                            const isEmailOnly = seg.channel === 'email';
                             return (
                                 <div
                                     key={seg.id}
@@ -944,18 +960,31 @@ export default function LeadsPipelinePage() {
                                         setSmsResults(null);
                                         setSmsError(null);
                                         setSmsOpen(true);
+                                        // Email-only segments default the channel selector to 'email'
+                                        if (isEmailOnly) setSmsChannel('email');
+                                        else setSmsChannel('sms');
                                         fetchSmsContacts(seg.id);
                                     }}
                                     style={{
                                         padding: '16px', borderRadius: '10px', cursor: 'pointer',
                                         border: '1px solid var(--border-subtle)',
-                                        background: seg.source === 'conversations' ? 'rgba(96,165,250,0.04)' : 'rgba(167,139,250,0.04)',
+                                        background: isEmailOnly ? 'rgba(96,165,250,0.04)' : 'rgba(34,197,94,0.04)',
                                         transition: 'border-color 0.2s',
                                     }}
                                     onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--accent-primary)')}
                                     onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border-subtle)')}
                                 >
-                                    <div style={{ fontWeight: 600, marginBottom: '4px' }}>{seg.label}</div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                                        <div style={{ fontWeight: 600 }}>{seg.label}</div>
+                                        <span title={isEmailOnly ? 'Cold for SMS — email-only recommended' : 'Warm enough for SMS + Email'} style={{
+                                            fontSize: '0.625rem', padding: '2px 8px', borderRadius: 999,
+                                            background: isEmailOnly ? 'rgba(96,165,250,0.18)' : 'rgba(34,197,94,0.18)',
+                                            color: isEmailOnly ? '#60A5FA' : '#22c55e',
+                                            fontWeight: 600, letterSpacing: '0.04em', whiteSpace: 'nowrap',
+                                        }}>
+                                            {isEmailOnly ? 'EMAIL' : 'SMS + EMAIL'}
+                                        </span>
+                                    </div>
                                     <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '8px' }}>{seg.desc}</div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                         <span style={{

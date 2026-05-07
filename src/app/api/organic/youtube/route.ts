@@ -7,6 +7,7 @@ import {
     getRecentVideos,
 } from '@/lib/integrations/youtube';
 import type { YTSummary } from '@/lib/integrations/youtube';
+import { generateAIYTCoachingPlan } from '@/lib/yt-coaching-ai';
 
 export async function GET(request: NextRequest) {
     try {
@@ -68,6 +69,34 @@ export async function GET(request: NextRequest) {
             longFormCount,
         };
 
+        // AI coaching — top videos by view count
+        const topVideos = [...periodVideos]
+            .sort((a, b) => b.viewCount - a.viewCount)
+            .slice(0, 3)
+            .map(v => ({
+                title: v.title,
+                viewCount: v.viewCount,
+                likeCount: v.likeCount,
+                commentCount: v.commentCount,
+                isShort: v.isShort,
+            }));
+
+        const aiCoachingPlan = await generateAIYTCoachingPlan({
+            period: periodParam as '7d' | '30d' | '90d',
+            channelTitle: channel.title,
+            metrics: {
+                subscribers: channel.subscriberCount,
+                videosInPeriod: periodVideos.length,
+                shortsCount,
+                longFormCount,
+                engagementRate,
+                avgViewsPerVideo,
+                recentVideoViews,
+                days,
+            },
+            topVideos,
+        });
+
         return NextResponse.json({
             configured: true,
             channel: {
@@ -90,6 +119,8 @@ export async function GET(request: NextRequest) {
                 commentCount: v.commentCount,
                 isShort: v.isShort,
             })),
+            aiCoachingPlan,
+            days,
             period: periodParam,
             videosInPeriod: periodVideos.length,
         });

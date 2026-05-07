@@ -54,6 +54,34 @@ export interface IGMedia {
     totalInteractions?: number;
     plays?: number; // reels only
     avgWatchTime?: number; // reels only
+    // Comment-reply tracking (fetched separately, only when commentsCount > 0)
+    commentsFetched?: number;       // how many comments we sampled (capped at 50/post)
+    commentsReplied?: number;       // of those, how many got a reply from the page
+    avgReplyHours?: number | null;  // mean response time in hours
+    unrepliedComments?: IGUnrepliedComment[];
+}
+
+export interface IGUnrepliedComment {
+    id: string;
+    text: string;
+    username: string;
+    timestamp: string;
+}
+
+export interface IGStory {
+    id: string;
+    mediaType: 'IMAGE' | 'VIDEO' | 'STORY';
+    mediaUrl: string;
+    thumbnailUrl?: string;
+    permalink: string;
+    timestamp: string;
+    // Insights
+    reach?: number;
+    replies?: number;
+    navigationForward?: number;  // taps forward (next story)
+    navigationBack?: number;     // taps back
+    navigationExited?: number;   // close (negative signal)
+    navigationNext?: number;     // swipe to next account (negative signal)
 }
 
 export interface FBPageInfo {
@@ -259,6 +287,68 @@ export async function getIGInsights(
 }
 
 /**
+ * Get IG period totals only (no daily breakdown, no follower_count).
+ * Used for prior-period delta computation. Supports longer lookback windows
+ * than getIGInsights because it skips the follower_count metric (30-day cap).
+ */
+export async function getIGPeriodTotals(
+    since: string,
+    until: string
+): Promise<{ totalReach: number; totals: IGInsightsTotals }> {
+    const cacheKey = `ig_period_totals_${since}_${until}`;
+    const cached = getCached<{ totalReach: number; totals: IGInsightsTotals }>(cacheKey);
+    if (cached) { trackCall('meta', 'getIGPeriodTotals', true); return cached; }
+
+    const token = getEnv('META_PAGE_ACCESS_TOKEN');
+    const igUserId = getEnv('META_IG_USER_ID');
+
+    // Reach daily (no follower_count = no 30-day cap)
+    const reachData = await graphGet<{
+        data: Array<{ name: string; values: Array<{ value: number; end_time: string }> }>;
+    }>(
+        `/${igUserId}/insights?metric=reach&period=day&since=${since}&until=${until}`,
+        token
+    );
+
+    let totalReach = 0;
+    for (const metric of reachData.data || []) {
+        for (const val of metric.values || []) {
+            totalReach += val.value || 0;
+        }
+    }
+
+    // Aggregate totals
+    const totalsData = await graphGet<{
+        data: Array<{ name: string; total_value: { value: number } }>;
+    }>(
+        `/${igUserId}/insights?metric=profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,views&metric_type=total_value&period=day&since=${since}&until=${until}`,
+        token
+    );
+
+    const totals: IGInsightsTotals = {
+        profileViews: 0, accountsEngaged: 0, totalInteractions: 0,
+        likes: 0, comments: 0, shares: 0, saves: 0, views: 0,
+    };
+    for (const metric of totalsData.data || []) {
+        const v = metric.total_value?.value || 0;
+        switch (metric.name) {
+            case 'profile_views': totals.profileViews = v; break;
+            case 'accounts_engaged': totals.accountsEngaged = v; break;
+            case 'total_interactions': totals.totalInteractions = v; break;
+            case 'likes': totals.likes = v; break;
+            case 'comments': totals.comments = v; break;
+            case 'shares': totals.shares = v; break;
+            case 'saves': totals.saves = v; break;
+            case 'views': totals.views = v; break;
+        }
+    }
+
+    const result = { totalReach, totals };
+    setCache(cacheKey, result);
+    return result;
+}
+
+/**
  * Get recent Instagram posts with engagement metrics.
  */
 export async function getIGMedia(limit: number = 25): Promise<IGMedia[]> {
@@ -330,11 +420,172 @@ export async function getIGMedia(limit: number = 25): Promise<IGMedia[]> {
             // Insights may fail for very new posts or stories — continue
         }
 
+        // Step 3: Fetch comments + reply detection per post (only if any comments exist)
+        if ((m.comments_count || 0) > 0) {
+            try {
+                const commentsData = await graphGet<{
+                    data: Array<{
+                        id: string;
+                        text: string;
+                        timestamp: string;
+                        from?: { id: string; username?: string };
+                        replies?: {
+                            data: Array<{
+                                id: string;
+                                text: string;
+                                timestamp: string;
+                                from?: { id: string; username?: string };
+                            }>;
+                        };
+                    }>;
+                }>(
+                    `/${m.id}/comments?fields=id,text,timestamp,from,replies{id,text,timestamp,from}&limit=50`,
+                    token
+                );
+
+                let commentsFetched = 0;
+                let commentsReplied = 0;
+                const replyHourSamples: number[] = [];
+                const unrepliedComments: IGUnrepliedComment[] = [];
+
+                for (const c of commentsData.data || []) {
+                    // Skip our own top-level comments (e.g., we left a comment on our own post)
+                    if (c.from?.id === igUserId) continue;
+                    commentsFetched++;
+
+                    const replies = c.replies?.data || [];
+                    // Find the earliest reply from us
+                    const ourReplies = replies
+                        .filter(r => r.from?.id === igUserId)
+                        .map(r => new Date(r.timestamp).getTime())
+                        .sort((a, b) => a - b);
+
+                    if (ourReplies.length > 0) {
+                        commentsReplied++;
+                        const commentMs = new Date(c.timestamp).getTime();
+                        const replyMs = ourReplies[0];
+                        const hours = (replyMs - commentMs) / (1000 * 60 * 60);
+                        if (hours >= 0 && hours < 24 * 30) {
+                            // Cap at 30 days to filter outliers / clock-skew anomalies
+                            replyHourSamples.push(hours);
+                        }
+                    } else {
+                        unrepliedComments.push({
+                            id: c.id,
+                            text: c.text || '',
+                            username: c.from?.username || 'Unknown',
+                            timestamp: c.timestamp,
+                        });
+                    }
+                }
+
+                post.commentsFetched = commentsFetched;
+                post.commentsReplied = commentsReplied;
+                post.unrepliedComments = unrepliedComments;
+                post.avgReplyHours = replyHourSamples.length > 0
+                    ? Math.round((replyHourSamples.reduce((a, b) => a + b, 0) / replyHourSamples.length) * 100) / 100
+                    : null;
+            } catch {
+                // Comments fetch may fail for very new posts or restricted accounts — continue without
+            }
+        }
+
         posts.push(post);
     }
 
     setCache(cacheKey, posts);
     return posts;
+}
+
+/**
+ * Get Instagram active stories (last 24h window) with per-story insights.
+ * Stories disappear after 24h, so this only returns currently-published ones.
+ * For historical Story cadence, a daily cron snapshot is needed (Phase 3.5).
+ *
+ * Cache TTL is shorter (1 hour) than other endpoints since Stories rotate fast.
+ */
+export async function getIGStories(): Promise<IGStory[]> {
+    const cacheKey = 'ig_stories_active';
+    const cached = getCached<IGStory[]>(cacheKey);
+    if (cached) { trackCall('meta', 'getIGStories', true); return cached; }
+
+    const token = getEnv('META_PAGE_ACCESS_TOKEN');
+    const igUserId = getEnv('META_IG_USER_ID');
+
+    let storiesData: { data: Array<{
+        id: string;
+        media_type: string;
+        media_url?: string;
+        thumbnail_url?: string;
+        permalink: string;
+        timestamp: string;
+    }> };
+
+    try {
+        storiesData = await graphGet(
+            `/${igUserId}/stories?fields=id,media_type,media_url,thumbnail_url,permalink,timestamp`,
+            token
+        );
+    } catch (err) {
+        // Account may not have any active stories or endpoint may be restricted — return empty.
+        console.warn('[meta-organic] getIGStories failed:', err instanceof Error ? err.message : err);
+        const empty: IGStory[] = [];
+        setCache(cacheKey, empty);
+        return empty;
+    }
+
+    const stories: IGStory[] = [];
+
+    for (const s of storiesData.data || []) {
+        const story: IGStory = {
+            id: s.id,
+            mediaType: (s.media_type as IGStory['mediaType']) || 'STORY',
+            mediaUrl: s.media_url || '',
+            thumbnailUrl: s.thumbnail_url,
+            permalink: s.permalink || '',
+            timestamp: s.timestamp,
+        };
+
+        // Per-story insights — Stories support different metrics than feed posts
+        try {
+            const storyMetrics = 'reach,replies,navigation';
+            const insightsData = await graphGet<{
+                data: Array<{ name: string; values: Array<{ value: number | Record<string, number> }> }>;
+            }>(
+                `/${s.id}/insights?metric=${storyMetrics}`,
+                token
+            );
+
+            for (const metric of insightsData.data || []) {
+                const v = metric.values?.[0]?.value;
+                switch (metric.name) {
+                    case 'reach':
+                        if (typeof v === 'number') story.reach = v;
+                        break;
+                    case 'replies':
+                        if (typeof v === 'number') story.replies = v;
+                        break;
+                    case 'navigation':
+                        // navigation comes back as a breakdown object: { forward, back, exited, next_story }
+                        if (typeof v === 'object' && v !== null) {
+                            const nav = v as Record<string, number>;
+                            story.navigationForward = nav.forward || nav.tap_forward || 0;
+                            story.navigationBack = nav.back || nav.tap_back || 0;
+                            story.navigationExited = nav.exited || 0;
+                            story.navigationNext = nav.next_story || 0;
+                        }
+                        break;
+                }
+            }
+        } catch {
+            // Insights may fail for very new stories — continue without
+        }
+
+        stories.push(story);
+    }
+
+    setCache(cacheKey, stories);
+    return stories;
 }
 
 // --- Facebook Page Insights ---

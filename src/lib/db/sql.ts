@@ -7,9 +7,15 @@ declare global {
 
 function getClient(): Sql {
     if (globalThis._pgClient) return globalThis._pgClient;
-    const connectionString = process.env.POSTGRES_URL;
+    // POSTGRES_URL is auto-injected on Vercel via the Supabase Marketplace integration;
+    // locally we fall back to the SBNEW_* values that vercel env pull provides.
+    const connectionString =
+        process.env.POSTGRES_URL ||
+        process.env.SBNEW_POSTGRES_URL ||
+        process.env.SBNEW_POSTGRES_PRISMA_URL ||
+        process.env.SBNEW_POSTGRES_URL_NON_POOLING;
     if (!connectionString) {
-        throw new Error('POSTGRES_URL is not set');
+        throw new Error('POSTGRES_URL (or SBNEW_POSTGRES_URL) is not set');
     }
     globalThis._pgClient = postgres(connectionString, {
         max: 5,
