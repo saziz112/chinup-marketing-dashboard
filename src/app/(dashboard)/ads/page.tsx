@@ -48,6 +48,7 @@ interface AdsData {
     account: AccountSummary;
     campaigns: Campaign[];
     dailySpend: DailySpend[];
+    ghlLeads?: number;
 }
 
 interface OverviewData {
@@ -365,6 +366,14 @@ export default function AdsPage() {
                             value={fmtNum(acc?.totalResults)}
                             sub={isAdmin && acc?.totalSpend != null && acc.totalResults ? `${fmt$(acc.totalSpend / acc.totalResults)}/lead` : 'conversions'}
                         />
+                        {isGoogle && googleData?.ghlLeads != null && (
+                            <KpiCard
+                                label="GHL Leads"
+                                value={fmtNum(googleData.ghlLeads)}
+                                sub="google-source contacts"
+                                green
+                            />
+                        )}
                         {isAdmin && roasData && roasData.trueRoas !== null && (
                             <KpiCard label="True ROAS" value={`${roasData.trueRoas.toFixed(2)}x`} sub="MindBody verified" green />
                         )}

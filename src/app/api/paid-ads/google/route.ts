@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getGoogleAdsData, isGoogleAdsConfigured } from '@/lib/integrations/google-ads';
+import { getGoogleAdsData, getGhlGoogleLeads, isGoogleAdsConfigured } from '@/lib/integrations/google-ads';
 import { subDays, format } from 'date-fns';
 
 const today = new Date();
@@ -22,7 +22,10 @@ export async function GET(request: NextRequest) {
         const until = request.nextUrl.searchParams.get('until') || defaultUntil;
 
         // --- Fetch ---
-        const data = await getGoogleAdsData(since, until);
+        const [data, ghlLeads] = await Promise.all([
+            getGoogleAdsData(since, until),
+            getGhlGoogleLeads(since, until),
+        ]);
 
         // --- Role-based filtering ---
         // Marketing Manager cannot see raw $ figures
@@ -54,6 +57,7 @@ export async function GET(request: NextRequest) {
             account,
             campaigns,
             dailySpend,
+            ghlLeads,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown error';

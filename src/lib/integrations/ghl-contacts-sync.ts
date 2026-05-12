@@ -27,8 +27,11 @@ const PAGES_PER_CHUNK = 5; // 5 pages × 100 contacts = 500 per invocation (~15-
 export async function backfillGhlContacts(): Promise<{
     total: number; apiCalls: number; done: boolean; chunkLabel: string; continue?: boolean;
 }> {
-    // Ensure cursor_data column exists (self-migration)
+    // Ensure cursor_data and source columns exist (self-migration)
     await sql`ALTER TABLE mb_sync_state ADD COLUMN IF NOT EXISTS cursor_data TEXT`.catch(() => {});
+    await sql`ALTER TABLE ghl_contacts_map ADD COLUMN IF NOT EXISTS source TEXT`.catch(() => {});
+    await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_source ON ghl_contacts_map(source)`.catch(() => {});
+    await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_created ON ghl_contacts_map(created_at)`.catch(() => {});
 
     // If already completed, skip
     const finalState = await sql`SELECT 1 FROM mb_sync_state WHERE sync_type = 'ghl-contacts'`;
@@ -106,15 +109,16 @@ export async function backfillGhlContacts(): Promise<{
 
             await sql`
                 INSERT INTO ghl_contacts_map
-                    (contact_id, location_key, phone_normalized, email, contact_name, dnd_global, tags, created_at, updated_at, synced_at)
+                    (contact_id, location_key, phone_normalized, email, contact_name, dnd_global, tags, source, created_at, updated_at, synced_at)
                 VALUES (${c.id}, ${loc.key}, ${phone || null}, ${email || null}, ${name},
-                        ${dnd}, ${JSON.stringify(tags)}, ${c.dateAdded || null}, ${c.dateUpdated || null}, NOW())
+                        ${dnd}, ${JSON.stringify(tags)}, ${c.source || null}, ${c.dateAdded || null}, ${c.dateUpdated || null}, NOW())
                 ON CONFLICT (contact_id, location_key) DO UPDATE SET
                     phone_normalized = ${phone || null},
                     email = ${email || null},
                     contact_name = ${name},
                     dnd_global = ${dnd},
                     tags = ${JSON.stringify(tags)},
+                    source = ${c.source || null},
                     updated_at = ${c.dateUpdated || null},
                     synced_at = NOW()
             `;
@@ -230,15 +234,16 @@ export async function incrementalGhlSync(): Promise<{ newContacts: number; apiCa
 
                 await sql`
                     INSERT INTO ghl_contacts_map
-                        (contact_id, location_key, phone_normalized, email, contact_name, dnd_global, tags, created_at, updated_at, synced_at)
+                        (contact_id, location_key, phone_normalized, email, contact_name, dnd_global, tags, source, created_at, updated_at, synced_at)
                     VALUES (${c.id}, ${loc.key}, ${phone || null}, ${email || null}, ${name},
-                            ${c.dnd === true}, ${JSON.stringify(c.tags || [])}, ${c.dateAdded || null}, ${c.dateUpdated || null}, NOW())
+                            ${c.dnd === true}, ${JSON.stringify(c.tags || [])}, ${c.source || null}, ${c.dateAdded || null}, ${c.dateUpdated || null}, NOW())
                     ON CONFLICT (contact_id, location_key) DO UPDATE SET
                         phone_normalized = ${phone || null},
                         email = ${email || null},
                         contact_name = ${name},
                         dnd_global = ${c.dnd === true},
                         tags = ${JSON.stringify(c.tags || [])},
+                        source = ${c.source || null},
                         updated_at = ${c.dateUpdated || null},
                         synced_at = NOW()
                 `;

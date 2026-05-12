@@ -1,4 +1,5 @@
 import { createMemCache } from '@/lib/mem-cache';
+import { sql } from '@/lib/db/sql';
 
 export interface GoogleAdsData {
     isConfigured: boolean;
@@ -265,7 +266,21 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
     }
 }
 
-function getMockData(since: string, until: string): GoogleAdsData {
+export async function getGhlGoogleLeads(since: string, until: string): Promise<number> {
+    try {
+        const result = await sql`
+            SELECT COUNT(*) as cnt FROM ghl_contacts_map
+            WHERE source ILIKE '%google%'
+            AND created_at >= ${since + 'T00:00:00'}
+            AND created_at <= ${until + 'T23:59:59'}
+        `;
+        return Number(result.rows[0]?.cnt || 0);
+    } catch {
+        return 0;
+    }
+}
+
+function getMockData(_since: string, _until: string): GoogleAdsData {
     return {
         isConfigured: false,
         isMock: true,
