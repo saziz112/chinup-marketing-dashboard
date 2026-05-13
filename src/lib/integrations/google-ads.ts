@@ -326,7 +326,15 @@ export async function getGhlGoogleLeads(since: string, until: string): Promise<{
                     for (const status of ['open', 'won', 'lost', 'abandoned'] as const) {
                         const { opportunities } = await getOpportunities(loc, pipeline.id, { status, maxPages: 10 });
                         for (const opp of opportunities) {
-                            if (!opp.source || !/google/i.test(opp.source)) continue;
+                            // Catch Google-attributed leads three ways:
+                            //  (1) source contains "google" (e.g. "Google Ads - General Medspa Form")
+                            //  (2) opportunity name contains "Google Ad" (landing-page leads where
+                            //      GHL tagged source as "Website" but the name preserves attribution)
+                            //  (3) source mentions "ppc" / "paid" (rarely used)
+                            const src = opp.source || '';
+                            const nm = opp.name || '';
+                            const isGoogle = /google/i.test(src) || /\bgoogle\s*ads?\b/i.test(nm);
+                            if (!isGoogle) continue;
                             const created = opp.createdAt ? new Date(opp.createdAt).getTime() : 0;
                             if (created < sinceMs || created > untilMs) continue;
                             const ghlUrl = opp.contactId
