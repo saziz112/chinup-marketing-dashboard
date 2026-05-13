@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
         const until = request.nextUrl.searchParams.get('until') || defaultUntil;
 
         // --- Fetch ---
-        const [data, ghlLeads] = await Promise.all([
+        const [data, ghlLeadsResult] = await Promise.all([
             getGoogleAdsData(since, until),
             getGhlGoogleLeads(since, until),
         ]);
@@ -57,7 +57,8 @@ export async function GET(request: NextRequest) {
             account,
             campaigns,
             dailySpend,
-            ghlLeads,
+            ghlLeads: ghlLeadsResult.count,
+            ghlLeadsDetails: ghlLeadsResult.opportunities,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown error';

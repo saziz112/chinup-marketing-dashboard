@@ -1,5 +1,5 @@
 import { createMemCache } from '@/lib/mem-cache';
-import { sql } from '@/lib/db/sql';
+import { getLocations, getPipelines, getOpportunities } from './gohighlevel';
 
 export interface GoogleAdsData {
     isConfigured: boolean;
@@ -266,18 +266,78 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
     }
 }
 
-export async function getGhlGoogleLeads(since: string, until: string): Promise<number> {
+export interface GhlGoogleLead {
+    id: string;
+    name: string;
+    source: string;
+    createdAt: string;
+    status: string;
+    locationKey: string;
+    contactId: string;
+    contactName: string;
+    contactEmail: string;
+    monetaryValue: number;
+    ghlUrl: string | null;
+}
+
+// Cache google-sourced lead counts for 30 min (matches strategy/pipeline cache cadence)
+const ghlGoogleLeadsCache = createMemCache<{ count: number; opportunities: GhlGoogleLead[] }>(30 * 60 * 1000);
+
+export async function getGhlGoogleLeads(since: string, until: string): Promise<{
+    count: number;
+    opportunities: GhlGoogleLead[];
+}> {
+    const cacheKey = `ghl_google_${since}_${until}`;
+    const cached = ghlGoogleLeadsCache.get(cacheKey);
+    if (cached) return cached;
+
+    const sinceMs = new Date(since + 'T00:00:00').getTime();
+    const untilMs = new Date(until + 'T23:59:59').getTime();
+    const matched: GhlGoogleLead[] = [];
+
     try {
-        const result = await sql`
-            SELECT COUNT(*) as cnt FROM ghl_contacts_map
-            WHERE source ILIKE '%google%'
-            AND created_at >= ${since + 'T00:00:00'}
-            AND created_at <= ${until + 'T23:59:59'}
-        `;
-        return Number(result.rows[0]?.cnt || 0);
-    } catch {
-        return 0;
+        const locations = getLocations();
+        for (const loc of locations) {
+            try {
+                const pipelines = await getPipelines(loc);
+                for (const pipeline of pipelines) {
+                    // Fetch all statuses so we catch leads regardless of outcome
+                    for (const status of ['open', 'won', 'lost', 'abandoned'] as const) {
+                        const { opportunities } = await getOpportunities(loc, pipeline.id, { status, maxPages: 10 });
+                        for (const opp of opportunities) {
+                            if (!opp.source || !/google/i.test(opp.source)) continue;
+                            const created = opp.createdAt ? new Date(opp.createdAt).getTime() : 0;
+                            if (created < sinceMs || created > untilMs) continue;
+                            const ghlUrl = opp.contactId
+                                ? `https://app.gohighlevel.com/v2/location/${loc.locationId}/contacts/detail/${opp.contactId}`
+                                : null;
+                            matched.push({
+                                id: opp.id,
+                                name: opp.name,
+                                source: opp.source,
+                                createdAt: opp.createdAt,
+                                status: opp.status,
+                                locationKey: loc.key,
+                                contactId: opp.contactId,
+                                contactName: opp.contactName,
+                                contactEmail: opp.contactEmail,
+                                monetaryValue: opp.monetaryValue,
+                                ghlUrl,
+                            });
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn(`[ghl-google-leads] location ${loc.key} failed:`, e);
+            }
+        }
+    } catch (e) {
+        console.warn('[ghl-google-leads] fatal:', e);
     }
+
+    const result = { count: matched.length, opportunities: matched };
+    ghlGoogleLeadsCache.set(cacheKey, result);
+    return result;
 }
 
 function getMockData(_since: string, _until: string): GoogleAdsData {

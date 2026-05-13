@@ -42,6 +42,20 @@ interface AccountSummary {
     totalResults: number;
 }
 
+interface GhlLeadDetail {
+    id: string;
+    name: string;
+    source: string;
+    createdAt: string;
+    status: string;
+    locationKey: string;
+    contactId: string;
+    contactName: string;
+    contactEmail: string;
+    monetaryValue: number;
+    ghlUrl: string | null;
+}
+
 interface AdsData {
     isConfigured: boolean;
     isMock: boolean;
@@ -49,6 +63,7 @@ interface AdsData {
     campaigns: Campaign[];
     dailySpend: DailySpend[];
     ghlLeads?: number;
+    ghlLeadsDetails?: GhlLeadDetail[];
 }
 
 interface OverviewData {
@@ -79,6 +94,7 @@ export default function AdsPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [showRoasModal, setShowRoasModal] = useState(false);
+    const [showGhlModal, setShowGhlModal] = useState(false);
     const [aiAnalysis, setAiAnalysis] = useState<Record<string, { grade: string; summary: string; priorityActions: string[]; creativeSuggestion: string | null }>>({});
     const [aiExpanded, setAiExpanded] = useState<Set<string>>(new Set()); // which AI rows are visible
     const [aiLoading, setAiLoading] = useState<string | null>(null); // campaignId currently loading
@@ -367,12 +383,18 @@ export default function AdsPage() {
                             sub={isAdmin && acc?.totalSpend != null && acc.totalResults ? `${fmt$(acc.totalSpend / acc.totalResults)}/lead` : 'conversions'}
                         />
                         {isGoogle && googleData?.ghlLeads != null && (
-                            <KpiCard
-                                label="GHL Leads"
-                                value={fmtNum(googleData.ghlLeads)}
-                                sub="google-source contacts"
-                                green
-                            />
+                            <div
+                                onClick={() => googleData.ghlLeads && setShowGhlModal(true)}
+                                style={{ cursor: googleData.ghlLeads ? 'pointer' : 'default' }}
+                                title={googleData.ghlLeads ? 'Click to see lead details' : ''}
+                            >
+                                <KpiCard
+                                    label="GHL Leads"
+                                    value={fmtNum(googleData.ghlLeads)}
+                                    sub={googleData.ghlLeads ? 'click to view →' : 'google-source opps'}
+                                    green
+                                />
+                            </div>
                         )}
                         {isAdmin && roasData && roasData.trueRoas !== null && (
                             <KpiCard label="True ROAS" value={`${roasData.trueRoas.toFixed(2)}x`} sub="MindBody verified" green />
@@ -564,6 +586,74 @@ export default function AdsPage() {
                                 <div className="empty-state">
                                     <h3>No matched clients</h3>
                                     <p>Try selecting a wider date range.</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showGhlModal && googleData?.ghlLeadsDetails && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100,
+                    background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24
+                }} onClick={() => setShowGhlModal(false)}>
+                    <div onClick={e => e.stopPropagation()} style={{
+                        background: '#1a2332', border: '1px solid var(--border)', borderRadius: 16,
+                        width: '100%', maxWidth: 1000, maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+                        boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                    }}>
+                        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <h2 style={{ margin: 0 }}>GHL Leads from Google Ads</h2>
+                                <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: 13 }}>
+                                    GHL opportunities with a Google source, created between {periodLabel}
+                                </p>
+                            </div>
+                            <button onClick={() => setShowGhlModal(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 24 }}>&times;</button>
+                        </div>
+                        <div style={{ padding: 24, overflowY: 'auto' }}>
+                            {googleData.ghlLeadsDetails.length > 0 ? (
+                                <div className="data-table-wrapper"><table className="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Created</th>
+                                            <th>Contact</th>
+                                            <th>Email</th>
+                                            <th>Source</th>
+                                            <th>Location</th>
+                                            <th>Status</th>
+                                            <th>Value</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {googleData.ghlLeadsDetails.map((l) => (
+                                            <tr key={l.id}>
+                                                <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{format(parseISO(l.createdAt), 'MMM d, h:mm a')}</td>
+                                                <td style={{ fontWeight: 500 }}>{l.contactName || l.name || 'Unknown'}</td>
+                                                <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{l.contactEmail || '—'}</td>
+                                                <td style={{ fontSize: 12 }}>{l.source}</td>
+                                                <td style={{ fontSize: 12, textTransform: 'capitalize' }}>{l.locationKey}</td>
+                                                <td><StatusBadge status={(l.status === 'won' ? 'ACTIVE' : l.status === 'lost' ? 'DELETED' : l.status === 'abandoned' ? 'ARCHIVED' : 'PAUSED') as Campaign['status']} /></td>
+                                                <td style={{ color: l.monetaryValue > 0 ? '#22c55e' : 'var(--text-muted)' }}>{l.monetaryValue > 0 ? fmt$(l.monetaryValue) : '—'}</td>
+                                                <td>
+                                                    {l.ghlUrl ? (
+                                                        <a href={l.ghlUrl} target="_blank" rel="noopener noreferrer"
+                                                           style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f644', textDecoration: 'none' }}>GHL ↗</a>
+                                                    ) : (
+                                                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table></div>
+                            ) : (
+                                <div className="empty-state">
+                                    <h3>No google-source GHL leads</h3>
+                                    <p>No opportunities matched <code>source ~ &quot;google&quot;</code> in this date range.</p>
                                 </div>
                             )}
                         </div>
