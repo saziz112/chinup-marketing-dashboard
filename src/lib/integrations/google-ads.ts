@@ -1,5 +1,6 @@
 import { createMemCache } from '@/lib/mem-cache';
 import { getLocations, getPipelines, getOpportunities } from './gohighlevel';
+import { getClientEmailMapFromDB, getAppointmentsByClientIds } from './mindbody-db';
 
 export interface GoogleAdsData {
     isConfigured: boolean;
@@ -278,6 +279,26 @@ export interface GhlGoogleLead {
     contactEmail: string;
     monetaryValue: number;
     ghlUrl: string | null;
+    // MindBody enrichment
+    mbClientId: string | null;
+    mbRevenue: number;
+    mbBooked: number;
+    mbCompleted: number;
+    mbUrl: string | null;
+    // Campaign attribution
+    matchedCampaignId: string | null;
+    matchedCampaignName: string | null;
+}
+
+export interface GoogleCampaignBreakdown {
+    id: string;
+    name: string;
+    ghlLeads: number;
+    mbMatchedClients: number;
+    matchedRevenue: number;
+    appointmentsBooked: number;
+    appointmentsCompleted: number;
+    trueRoas: number | null;
 }
 
 // Cache google-sourced lead counts for 30 min (matches strategy/pipeline cache cadence)
@@ -323,6 +344,13 @@ export async function getGhlGoogleLeads(since: string, until: string): Promise<{
                                 contactEmail: opp.contactEmail,
                                 monetaryValue: opp.monetaryValue,
                                 ghlUrl,
+                                mbClientId: null,
+                                mbRevenue: 0,
+                                mbBooked: 0,
+                                mbCompleted: 0,
+                                mbUrl: null,
+                                matchedCampaignId: null,
+                                matchedCampaignName: null,
                             });
                         }
                     }
@@ -338,6 +366,121 @@ export async function getGhlGoogleLeads(since: string, until: string): Promise<{
     const result = { count: matched.length, opportunities: matched };
     ghlGoogleLeadsCache.set(cacheKey, result);
     return result;
+}
+
+/**
+ * Enrich GHL Google leads with MindBody revenue + appointments,
+ * and attribute each lead to a Google Ads campaign by source-string matching.
+ *
+ * Source matching heuristic: take the GHL opp source (e.g. "Google Ads - General Medspa"),
+ * strip "Google Ads -" / "Google -" prefix, then check if any campaign name contains the
+ * remainder (or vice versa) case-insensitively.
+ */
+export async function enrichGhlLeadsWithMindBodyAndCampaigns(
+    leads: GhlGoogleLead[],
+    campaigns: GoogleCampaign[],
+    since: string,
+    until: string,
+): Promise<{ leads: GhlGoogleLead[]; campaignBreakdown: GoogleCampaignBreakdown[] }> {
+    const mbStart = `${since}T00:00:00`;
+    const mbEnd = `${until}T23:59:59`;
+    const mbSiteId = process.env.MINDBODY_SITE_ID || '';
+
+    // 1. Pull MindBody email map + appointments for date range
+    const emailMap = await getClientEmailMapFromDB(mbStart, mbEnd).catch(() => new Map());
+    const matchedClientIds: string[] = [];
+
+    // 2. Match each lead to MindBody by email
+    for (const lead of leads) {
+        const email = (lead.contactEmail || '').toLowerCase().trim();
+        if (!email) continue;
+        const mb = emailMap.get(email);
+        if (mb) {
+            lead.mbClientId = String(mb.client.Id);
+            lead.mbRevenue = mb.revenue;
+            lead.mbUrl = mbSiteId
+                ? `https://clients.mindbodyonline.com/Asp/adm/adm_clt_personal.asp?clientID=${mb.client.Id}&studioid=${mbSiteId}`
+                : null;
+            matchedClientIds.push(String(mb.client.Id));
+        }
+    }
+
+    // 3. Get appointments for matched clients
+    if (matchedClientIds.length > 0) {
+        try {
+            const apptMap = await getAppointmentsByClientIds([...new Set(matchedClientIds)], mbStart, mbEnd);
+            for (const lead of leads) {
+                if (!lead.mbClientId) continue;
+                const appts = apptMap.get(lead.mbClientId);
+                if (appts) {
+                    lead.mbBooked = appts.booked;
+                    lead.mbCompleted = appts.completed;
+                }
+            }
+        } catch (e) {
+            console.warn('[google-ads enrich] appts lookup failed:', e);
+        }
+    }
+
+    // 4. Attribute each lead to a campaign by source-string match
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    for (const lead of leads) {
+        const sourceClean = normalize(lead.source.replace(/google\s*ads?\s*-?\s*/i, ''));
+        if (!sourceClean) continue;
+        let best: { id: string; name: string } | null = null;
+        let bestLen = 0;
+        for (const c of campaigns) {
+            const cname = normalize(c.name);
+            // Token-level overlap
+            const sourceTokens = sourceClean.split(' ').filter(t => t.length >= 3);
+            const matchedTokens = sourceTokens.filter(t => cname.includes(t));
+            const score = matchedTokens.join(' ').length;
+            if (score > bestLen) {
+                best = { id: c.id, name: c.name };
+                bestLen = score;
+            }
+        }
+        if (best) {
+            lead.matchedCampaignId = best.id;
+            lead.matchedCampaignName = best.name;
+        }
+    }
+
+    // 5. Build per-campaign breakdown
+    const breakdownMap = new Map<string, GoogleCampaignBreakdown>();
+    for (const c of campaigns) {
+        breakdownMap.set(c.id, {
+            id: c.id,
+            name: c.name,
+            ghlLeads: 0,
+            mbMatchedClients: 0,
+            matchedRevenue: 0,
+            appointmentsBooked: 0,
+            appointmentsCompleted: 0,
+            trueRoas: c.spend > 0 ? 0 : null,
+        });
+    }
+
+    for (const lead of leads) {
+        if (!lead.matchedCampaignId) continue;
+        const bd = breakdownMap.get(lead.matchedCampaignId);
+        if (!bd) continue;
+        bd.ghlLeads++;
+        if (lead.mbClientId) {
+            bd.mbMatchedClients++;
+            bd.matchedRevenue += lead.mbRevenue;
+            bd.appointmentsBooked += lead.mbBooked;
+            bd.appointmentsCompleted += lead.mbCompleted;
+        }
+    }
+
+    for (const c of campaigns) {
+        const bd = breakdownMap.get(c.id)!;
+        if (c.spend > 0) bd.trueRoas = Math.round((bd.matchedRevenue / c.spend) * 100) / 100;
+        bd.matchedRevenue = Math.round(bd.matchedRevenue * 100) / 100;
+    }
+
+    return { leads, campaignBreakdown: Array.from(breakdownMap.values()) };
 }
 
 function getMockData(_since: string, _until: string): GoogleAdsData {

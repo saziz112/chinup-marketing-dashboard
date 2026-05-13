@@ -54,6 +54,24 @@ interface GhlLeadDetail {
     contactEmail: string;
     monetaryValue: number;
     ghlUrl: string | null;
+    mbClientId: string | null;
+    mbRevenue: number;
+    mbBooked: number;
+    mbCompleted: number;
+    mbUrl: string | null;
+    matchedCampaignId: string | null;
+    matchedCampaignName: string | null;
+}
+
+interface GoogleCampaignBreakdown {
+    id: string;
+    name: string;
+    ghlLeads: number;
+    mbMatchedClients: number;
+    matchedRevenue: number;
+    appointmentsBooked: number;
+    appointmentsCompleted: number;
+    trueRoas: number | null;
 }
 
 interface AdsData {
@@ -64,6 +82,11 @@ interface AdsData {
     dailySpend: DailySpend[];
     ghlLeads?: number;
     ghlLeadsDetails?: GhlLeadDetail[];
+    ghlCampaignBreakdown?: GoogleCampaignBreakdown[];
+    ghlTotalRevenue?: number | null;
+    ghlTrueRoas?: number | null;
+    ghlAppointmentsBooked?: number;
+    ghlAppointmentsCompleted?: number;
 }
 
 interface OverviewData {
@@ -179,6 +202,27 @@ export default function AdsPage() {
         acc[b.id] = b;
         return acc;
     }, {} as Record<string, CampaignBreakdown>);
+
+    // Google: synthesize a roasDict from GHL+MindBody campaign breakdown so the
+    // same CampaignsTable columns light up for Google campaigns
+    const googleRoasDict = (isGoogle && googleData?.ghlCampaignBreakdown)
+        ? googleData.ghlCampaignBreakdown.reduce((acc, b) => {
+            acc[b.id] = {
+                id: b.id,
+                name: b.name,
+                status: 'ACTIVE',
+                spend: 0,
+                metaLeads: b.ghlLeads,
+                mbMatchedClients: b.mbMatchedClients,
+                matchedRevenue: b.matchedRevenue,
+                trueRoas: b.trueRoas,
+                matchRate: b.ghlLeads > 0 ? Math.round((b.mbMatchedClients / b.ghlLeads) * 100) : null,
+                appointmentsBooked: b.appointmentsBooked,
+                appointmentsCompleted: b.appointmentsCompleted,
+            } as CampaignBreakdown;
+            return acc;
+        }, {} as Record<string, CampaignBreakdown>)
+        : undefined;
 
     const chartData = dailySpend.map(d => {
         if (isOverview) {
@@ -396,6 +440,22 @@ export default function AdsPage() {
                                 />
                             </div>
                         )}
+                        {isGoogle && isAdmin && googleData?.ghlTrueRoas != null && (
+                            <KpiCard
+                                label="GHL True ROAS"
+                                value={`${googleData.ghlTrueRoas.toFixed(2)}x`}
+                                sub={`${fmt$(googleData.ghlTotalRevenue ?? 0)} matched revenue`}
+                                green
+                            />
+                        )}
+                        {isGoogle && !!googleData?.ghlAppointmentsBooked && (
+                            <KpiCard
+                                label="GHL Appts Booked"
+                                value={fmtNum(googleData.ghlAppointmentsBooked)}
+                                sub={`${googleData.ghlAppointmentsCompleted ?? 0} completed`}
+                                green
+                            />
+                        )}
                         {isAdmin && roasData && roasData.trueRoas !== null && (
                             <KpiCard label="True ROAS" value={`${roasData.trueRoas.toFixed(2)}x`} sub="MindBody verified" green />
                         )}
@@ -495,7 +555,7 @@ export default function AdsPage() {
                         </div>
                         <CampaignsTable
                             campaigns={campaigns}
-                            roasDict={roasDict}
+                            roasDict={isGoogle ? googleRoasDict : roasDict}
                             isAdmin={isAdmin}
                             statusFilter={statusFilter}
                             onStatusFilter={setStatusFilter}
@@ -620,34 +680,59 @@ export default function AdsPage() {
                                         <tr>
                                             <th>Created</th>
                                             <th>Contact</th>
-                                            <th>Email</th>
                                             <th>Source</th>
                                             <th>Location</th>
-                                            <th>Status</th>
-                                            <th>Value</th>
-                                            <th>Action</th>
+                                            <th>GHL Stage</th>
+                                            <th>Campaign</th>
+                                            {isAdmin && <th>MB Revenue</th>}
+                                            <th>Appts (B/C)</th>
+                                            <th>Validate</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {googleData.ghlLeadsDetails.map((l) => (
+                                        {googleData.ghlLeadsDetails.map((l) => {
+                                            const ghlColor = l.status === 'won' ? '#22c55e' : l.status === 'lost' ? '#ef4444' : l.status === 'abandoned' ? '#6b7280' : '#3b82f6';
+                                            const ghlLabel = l.status.charAt(0).toUpperCase() + l.status.slice(1);
+                                            return (
                                             <tr key={l.id}>
-                                                <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{format(parseISO(l.createdAt), 'MMM d, h:mm a')}</td>
-                                                <td style={{ fontWeight: 500 }}>{l.contactName || l.name || 'Unknown'}</td>
-                                                <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{l.contactEmail || '—'}</td>
+                                                <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{format(parseISO(l.createdAt), 'MMM d, h:mm a')}</td>
+                                                <td>
+                                                    <div style={{ fontWeight: 500 }}>{l.contactName || l.name || 'Unknown'}</div>
+                                                    <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>{l.contactEmail || '—'}</div>
+                                                </td>
                                                 <td style={{ fontSize: 12 }}>{l.source}</td>
                                                 <td style={{ fontSize: 12, textTransform: 'capitalize' }}>{l.locationKey}</td>
-                                                <td><StatusBadge status={(l.status === 'won' ? 'ACTIVE' : l.status === 'lost' ? 'DELETED' : l.status === 'abandoned' ? 'ARCHIVED' : 'PAUSED') as Campaign['status']} /></td>
-                                                <td style={{ color: l.monetaryValue > 0 ? '#22c55e' : 'var(--text-muted)' }}>{l.monetaryValue > 0 ? fmt$(l.monetaryValue) : '—'}</td>
                                                 <td>
-                                                    {l.ghlUrl ? (
+                                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600, background: `${ghlColor}22`, color: ghlColor, whiteSpace: 'nowrap' }}>
+                                                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: ghlColor, display: 'inline-block' }} />
+                                                        {ghlLabel}
+                                                    </span>
+                                                </td>
+                                                <td style={{ fontSize: 12, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={l.matchedCampaignName || ''}>
+                                                    {l.matchedCampaignName || <span style={{ color: 'var(--text-muted)' }}>unmatched</span>}
+                                                </td>
+                                                {isAdmin && (
+                                                    <td style={{ color: l.mbRevenue > 0 ? '#22c55e' : 'var(--text-muted)', fontWeight: l.mbRevenue > 0 ? 600 : 400 }}>
+                                                        {l.mbRevenue > 0 ? fmt$(l.mbRevenue) : (l.mbClientId ? '$0' : '—')}
+                                                    </td>
+                                                )}
+                                                <td style={{ fontSize: 12 }}>
+                                                    {l.mbClientId ? `${l.mbBooked} / ${l.mbCompleted}` : <span style={{ color: 'var(--text-muted)' }}>no MB</span>}
+                                                </td>
+                                                <td style={{ whiteSpace: 'nowrap' }}>
+                                                    {l.ghlUrl && (
                                                         <a href={l.ghlUrl} target="_blank" rel="noopener noreferrer"
-                                                           style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f644', textDecoration: 'none' }}>GHL ↗</a>
-                                                    ) : (
-                                                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>
+                                                           style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f644', textDecoration: 'none', marginRight: 4 }}>GHL ↗</a>
+                                                    )}
+                                                    {l.mbUrl && (
+                                                        <a href={l.mbUrl} target="_blank" rel="noopener noreferrer"
+                                                           style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44', textDecoration: 'none' }}
+                                                           title={`MB Client ID ${l.mbClientId}`}>MB ↗</a>
                                                     )}
                                                 </td>
                                             </tr>
-                                        ))}
+                                            );
+                                        })}
                                     </tbody>
                                 </table></div>
                             ) : (
