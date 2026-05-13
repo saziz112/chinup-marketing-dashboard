@@ -432,9 +432,13 @@ export async function enrichGhlLeadsWithMindBodyAndCampaigns(
         'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct',
         'nov', 'dec', 'location',
     ]);
+    // Maps each GHL sub-account → tokens that may appear in a Google Ads
+    // campaign name for that location. Smyrna/Vinings is the Atlanta-metro
+    // sub-account, so the Google campaign is "Medspa Searches - Atlanta
+    // Location" even though the GHL location key is "smyrna".
     const LOCATION_ALIASES: Record<string, string[]> = {
         decatur: ['decatur'],
-        smyrna: ['smyrna', 'vinings'],
+        smyrna: ['atlanta', 'smyrna', 'vinings'],
         kennesaw: ['kennesaw'],
     };
     const tokenize = (s: string): string[] =>
@@ -451,6 +455,15 @@ export async function enrichGhlLeadsWithMindBodyAndCampaigns(
 
     const findLocationCampaign = (locationKey: string) => {
         const aliases = LOCATION_ALIASES[locationKey] || [locationKey];
+        // Prefer the generic search-style campaign for this location
+        // (e.g. "Medspa Searches - Decatur Location") over treatment-specific
+        // campaigns that happen to mention the same city (e.g. "Emsculpt
+        // Atlanta Focus" — that's a treatment campaign, not the smyrna search).
+        for (const c of campaigns) {
+            const cn = c.name.toLowerCase();
+            if (/search/i.test(cn) && aliases.some(a => cn.includes(a))) return c;
+        }
+        // Fallback: any campaign whose name contains the location alias
         for (const c of campaigns) {
             const cn = c.name.toLowerCase();
             if (aliases.some(a => cn.includes(a))) return c;
