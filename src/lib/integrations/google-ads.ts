@@ -443,9 +443,35 @@ export async function enrichGhlLeadsWithMindBodyAndCampaigns(
             .split(' ')
             .filter(t => t.length >= 4 && !STOPWORDS.has(t) && !/^\d+$/.test(t));
 
+    // Naming convention: "<Name> - Google Ad - <Treatment>" indicates the
+    // generic medspa search campaign (location-based), NOT a treatment-specific
+    // campaign — even if the treatment word happens to also appear in some
+    // other campaign name. These leads always route by location.
+    const GENERIC_SEARCH_PATTERN = /-\s*google\s*ads?\s*-/i;
+
+    const findLocationCampaign = (locationKey: string) => {
+        const aliases = LOCATION_ALIASES[locationKey] || [locationKey];
+        for (const c of campaigns) {
+            const cn = c.name.toLowerCase();
+            if (aliases.some(a => cn.includes(a))) return c;
+        }
+        return null;
+    };
+
     for (const lead of leads) {
+        const leadName = (lead.name || '').toLowerCase();
         const leadText = `${lead.name || ''} ${lead.source || ''}`.toLowerCase();
         if (!leadText.trim()) continue;
+
+        // Generic-search naming convention forces location fallback
+        if (GENERIC_SEARCH_PATTERN.test(leadName)) {
+            const loc = findLocationCampaign(lead.locationKey);
+            if (loc) {
+                lead.matchedCampaignId = loc.id;
+                lead.matchedCampaignName = loc.name;
+            }
+            continue;
+        }
 
         // Phase (a): treatment-keyword match — score campaigns by distinctive token overlap
         let best: { id: string; name: string } | null = null;
@@ -469,15 +495,11 @@ export async function enrichGhlLeadsWithMindBodyAndCampaigns(
             continue;
         }
 
-        // Phase (b): location fallback (e.g. "Sculptra" → "Medspa Searches - Decatur Location")
-        const aliases = LOCATION_ALIASES[lead.locationKey] || [lead.locationKey];
-        for (const c of campaigns) {
-            const cn = c.name.toLowerCase();
-            if (aliases.some(a => cn.includes(a))) {
-                lead.matchedCampaignId = c.id;
-                lead.matchedCampaignName = c.name;
-                break;
-            }
+        // Phase (b): location fallback (e.g. unrecognized treatment)
+        const loc = findLocationCampaign(lead.locationKey);
+        if (loc) {
+            lead.matchedCampaignId = loc.id;
+            lead.matchedCampaignName = loc.name;
         }
     }
 
