@@ -525,6 +525,7 @@ export default function AdsPage() {
                                             <th>Sale Amount</th>
                                             <th>Lead Cost</th>
                                             <th>Patient ROAS</th>
+                                            <th>Validate</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -539,6 +540,22 @@ export default function AdsPage() {
                                                 </td>
                                                 <td style={{ color: 'var(--accent)' }}>{fmt$(m.leadCost)}</td>
                                                 <td>{m.leadCost > 0 ? `${(m.revenue / m.leadCost).toFixed(1)}x` : '—'}</td>
+                                                <td style={{ whiteSpace: 'nowrap' }}>
+                                                    {m.ghlUrl ? (
+                                                        <a href={m.ghlUrl} target="_blank" rel="noopener noreferrer"
+                                                           style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f644', marginRight: 4, textDecoration: 'none' }}
+                                                           title="Open contact in GoHighLevel">GHL ↗</a>
+                                                    ) : (
+                                                        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 4 }} title="No GHL contact found for this email — run incremental sync">no GHL</span>
+                                                    )}
+                                                    {m.mbUrl ? (
+                                                        <a href={m.mbUrl} target="_blank" rel="noopener noreferrer"
+                                                           style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44', textDecoration: 'none' }}
+                                                           title={`MB Client ID ${m.mbClientId}`}>MB ↗</a>
+                                                    ) : (
+                                                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>no MB</span>
+                                                    )}
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>

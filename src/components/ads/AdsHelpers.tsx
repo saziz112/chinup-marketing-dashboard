@@ -64,6 +64,10 @@ export interface RoasData {
         campaignName: string;
         leadCost: number;
         isSplit?: boolean;
+        ghlUrl?: string | null;
+        mbUrl?: string | null;
+        ghlContactId?: string | null;
+        mbClientId?: string | null;
     }[];
     isMock: boolean;
 }

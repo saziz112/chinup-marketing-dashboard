@@ -22,6 +22,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getMetaAdsData, getMetaLeads, isMetaAdsConfigured } from '@/lib/integrations/meta-ads';
 import { getClientEmailMapFromDB, getAppointmentsByClientIds } from '@/lib/integrations/mindbody-db';
+import { sql } from '@/lib/db/sql';
+import { getLocations } from '@/lib/integrations/gohighlevel';
 import { format, subDays, startOfMonth } from 'date-fns';
 
 const today = new Date();
@@ -82,6 +84,28 @@ export async function GET(request: NextRequest) {
             leadData.byCampaign.set(lead.campaignId, arr);
         }
 
+        // Build GHL email→{contactId, locationId} map for matched leads
+        const matchedEmails = [...new Set(
+            leadData.leads.map(l => l.email?.toLowerCase().trim()).filter(Boolean)
+        )] as string[];
+        const ghlByEmail = new Map<string, { contactId: string; locationKey: string }>();
+        if (matchedEmails.length > 0) {
+            try {
+                const rows = await sql`
+                    SELECT email, contact_id, location_key FROM ghl_contacts_map
+                    WHERE email = ANY(${matchedEmails})
+                `;
+                for (const r of rows.rows) {
+                    if (!ghlByEmail.has(r.email)) {
+                        ghlByEmail.set(r.email, { contactId: r.contact_id, locationKey: r.location_key });
+                    }
+                }
+            } catch { /* table may not exist yet */ }
+        }
+        const locationIdByKey = new Map<string, string>();
+        for (const loc of getLocations()) locationIdByKey.set(loc.key, loc.locationId);
+        const mbSiteId = process.env.MINDBODY_SITE_ID || '';
+
         // First, count how many leads each email has to handle revenue splitting
         const emailLeadCounts = new Map<string, number>();
         for (const lead of leadData.leads) {
@@ -91,7 +115,7 @@ export async function GET(request: NextRequest) {
         }
 
         // --- Email matching ---
-        const matchedClientsDetails: { email: string; clientName: string; revenue: number; campaignId: string; campaignName: string; leadCost: number; isSplit: boolean }[] = [];
+        const matchedClientsDetails: { email: string; clientName: string; revenue: number; campaignId: string; campaignName: string; leadCost: number; isSplit: boolean; ghlUrl: string | null; mbUrl: string | null; ghlContactId: string | null; mbClientId: string | null }[] = [];
         const unmatchedLeads: { email: string; campaignId: string }[] = [];
 
         for (const lead of leadData.leads) {
@@ -105,6 +129,16 @@ export async function GET(request: NextRequest) {
                 const numLeads = emailLeadCounts.get(email) || 1;
                 const splitRevenue = mbClient.revenue / numLeads;
 
+                const ghl = ghlByEmail.get(email);
+                const ghlLocationId = ghl ? locationIdByKey.get(ghl.locationKey) : null;
+                const ghlUrl = ghl && ghlLocationId
+                    ? `https://app.gohighlevel.com/v2/location/${ghlLocationId}/contacts/detail/${ghl.contactId}`
+                    : null;
+                const mbClientId = mbClient.client.Id || null;
+                const mbUrl = mbClientId && mbSiteId
+                    ? `https://clients.mindbodyonline.com/Asp/adm/adm_clt_personal.asp?clientID=${mbClientId}&studioid=${mbSiteId}`
+                    : null;
+
                 matchedClientsDetails.push({
                     email,
                     clientName: `${mbClient.client.FirstName || ''} ${mbClient.client.LastName || ''}`.trim(),
@@ -113,6 +147,10 @@ export async function GET(request: NextRequest) {
                     campaignName: lead.campaignName,
                     leadCost: campaignCostMap.get(lead.campaignId) || 0,
                     isSplit: numLeads > 1,
+                    ghlUrl,
+                    mbUrl,
+                    ghlContactId: ghl?.contactId || null,
+                    mbClientId: mbClientId ? String(mbClientId) : null,
                 });
             } else {
                 unmatchedLeads.push({ email, campaignId: lead.campaignId });
