@@ -422,27 +422,62 @@ export async function enrichGhlLeadsWithMindBodyAndCampaigns(
         }
     }
 
-    // 4. Attribute each lead to a campaign by source-string match
-    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    // 4. Attribute each lead to a campaign — two-phase match:
+    //    (a) Treatment-keyword overlap between lead name+source and campaign name
+    //    (b) If no specific treatment matched, fall back to lead's location
+    const STOPWORDS = new Set([
+        'google', 'ads', 'ad', 'lead', 'leads', 'campaign', 'from', 'general',
+        'medspa', 'med', 'spa', 'search', 'searches', 'consult', 'consultation',
+        'request', 'new', 'with', 'update', 'focus', 'website', 'form', 'jan',
+        'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct',
+        'nov', 'dec', 'location',
+    ]);
+    const LOCATION_ALIASES: Record<string, string[]> = {
+        decatur: ['decatur'],
+        smyrna: ['smyrna', 'vinings'],
+        kennesaw: ['kennesaw'],
+    };
+    const tokenize = (s: string): string[] =>
+        s.toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .split(' ')
+            .filter(t => t.length >= 4 && !STOPWORDS.has(t) && !/^\d+$/.test(t));
+
     for (const lead of leads) {
-        const sourceClean = normalize(lead.source.replace(/google\s*ads?\s*-?\s*/i, ''));
-        if (!sourceClean) continue;
+        const leadText = `${lead.name || ''} ${lead.source || ''}`.toLowerCase();
+        if (!leadText.trim()) continue;
+
+        // Phase (a): treatment-keyword match — score campaigns by distinctive token overlap
         let best: { id: string; name: string } | null = null;
-        let bestLen = 0;
+        let bestScore = 0;
         for (const c of campaigns) {
-            const cname = normalize(c.name);
-            // Token-level overlap
-            const sourceTokens = sourceClean.split(' ').filter(t => t.length >= 3);
-            const matchedTokens = sourceTokens.filter(t => cname.includes(t));
-            const score = matchedTokens.join(' ').length;
-            if (score > bestLen) {
+            const cTokens = tokenize(c.name);
+            let score = 0;
+            for (const tok of cTokens) {
+                if (leadText.includes(tok)) score += tok.length;
+            }
+            if (score > bestScore) {
+                bestScore = score;
                 best = { id: c.id, name: c.name };
-                bestLen = score;
             }
         }
-        if (best) {
+
+        // Require at least one substantive token (>=5 chars) to claim a treatment match
+        if (best && bestScore >= 5) {
             lead.matchedCampaignId = best.id;
             lead.matchedCampaignName = best.name;
+            continue;
+        }
+
+        // Phase (b): location fallback (e.g. "Sculptra" → "Medspa Searches - Decatur Location")
+        const aliases = LOCATION_ALIASES[lead.locationKey] || [lead.locationKey];
+        for (const c of campaigns) {
+            const cn = c.name.toLowerCase();
+            if (aliases.some(a => cn.includes(a))) {
+                lead.matchedCampaignId = c.id;
+                lead.matchedCampaignName = c.name;
+                break;
+            }
         }
     }
 
