@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/sync-research",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/google-offline-conversions",
+      "schedule": "0 10 * * *"
     }
   ]
 }

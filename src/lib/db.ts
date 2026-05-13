@@ -34,6 +34,8 @@ export async function initAllTables() {
         initResearchTrendsTable(),
         initResearchCalendarsTable(),
         initResearchSocialCacheTable(),
+        initGclidCapturesTable(),
+        initGoogleOfflineUploadsTable(),
     ]);
     // Phase 2: tables with FK dependencies
     await initCampaignContactsTable();
@@ -548,4 +550,37 @@ async function initResearchSocialCacheTable() {
         )
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_research_social_cache_expires ON research_social_cache(expires_at)`;
+}
+
+async function initGclidCapturesTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS gclid_captures (
+            email TEXT PRIMARY KEY,
+            gclid TEXT NOT NULL,
+            wbraid TEXT,
+            gbraid TEXT,
+            landing_url TEXT,
+            captured_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_gclid_captures_captured ON gclid_captures(captured_at DESC)`;
+}
+
+async function initGoogleOfflineUploadsTable() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS google_offline_uploads (
+            sale_id TEXT NOT NULL,
+            conversion_action_id TEXT NOT NULL,
+            gclid TEXT NOT NULL,
+            value NUMERIC(12,2) NOT NULL,
+            currency_code TEXT NOT NULL DEFAULT 'USD',
+            conversion_datetime TIMESTAMPTZ NOT NULL,
+            uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+            response_status TEXT,
+            response_error TEXT,
+            PRIMARY KEY (sale_id, conversion_action_id)
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_google_uploads_uploaded ON google_offline_uploads(uploaded_at DESC)`;
 }

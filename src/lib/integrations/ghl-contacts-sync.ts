@@ -27,11 +27,14 @@ const PAGES_PER_CHUNK = 5; // 5 pages × 100 contacts = 500 per invocation (~15-
 export async function backfillGhlContacts(): Promise<{
     total: number; apiCalls: number; done: boolean; chunkLabel: string; continue?: boolean;
 }> {
-    // Ensure cursor_data and source columns exist (self-migration)
+    // Ensure cursor_data, source, gclid columns exist (self-migration)
     await sql`ALTER TABLE mb_sync_state ADD COLUMN IF NOT EXISTS cursor_data TEXT`.catch(() => {});
     await sql`ALTER TABLE ghl_contacts_map ADD COLUMN IF NOT EXISTS source TEXT`.catch(() => {});
+    await sql`ALTER TABLE ghl_contacts_map ADD COLUMN IF NOT EXISTS gclid TEXT`.catch(() => {});
+    await sql`ALTER TABLE ghl_contacts_map ADD COLUMN IF NOT EXISTS gclid_captured_at TIMESTAMPTZ`.catch(() => {});
     await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_source ON ghl_contacts_map(source)`.catch(() => {});
     await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_created ON ghl_contacts_map(created_at)`.catch(() => {});
+    await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_gclid ON ghl_contacts_map(gclid) WHERE gclid IS NOT NULL`.catch(() => {});
 
     // If already completed, skip
     const finalState = await sql`SELECT 1 FROM mb_sync_state WHERE sync_type = 'ghl-contacts'`;
