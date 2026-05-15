@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getGoogleAdsData, getGhlGoogleLeads, enrichGhlLeadsWithMindBodyAndCampaigns, isGoogleAdsConfigured } from '@/lib/integrations/google-ads';
+import { getGoogleAdsData, getGhlGoogleLeads, enrichGhlLeadsWithMindBody, isGoogleAdsConfigured } from '@/lib/integrations/google-ads';
 import { subDays, format } from 'date-fns';
 
 const today = new Date();
@@ -27,10 +27,9 @@ export async function GET(request: NextRequest) {
             getGhlGoogleLeads(since, until),
         ]);
 
-        // --- Enrich GHL leads with MindBody revenue + per-campaign attribution ---
-        const enriched = await enrichGhlLeadsWithMindBodyAndCampaigns(
+        // --- Enrich GHL leads with MindBody revenue (account-level totals only) ---
+        const enriched = await enrichGhlLeadsWithMindBody(
             ghlLeadsResult.opportunities,
-            data.campaigns,
             since,
             until,
         );
@@ -50,7 +49,6 @@ export async function GET(request: NextRequest) {
             cpm: redact ? null : c.cpm,
             cpc: redact ? null : c.cpc,
             costPerResult: redact ? null : c.costPerResult,
-            // ROAS % (ratio) is visible to Sharia, raw $ spend is not
             roas: c.roas,
         }));
 
@@ -59,12 +57,12 @@ export async function GET(request: NextRequest) {
             spend: redact ? null : d.spend,
         }));
 
-        // Aggregate revenue + appointments for the KPI card subtitle
-        const totalGhlRevenue = enriched.leads.reduce((s, l) => s + l.mbRevenue, 0);
-        const totalGhlBooked = enriched.leads.reduce((s, l) => s + l.mbBooked, 0);
-        const totalGhlCompleted = enriched.leads.reduce((s, l) => s + l.mbCompleted, 0);
+        // True ROAS at the account level: total MindBody revenue from email-matched
+        // Google-sourced GHL leads, divided by total Google Ads spend.
         const totalSpend = data.account.totalSpend || 0;
-        const ghlTrueRoas = totalSpend > 0 ? Math.round((totalGhlRevenue / totalSpend) * 100) / 100 : null;
+        const ghlTrueRoas = totalSpend > 0
+            ? Math.round((enriched.totals.totalRevenue / totalSpend) * 100) / 100
+            : null;
 
         return NextResponse.json({
             isConfigured: isGoogleAdsConfigured(),
@@ -72,13 +70,14 @@ export async function GET(request: NextRequest) {
             account,
             campaigns,
             dailySpend,
-            ghlLeads: ghlLeadsResult.count,
+            ghlLeads: enriched.totals.totalLeads,
             ghlLeadsDetails: redact ? enriched.leads.map(l => ({ ...l, mbRevenue: 0 })) : enriched.leads,
-            ghlCampaignBreakdown: redact ? enriched.campaignBreakdown.map(b => ({ ...b, matchedRevenue: 0 })) : enriched.campaignBreakdown,
-            ghlTotalRevenue: redact ? null : Math.round(totalGhlRevenue * 100) / 100,
+            ghlTotalRevenue: redact ? null : enriched.totals.totalRevenue,
+            ghlMatchedClients: enriched.totals.mbMatchedClients,
+            ghlMatchRate: enriched.totals.mbMatchRate,
             ghlTrueRoas: redact ? null : ghlTrueRoas,
-            ghlAppointmentsBooked: totalGhlBooked,
-            ghlAppointmentsCompleted: totalGhlCompleted,
+            ghlAppointmentsBooked: enriched.totals.appointmentsBooked,
+            ghlAppointmentsCompleted: enriched.totals.appointmentsCompleted,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown error';

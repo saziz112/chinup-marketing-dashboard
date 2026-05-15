@@ -279,26 +279,12 @@ export interface GhlGoogleLead {
     contactEmail: string;
     monetaryValue: number;
     ghlUrl: string | null;
-    // MindBody enrichment
+    // MindBody enrichment (populated by enrichGhlLeadsWithMindBody)
     mbClientId: string | null;
     mbRevenue: number;
     mbBooked: number;
     mbCompleted: number;
     mbUrl: string | null;
-    // Campaign attribution
-    matchedCampaignId: string | null;
-    matchedCampaignName: string | null;
-}
-
-export interface GoogleCampaignBreakdown {
-    id: string;
-    name: string;
-    ghlLeads: number;
-    mbMatchedClients: number;
-    matchedRevenue: number;
-    appointmentsBooked: number;
-    appointmentsCompleted: number;
-    trueRoas: number | null;
 }
 
 // Cache google-sourced lead counts for 30 min (matches strategy/pipeline cache cadence)
@@ -357,8 +343,6 @@ export async function getGhlGoogleLeads(since: string, until: string): Promise<{
                                 mbBooked: 0,
                                 mbCompleted: 0,
                                 mbUrl: null,
-                                matchedCampaignId: null,
-                                matchedCampaignName: null,
                             });
                         }
                     }
@@ -377,28 +361,43 @@ export async function getGhlGoogleLeads(since: string, until: string): Promise<{
 }
 
 /**
- * Enrich GHL Google leads with MindBody revenue + appointments,
- * and attribute each lead to a Google Ads campaign by source-string matching.
+ * Enrich GHL Google leads with MindBody revenue + appointments by email match.
  *
- * Source matching heuristic: take the GHL opp source (e.g. "Google Ads - General Medspa"),
- * strip "Google Ads -" / "Google -" prefix, then check if any campaign name contains the
- * remainder (or vice versa) case-insensitively.
+ * Mirrors the Facebook ROAS pattern (lib/integrations/meta-ads.ts → /api/paid-ads/roas):
+ *   - For each GHL Google-sourced opportunity, look up the contact's email
+ *     in mb_clients_cache → get the MindBody client + sale revenue for the
+ *     window
+ *   - For each matched client, count booked/completed appointments
+ *
+ * Returns the enriched leads PLUS totals. Per-campaign breakdown is intentionally
+ * NOT computed — GHL doesn't preserve which Google campaign drove each lead, so
+ * we only report TOTAL Google ROAS, the same way Facebook reports True ROAS at
+ * the account level when individual lead→campaign mapping isn't reliable.
  */
-export async function enrichGhlLeadsWithMindBodyAndCampaigns(
+export async function enrichGhlLeadsWithMindBody(
     leads: GhlGoogleLead[],
-    campaigns: GoogleCampaign[],
     since: string,
     until: string,
-): Promise<{ leads: GhlGoogleLead[]; campaignBreakdown: GoogleCampaignBreakdown[] }> {
+): Promise<{
+    leads: GhlGoogleLead[];
+    totals: {
+        totalLeads: number;
+        mbMatchedClients: number;
+        mbMatchRate: number | null;
+        totalRevenue: number;
+        appointmentsBooked: number;
+        appointmentsCompleted: number;
+    };
+}> {
     const mbStart = `${since}T00:00:00`;
     const mbEnd = `${until}T23:59:59`;
     const mbSiteId = process.env.MINDBODY_SITE_ID || '';
 
-    // 1. Pull MindBody email map + appointments for date range
+    // 1. Pull MindBody email→client map (with revenue summed for the window)
     const emailMap = await getClientEmailMapFromDB(mbStart, mbEnd).catch(() => new Map());
     const matchedClientIds: string[] = [];
 
-    // 2. Match each lead to MindBody by email
+    // 2. Match each GHL lead to a MindBody client by email
     for (const lead of leads) {
         const email = (lead.contactEmail || '').toLowerCase().trim();
         if (!email) continue;
@@ -413,7 +412,7 @@ export async function enrichGhlLeadsWithMindBodyAndCampaigns(
         }
     }
 
-    // 3. Get appointments for matched clients
+    // 3. Lookup booked/completed appointments for matched clients
     if (matchedClientIds.length > 0) {
         try {
             const apptMap = await getAppointmentsByClientIds([...new Set(matchedClientIds)], mbStart, mbEnd);
@@ -430,135 +429,21 @@ export async function enrichGhlLeadsWithMindBodyAndCampaigns(
         }
     }
 
-    // 4. Attribute each lead to a campaign — two-phase match:
-    //    (a) Treatment-keyword overlap between lead name+source and campaign name
-    //    (b) If no specific treatment matched, fall back to lead's location
-    const STOPWORDS = new Set([
-        'google', 'ads', 'ad', 'lead', 'leads', 'campaign', 'from', 'general',
-        'medspa', 'med', 'spa', 'search', 'searches', 'consult', 'consultation',
-        'request', 'new', 'with', 'update', 'focus', 'website', 'form', 'jan',
-        'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct',
-        'nov', 'dec', 'location',
-    ]);
-    // Maps each GHL sub-account → tokens that may appear in a Google Ads
-    // campaign name for that location. Smyrna/Vinings is the Atlanta-metro
-    // sub-account, so the Google campaign is "Medspa Searches - Atlanta
-    // Location" even though the GHL location key is "smyrna".
-    const LOCATION_ALIASES: Record<string, string[]> = {
-        decatur: ['decatur'],
-        smyrna: ['atlanta', 'smyrna', 'vinings'],
-        kennesaw: ['kennesaw'],
-    };
-    const tokenize = (s: string): string[] =>
-        s.toLowerCase()
-            .replace(/[^a-z0-9]+/g, ' ')
-            .split(' ')
-            .filter(t => t.length >= 4 && !STOPWORDS.has(t) && !/^\d+$/.test(t));
-
-    // Naming convention: "<Name> - Google Ad - <Treatment>" indicates the
-    // generic medspa search campaign (location-based), NOT a treatment-specific
-    // campaign — even if the treatment word happens to also appear in some
-    // other campaign name. These leads always route by location.
-    const GENERIC_SEARCH_PATTERN = /-\s*google\s*ads?\s*-/i;
-
-    const findLocationCampaign = (locationKey: string) => {
-        const aliases = LOCATION_ALIASES[locationKey] || [locationKey];
-        // Prefer the generic search-style campaign for this location
-        // (e.g. "Medspa Searches - Decatur Location") over treatment-specific
-        // campaigns that happen to mention the same city (e.g. "Emsculpt
-        // Atlanta Focus" — that's a treatment campaign, not the smyrna search).
-        for (const c of campaigns) {
-            const cn = c.name.toLowerCase();
-            if (/search/i.test(cn) && aliases.some(a => cn.includes(a))) return c;
-        }
-        // Fallback: any campaign whose name contains the location alias
-        for (const c of campaigns) {
-            const cn = c.name.toLowerCase();
-            if (aliases.some(a => cn.includes(a))) return c;
-        }
-        return null;
+    // 4. Aggregate totals (no per-campaign breakdown — see function docstring)
+    const matched = leads.filter(l => !!l.mbClientId);
+    const totalRevenue = matched.reduce((s, l) => s + l.mbRevenue, 0);
+    const appointmentsBooked = matched.reduce((s, l) => s + l.mbBooked, 0);
+    const appointmentsCompleted = matched.reduce((s, l) => s + l.mbCompleted, 0);
+    const totals = {
+        totalLeads: leads.length,
+        mbMatchedClients: matched.length,
+        mbMatchRate: leads.length > 0 ? Math.round((matched.length / leads.length) * 100) : null,
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        appointmentsBooked,
+        appointmentsCompleted,
     };
 
-    for (const lead of leads) {
-        const leadName = (lead.name || '').toLowerCase();
-        const leadText = `${lead.name || ''} ${lead.source || ''}`.toLowerCase();
-        if (!leadText.trim()) continue;
-
-        // Generic-search naming convention forces location fallback
-        if (GENERIC_SEARCH_PATTERN.test(leadName)) {
-            const loc = findLocationCampaign(lead.locationKey);
-            if (loc) {
-                lead.matchedCampaignId = loc.id;
-                lead.matchedCampaignName = loc.name;
-            }
-            continue;
-        }
-
-        // Phase (a): treatment-keyword match — score campaigns by distinctive token overlap
-        let best: { id: string; name: string } | null = null;
-        let bestScore = 0;
-        for (const c of campaigns) {
-            const cTokens = tokenize(c.name);
-            let score = 0;
-            for (const tok of cTokens) {
-                if (leadText.includes(tok)) score += tok.length;
-            }
-            if (score > bestScore) {
-                bestScore = score;
-                best = { id: c.id, name: c.name };
-            }
-        }
-
-        // Require at least one substantive token (>=5 chars) to claim a treatment match
-        if (best && bestScore >= 5) {
-            lead.matchedCampaignId = best.id;
-            lead.matchedCampaignName = best.name;
-            continue;
-        }
-
-        // Phase (b): location fallback (e.g. unrecognized treatment)
-        const loc = findLocationCampaign(lead.locationKey);
-        if (loc) {
-            lead.matchedCampaignId = loc.id;
-            lead.matchedCampaignName = loc.name;
-        }
-    }
-
-    // 5. Build per-campaign breakdown
-    const breakdownMap = new Map<string, GoogleCampaignBreakdown>();
-    for (const c of campaigns) {
-        breakdownMap.set(c.id, {
-            id: c.id,
-            name: c.name,
-            ghlLeads: 0,
-            mbMatchedClients: 0,
-            matchedRevenue: 0,
-            appointmentsBooked: 0,
-            appointmentsCompleted: 0,
-            trueRoas: c.spend > 0 ? 0 : null,
-        });
-    }
-
-    for (const lead of leads) {
-        if (!lead.matchedCampaignId) continue;
-        const bd = breakdownMap.get(lead.matchedCampaignId);
-        if (!bd) continue;
-        bd.ghlLeads++;
-        if (lead.mbClientId) {
-            bd.mbMatchedClients++;
-            bd.matchedRevenue += lead.mbRevenue;
-            bd.appointmentsBooked += lead.mbBooked;
-            bd.appointmentsCompleted += lead.mbCompleted;
-        }
-    }
-
-    for (const c of campaigns) {
-        const bd = breakdownMap.get(c.id)!;
-        if (c.spend > 0) bd.trueRoas = Math.round((bd.matchedRevenue / c.spend) * 100) / 100;
-        bd.matchedRevenue = Math.round(bd.matchedRevenue * 100) / 100;
-    }
-
-    return { leads, campaignBreakdown: Array.from(breakdownMap.values()) };
+    return { leads, totals };
 }
 
 function getMockData(_since: string, _until: string): GoogleAdsData {

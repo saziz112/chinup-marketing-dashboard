@@ -59,19 +59,6 @@ interface GhlLeadDetail {
     mbBooked: number;
     mbCompleted: number;
     mbUrl: string | null;
-    matchedCampaignId: string | null;
-    matchedCampaignName: string | null;
-}
-
-interface GoogleCampaignBreakdown {
-    id: string;
-    name: string;
-    ghlLeads: number;
-    mbMatchedClients: number;
-    matchedRevenue: number;
-    appointmentsBooked: number;
-    appointmentsCompleted: number;
-    trueRoas: number | null;
 }
 
 interface AdsData {
@@ -82,8 +69,9 @@ interface AdsData {
     dailySpend: DailySpend[];
     ghlLeads?: number;
     ghlLeadsDetails?: GhlLeadDetail[];
-    ghlCampaignBreakdown?: GoogleCampaignBreakdown[];
     ghlTotalRevenue?: number | null;
+    ghlMatchedClients?: number;
+    ghlMatchRate?: number | null;
     ghlTrueRoas?: number | null;
     ghlAppointmentsBooked?: number;
     ghlAppointmentsCompleted?: number;
@@ -197,32 +185,13 @@ export default function AdsPage() {
         ? campaigns
         : campaigns.filter(c => c.status === statusFilter);
 
-    // Dictionary for fast campaign lookups
+    // Dictionary for fast campaign lookups (Meta only — Google ROAS is reported
+    // at the account level, not per-campaign, because GHL doesn't preserve
+    // which Google campaign drove each lead).
     const roasDict = roasData?.campaignBreakdown.reduce((acc, b) => {
         acc[b.id] = b;
         return acc;
     }, {} as Record<string, CampaignBreakdown>);
-
-    // Google: synthesize a roasDict from GHL+MindBody campaign breakdown so the
-    // same CampaignsTable columns light up for Google campaigns
-    const googleRoasDict = (isGoogle && googleData?.ghlCampaignBreakdown)
-        ? googleData.ghlCampaignBreakdown.reduce((acc, b) => {
-            acc[b.id] = {
-                id: b.id,
-                name: b.name,
-                status: 'ACTIVE',
-                spend: 0,
-                metaLeads: b.ghlLeads,
-                mbMatchedClients: b.mbMatchedClients,
-                matchedRevenue: b.matchedRevenue,
-                trueRoas: b.trueRoas,
-                matchRate: b.ghlLeads > 0 ? Math.round((b.mbMatchedClients / b.ghlLeads) * 100) : null,
-                appointmentsBooked: b.appointmentsBooked,
-                appointmentsCompleted: b.appointmentsCompleted,
-            } as CampaignBreakdown;
-            return acc;
-        }, {} as Record<string, CampaignBreakdown>)
-        : undefined;
 
     const chartData = dailySpend.map(d => {
         if (isOverview) {
@@ -433,24 +402,24 @@ export default function AdsPage() {
                                 title={googleData.ghlLeads ? 'Click to see lead details' : ''}
                             >
                                 <KpiCard
-                                    label="GHL Leads"
+                                    label="GHL Leads (Google)"
                                     value={fmtNum(googleData.ghlLeads)}
-                                    sub={googleData.ghlLeads ? 'click to view →' : 'google-source opps'}
+                                    sub={googleData.ghlLeads ? `${googleData.ghlMatchedClients ?? 0} matched to MB · click to view →` : 'no google-source opps'}
                                     green
                                 />
                             </div>
                         )}
                         {isGoogle && isAdmin && googleData?.ghlTrueRoas != null && (
                             <KpiCard
-                                label="GHL True ROAS"
+                                label="True ROAS (MB)"
                                 value={`${googleData.ghlTrueRoas.toFixed(2)}x`}
-                                sub={`${fmt$(googleData.ghlTotalRevenue ?? 0)} matched revenue`}
+                                sub={`${fmt$(googleData.ghlTotalRevenue ?? 0)} MindBody rev · ${googleData.ghlMatchRate ?? 0}% match`}
                                 green
                             />
                         )}
                         {isGoogle && !!googleData?.ghlAppointmentsBooked && (
                             <KpiCard
-                                label="GHL Appts Booked"
+                                label="Appts Booked"
                                 value={fmtNum(googleData.ghlAppointmentsBooked)}
                                 sub={`${googleData.ghlAppointmentsCompleted ?? 0} completed`}
                                 green
@@ -555,7 +524,7 @@ export default function AdsPage() {
                         </div>
                         <CampaignsTable
                             campaigns={campaigns}
-                            roasDict={isGoogle ? googleRoasDict : roasDict}
+                            roasDict={roasDict}
                             isAdmin={isAdmin}
                             statusFilter={statusFilter}
                             onStatusFilter={setStatusFilter}
@@ -683,7 +652,6 @@ export default function AdsPage() {
                                             <th>Source</th>
                                             <th>Location</th>
                                             <th>GHL Stage</th>
-                                            <th>Campaign</th>
                                             {isAdmin && <th>MB Revenue</th>}
                                             <th>Appts (B/C)</th>
                                             <th>Validate</th>
@@ -707,9 +675,6 @@ export default function AdsPage() {
                                                         <span style={{ width: 6, height: 6, borderRadius: '50%', background: ghlColor, display: 'inline-block' }} />
                                                         {ghlLabel}
                                                     </span>
-                                                </td>
-                                                <td style={{ fontSize: 12, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={l.matchedCampaignName || ''}>
-                                                    {l.matchedCampaignName || <span style={{ color: 'var(--text-muted)' }}>unmatched</span>}
                                                 </td>
                                                 {isAdmin && (
                                                     <td style={{ color: l.mbRevenue > 0 ? '#22c55e' : 'var(--text-muted)', fontWeight: l.mbRevenue > 0 ? 600 : 400 }}>
