@@ -224,6 +224,24 @@ export interface FBData {
         pagePostEngagements: number;
         pageVideoViews: number;
     }>;
+    commentReplyStats?: {
+        totalComments: number;
+        replied: number;
+        unreplied: number;
+        replyRate: number;
+        avgResponseHours: number | null;
+    };
+    unrepliedInbox?: Array<{
+        commentId: string;
+        text: string;
+        username: string;
+        timestamp: string;
+        postId: string;
+        postCaption: string;
+        postMediaType: string;
+        postPermalink: string;
+        postTimestamp: string;
+    }>;
     aiCoachingPlan?: CoachingPlan | null;
     days?: number;
 }
@@ -1305,8 +1323,11 @@ export function ActiveStories({ stories }: ActiveStoriesProps) {
 
 /* ── Inbox: Unreplied Comments ───────────────────────────────────── */
 
+type InboxComment = NonNullable<IGData['unrepliedInbox']>[number] & { platform: 'instagram' | 'facebook' };
+
 interface InboxTabProps {
-    unrepliedInbox: NonNullable<IGData['unrepliedInbox']>;
+    unrepliedInbox?: NonNullable<IGData['unrepliedInbox']>;
+    fbUnrepliedInbox?: NonNullable<FBData['unrepliedInbox']>;
 }
 
 function timeAgo(iso: string): string {
@@ -1323,17 +1344,28 @@ function timeAgo(iso: string): string {
     return `${Math.floor(days / 30)}mo ago`;
 }
 
-export function InboxTab({ unrepliedInbox }: InboxTabProps) {
+export function InboxTab({ unrepliedInbox, fbUnrepliedInbox }: InboxTabProps) {
     const [search, setSearch] = React.useState('');
+    const [platformFilter, setPlatformFilter] = React.useState<'all' | 'instagram' | 'facebook'>('all');
 
-    const filtered = unrepliedInbox.filter(c =>
-        search === '' ||
-        c.text.toLowerCase().includes(search.toLowerCase()) ||
-        c.username.toLowerCase().includes(search.toLowerCase()) ||
-        c.postCaption.toLowerCase().includes(search.toLowerCase())
+    const allComments: InboxComment[] = React.useMemo(() => {
+        const ig: InboxComment[] = (unrepliedInbox || []).map(c => ({ ...c, platform: 'instagram' }));
+        const fb: InboxComment[] = (fbUnrepliedInbox || []).map(c => ({ ...c, platform: 'facebook' }));
+        return [...ig, ...fb].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    }, [unrepliedInbox, fbUnrepliedInbox]);
+
+    const filtered = allComments.filter(c =>
+        (platformFilter === 'all' || c.platform === platformFilter) &&
+        (search === '' ||
+            c.text.toLowerCase().includes(search.toLowerCase()) ||
+            c.username.toLowerCase().includes(search.toLowerCase()) ||
+            c.postCaption.toLowerCase().includes(search.toLowerCase()))
     );
 
-    if (unrepliedInbox.length === 0) {
+    const igCount = allComments.filter(c => c.platform === 'instagram').length;
+    const fbCount = allComments.filter(c => c.platform === 'facebook').length;
+
+    if (allComments.length === 0) {
         return (
             <div className="section-card" style={{
                 background: 'rgba(34, 197, 94, 0.05)',
@@ -1354,10 +1386,34 @@ export function InboxTab({ unrepliedInbox }: InboxTabProps) {
         <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
                 <div>
-                    <h2 style={{ margin: 0 }}>{unrepliedInbox.length} Unreplied Comment{unrepliedInbox.length === 1 ? '' : 's'}</h2>
+                    <h2 style={{ margin: 0 }}>{allComments.length} Unreplied Comment{allComments.length === 1 ? '' : 's'}</h2>
                     <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '4px 0 0 0' }}>
-                        Across {new Set(unrepliedInbox.map(c => c.postId)).size} recent post{new Set(unrepliedInbox.map(c => c.postId)).size === 1 ? '' : 's'} • newest first
+                        Instagram: {igCount} • Facebook: {fbCount} • Across {new Set(allComments.map(c => c.postId)).size} recent post{new Set(allComments.map(c => c.postId)).size === 1 ? '' : 's'} • newest first
                     </p>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                    {(['all', 'instagram', 'facebook'] as const).map(p => {
+                        const active = platformFilter === p;
+                        const label = p === 'all' ? `All (${allComments.length})` : p === 'instagram' ? `IG (${igCount})` : `FB (${fbCount})`;
+                        return (
+                            <button
+                                key={p}
+                                onClick={() => setPlatformFilter(p)}
+                                style={{
+                                    background: active ? 'var(--accent-primary)' : 'rgba(255,255,255,0.04)',
+                                    color: active ? 'white' : 'var(--text-muted)',
+                                    border: '1px solid var(--border)',
+                                    padding: '6px 10px',
+                                    borderRadius: 8,
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                {label}
+                            </button>
+                        );
+                    })}
                 </div>
                 <input
                     type="text"
@@ -1385,8 +1441,17 @@ export function InboxTab({ unrepliedInbox }: InboxTabProps) {
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {filtered.map(c => {
-                        const typeBadge = c.postMediaType === 'VIDEO' ? 'Reel' : c.postMediaType === 'CAROUSEL_ALBUM' ? 'Carousel' : 'Photo';
-                        const typeColor = c.postMediaType === 'VIDEO' ? '#E1306C' : c.postMediaType === 'CAROUSEL_ALBUM' ? '#22c55e' : '#60A5FA';
+                        const isFB = c.platform === 'facebook';
+                        const typeBadge = isFB
+                            ? (c.postMediaType === 'added_video' || c.postMediaType === 'shared_video' ? 'Video' : c.postMediaType === 'added_photos' ? 'Photo' : 'Post')
+                            : (c.postMediaType === 'VIDEO' ? 'Reel' : c.postMediaType === 'CAROUSEL_ALBUM' ? 'Carousel' : 'Photo');
+                        const typeColor = isFB
+                            ? '#1877F2'
+                            : (c.postMediaType === 'VIDEO' ? '#E1306C' : c.postMediaType === 'CAROUSEL_ALBUM' ? '#22c55e' : '#60A5FA');
+                        const platformBadge = isFB ? 'FB' : 'IG';
+                        const platformColor = isFB ? '#1877F2' : '#E1306C';
+                        const replyLabel = isFB ? 'Reply on FB →' : 'Reply on IG →';
+                        const replyBg = isFB ? '#1877F2' : 'var(--accent-primary)';
                         return (
                             <div key={c.commentId} className="section-card" style={{
                                 marginBottom: 0, padding: 14,
@@ -1394,7 +1459,11 @@ export function InboxTab({ unrepliedInbox }: InboxTabProps) {
                             }}>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-                                        <strong style={{ color: 'var(--text-primary)', fontSize: 14 }}>@{c.username}</strong>
+                                        <span style={{
+                                            fontSize: 10, padding: '1px 6px', borderRadius: 999,
+                                            background: `${platformColor}22`, color: platformColor, fontWeight: 700,
+                                        }}>{platformBadge}</span>
+                                        <strong style={{ color: 'var(--text-primary)', fontSize: 14 }}>{isFB ? '' : '@'}{c.username}</strong>
                                         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{timeAgo(c.timestamp)}</span>
                                         <span style={{
                                             fontSize: 10, padding: '1px 6px', borderRadius: 999,
@@ -1422,7 +1491,7 @@ export function InboxTab({ unrepliedInbox }: InboxTabProps) {
                                     </div>
                                 </div>
                                 <a href={c.postPermalink} target="_blank" rel="noopener noreferrer" style={{
-                                    background: 'var(--accent-primary)',
+                                    background: replyBg,
                                     color: 'white',
                                     padding: '8px 14px',
                                     borderRadius: 8,
@@ -1432,7 +1501,7 @@ export function InboxTab({ unrepliedInbox }: InboxTabProps) {
                                     whiteSpace: 'nowrap',
                                     flexShrink: 0,
                                 }}>
-                                    Reply on IG →
+                                    {replyLabel}
                                 </a>
                             </div>
                         );

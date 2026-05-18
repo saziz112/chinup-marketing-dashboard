@@ -43,6 +43,7 @@ export default function OrganicPage() {
     const [activeTab, setActiveTab] = useState<PlatformTab>(getInitialTab);
     const [period, setPeriod] = useState<Period>('30d');
     const [loading, setLoading] = useState(true);
+    const [lastFetched, setLastFetched] = useState<Date | null>(null);
 
     const [igData, setIGData] = useState<IGData | null>(null);
     const [fbData, setFBData] = useState<FBData | null>(null);
@@ -60,18 +61,20 @@ export default function OrganicPage() {
     const [igSortOrder, setIGSortOrder] = useState<'asc' | 'desc'>('desc');
     const [igFilter, setIGFilter] = useState<IGFilter>('all');
 
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (force = false) => {
         setLoading(true);
+        const forceSuffix = force ? '&force=true' : '';
 
         const [igRes, fbRes, ytRes] = await Promise.allSettled([
-            fetch(`/api/organic/instagram?period=${period}`).then(r => r.json()),
-            fetch(`/api/organic/facebook?period=${period}`).then(r => r.json()),
-            fetch(`/api/organic/youtube?period=${period}`).then(r => r.json()),
+            fetch(`/api/organic/instagram?period=${period}${forceSuffix}`).then(r => r.json()),
+            fetch(`/api/organic/facebook?period=${period}${forceSuffix}`).then(r => r.json()),
+            fetch(`/api/organic/youtube?period=${period}${forceSuffix}`).then(r => r.json()),
         ]);
 
         setIGData(igRes.status === 'fulfilled' ? igRes.value : null);
         setFBData(fbRes.status === 'fulfilled' ? fbRes.value : null);
         setYTData(ytRes.status === 'fulfilled' ? ytRes.value : null);
+        setLastFetched(new Date());
         setLoading(false);
     }, [period]);
 
@@ -774,16 +777,39 @@ export default function OrganicPage() {
                     <h1>Organic Performance</h1>
                     <p className="subtitle">Track your social media growth and engagement across all platforms</p>
                 </div>
-                <div className="period-selector">
-                    {(['7d', '30d', '90d'] as Period[]).map(p => (
-                        <button
-                            key={p}
-                            className={`period-btn ${period === p ? 'active' : ''}`}
-                            onClick={() => setPeriod(p)}
-                        >
-                            {p === '7d' ? '7 Days' : p === '30d' ? '30 Days' : '90 Days'}
-                        </button>
-                    ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    {lastFetched && (
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                            Updated {lastFetched.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                    )}
+                    <button
+                        onClick={() => fetchData(true)}
+                        disabled={loading}
+                        style={{
+                            padding: '6px 12px',
+                            fontSize: '13px',
+                            background: 'transparent',
+                            border: '1px solid var(--border)',
+                            borderRadius: '8px',
+                            color: 'var(--text-muted)',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            opacity: loading ? 0.5 : 1,
+                        }}
+                    >
+                        {loading ? 'Loading…' : '↻ Refresh'}
+                    </button>
+                    <div className="period-selector">
+                        {(['7d', '30d', '90d'] as Period[]).map(p => (
+                            <button
+                                key={p}
+                                className={`period-btn ${period === p ? 'active' : ''}`}
+                                onClick={() => setPeriod(p)}
+                            >
+                                {p === '7d' ? '7 Days' : p === '30d' ? '30 Days' : '90 Days'}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
 
@@ -827,9 +853,11 @@ export default function OrganicPage() {
                     {activeTab === 'All Platforms' && renderAllPlatforms()}
                     {activeTab === 'Instagram' && renderInstagram()}
                     {activeTab === 'Inbox' && (
-                        igData?.error ? renderError('Instagram', igData.error)
-                        : !igConfigured ? renderNotConnected('Instagram')
-                        : <InboxTab unrepliedInbox={igData?.unrepliedInbox || []} />
+                        !igConfigured && !fbConfigured ? renderNotConnected('Instagram / Facebook')
+                        : <InboxTab
+                            unrepliedInbox={igConfigured ? (igData?.unrepliedInbox || []) : []}
+                            fbUnrepliedInbox={fbConfigured ? (fbData?.unrepliedInbox || []) : []}
+                          />
                     )}
                     {activeTab === 'Facebook' && renderFacebook()}
                     {activeTab === 'YouTube' && (

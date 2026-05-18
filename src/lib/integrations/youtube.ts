@@ -108,6 +108,10 @@ function setCache(key: string, data: unknown): void {
     ytCache.set(key, data);
 }
 
+export function clearYTCache(): void {
+    ytCache.clear();
+}
+
 // --- YouTube Data API ---
 
 /**

@@ -101,6 +101,27 @@ export interface FBInsightsDay {
     pageVideoViews: number;
 }
 
+export interface FBUnrepliedComment {
+    id: string;
+    text: string;
+    username: string;
+    timestamp: string;
+}
+
+export interface FBPost {
+    id: string;
+    message: string;
+    permalink: string;
+    timestamp: string;
+    fullPicture?: string;
+    statusType?: string;
+    commentsCount: number;
+    commentsFetched?: number;
+    commentsReplied?: number;
+    avgReplyHours?: number | null;
+    unrepliedComments?: FBUnrepliedComment[];
+}
+
 // --- Helpers ---
 
 const GRAPH_API_VERSION = 'v22.0';
@@ -151,6 +172,10 @@ function getCached<T>(key: string): T | null {
 
 function setCache(key: string, data: unknown): void {
     metaCache.set(key, data);
+}
+
+export function clearMetaCache(): void {
+    metaCache.clear();
 }
 
 // --- Instagram Graph API ---
@@ -679,6 +704,117 @@ export async function getFBInsights(
             pageVideoViews: d.pageVideoViews || 0,
         }))
         .sort((a, b) => a.date.localeCompare(b.date));
+
+    setCache(cacheKey, result);
+    return result;
+}
+
+/**
+ * Get recent Facebook Page posts with comments + reply detection.
+ * Mirrors getIGMedia's comment-inbox logic.
+ */
+export async function getFBPosts(limit: number = 15): Promise<FBPost[]> {
+    const cacheKey = `fb_posts_${limit}`;
+    const cached = getCached<FBPost[]>(cacheKey);
+    if (cached) { trackCall('meta', 'getFBPosts', true); return cached; }
+
+    const token = getEnv('META_PAGE_ACCESS_TOKEN');
+    const pageId = getEnv('META_PAGE_ID');
+
+    const postsData = await graphGet<{
+        data: Array<{
+            id: string;
+            message?: string;
+            permalink_url?: string;
+            created_time: string;
+            full_picture?: string;
+            status_type?: string;
+            comments?: { summary?: { total_count: number } };
+        }>;
+    }>(
+        `/${pageId}/posts?fields=id,message,permalink_url,created_time,full_picture,status_type,comments.summary(true).limit(0)&limit=${limit}`,
+        token
+    );
+
+    const result: FBPost[] = [];
+
+    for (const p of postsData.data || []) {
+        const commentsCount = p.comments?.summary?.total_count || 0;
+        const post: FBPost = {
+            id: p.id,
+            message: p.message || '',
+            permalink: p.permalink_url || '',
+            timestamp: p.created_time,
+            fullPicture: p.full_picture,
+            statusType: p.status_type,
+            commentsCount,
+        };
+
+        if (commentsCount > 0) {
+            try {
+                const commentsData = await graphGet<{
+                    data: Array<{
+                        id: string;
+                        message?: string;
+                        created_time: string;
+                        from?: { id: string; name?: string };
+                        comments?: {
+                            data: Array<{
+                                id: string;
+                                message?: string;
+                                created_time: string;
+                                from?: { id: string; name?: string };
+                            }>;
+                        };
+                    }>;
+                }>(
+                    `/${p.id}/comments?fields=id,message,created_time,from,comments{id,message,created_time,from}&filter=stream&limit=50`,
+                    token
+                );
+
+                let commentsFetched = 0;
+                let commentsReplied = 0;
+                const replyHourSamples: number[] = [];
+                const unrepliedComments: FBUnrepliedComment[] = [];
+
+                for (const c of commentsData.data || []) {
+                    if (c.from?.id === pageId) continue; // skip our own top-level comments
+                    commentsFetched++;
+
+                    const replies = c.comments?.data || [];
+                    const ourReplies = replies
+                        .filter(r => r.from?.id === pageId)
+                        .map(r => new Date(r.created_time).getTime())
+                        .sort((a, b) => a - b);
+
+                    if (ourReplies.length > 0) {
+                        commentsReplied++;
+                        const commentMs = new Date(c.created_time).getTime();
+                        const hours = (ourReplies[0] - commentMs) / (1000 * 60 * 60);
+                        if (hours >= 0 && hours < 24 * 30) replyHourSamples.push(hours);
+                    } else {
+                        unrepliedComments.push({
+                            id: c.id,
+                            text: c.message || '',
+                            username: c.from?.name || 'Unknown',
+                            timestamp: c.created_time,
+                        });
+                    }
+                }
+
+                post.commentsFetched = commentsFetched;
+                post.commentsReplied = commentsReplied;
+                post.unrepliedComments = unrepliedComments;
+                post.avgReplyHours = replyHourSamples.length > 0
+                    ? Math.round((replyHourSamples.reduce((a, b) => a + b, 0) / replyHourSamples.length) * 100) / 100
+                    : null;
+            } catch {
+                // continue without comment detail on failure
+            }
+        }
+
+        result.push(post);
+    }
 
     setCache(cacheKey, result);
     return result;

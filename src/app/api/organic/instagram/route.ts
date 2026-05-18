@@ -9,6 +9,7 @@ import {
     getIGMedia,
     getIGPeriodTotals,
     getIGStories,
+    clearMetaCache,
 } from '@/lib/integrations/meta-organic';
 import { generateAICoachingPlan } from '@/lib/ig-coaching-ai';
 
@@ -30,6 +31,7 @@ export async function GET(request: NextRequest) {
         const periodParam = searchParams.get('period') || '30d';
         const days = periodParam === '7d' ? 7 : periodParam === '90d' ? 90 : 30;
         const mediaLimit = days <= 7 ? 7 : days <= 30 ? 15 : 30;
+        if (searchParams.get('force') === 'true') clearMetaCache();
 
         // IG follower_count only supports since within 30 days of today
         const endDate = new Date();

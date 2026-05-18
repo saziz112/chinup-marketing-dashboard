@@ -5,6 +5,7 @@ import {
     isYouTubeConfigured,
     getChannelInfo,
     getRecentVideos,
+    clearYTCache,
 } from '@/lib/integrations/youtube';
 import type { YTSummary } from '@/lib/integrations/youtube';
 import { generateAIYTCoachingPlan } from '@/lib/yt-coaching-ai';
@@ -26,6 +27,7 @@ export async function GET(request: NextRequest) {
         const searchParams = request.nextUrl.searchParams;
         const periodParam = searchParams.get('period') || '30d';
         const days = periodParam === '7d' ? 7 : periodParam === '90d' ? 90 : 30;
+        if (searchParams.get('force') === 'true') clearYTCache();
 
         // Fetch channel info + recent videos in parallel
         const [channel, allVideos] = await Promise.all([
