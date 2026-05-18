@@ -771,6 +771,7 @@ export async function getFBPosts(limit: number = 15): Promise<FBPost[]> {
                     `/${p.id}/comments?fields=id,message,created_time,from,comments{id,message,created_time,from}&filter=stream&limit=50`,
                     token
                 );
+                console.log(`[FB-INBOX] post=${p.id} summary_count=${commentsCount} fetched=${(commentsData.data || []).length} first_from=${JSON.stringify(commentsData.data?.[0]?.from)}`);
 
                 let commentsFetched = 0;
                 let commentsReplied = 0;
@@ -808,14 +809,15 @@ export async function getFBPosts(limit: number = 15): Promise<FBPost[]> {
                 post.avgReplyHours = replyHourSamples.length > 0
                     ? Math.round((replyHourSamples.reduce((a, b) => a + b, 0) / replyHourSamples.length) * 100) / 100
                     : null;
-            } catch {
-                // continue without comment detail on failure
+            } catch (err) {
+                console.error(`[FB-INBOX] comments fetch failed for post ${p.id}:`, err instanceof Error ? err.message : err);
             }
         }
 
         result.push(post);
     }
 
+    console.log(`[FB-INBOX] posts=${result.length} total_comments=${result.reduce((s, p) => s + (p.commentsCount || 0), 0)} fetched=${result.reduce((s, p) => s + (p.commentsFetched || 0), 0)} unreplied=${result.reduce((s, p) => s + (p.unrepliedComments?.length || 0), 0)}`);
     setCache(cacheKey, result);
     return result;
 }

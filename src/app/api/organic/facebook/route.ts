@@ -141,6 +141,18 @@ export async function GET(request: NextRequest) {
                 avgResponseHours,
             },
             unrepliedInbox,
+            _debug: {
+                postsFetched: posts.length,
+                totalCommentsCountSum: posts.reduce((s, p) => s + (p.commentsCount || 0), 0),
+                postsWithCommentsFetched: posts.filter(p => (p.commentsFetched || 0) > 0).length,
+                unrepliedCount: unrepliedInbox.length,
+                samplePost: posts[0] ? {
+                    id: posts[0].id,
+                    commentsCount: posts[0].commentsCount,
+                    commentsFetched: posts[0].commentsFetched ?? null,
+                    unrepliedComments: posts[0].unrepliedComments?.length ?? null,
+                } : null,
+            },
             aiCoachingPlan,
             days,
             period: periodParam,
