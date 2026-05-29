@@ -7,6 +7,7 @@
 import { sql } from '@/lib/db/sql';
 import { getSales, getAppointments, getClients, normalizePhone } from './mindbody';
 import type { Sale, StaffAppointment, Client } from './mindbody';
+import { normalizeTreatment } from '@/lib/treatments';
 
 // ---------------------------------------------------------------------------
 // Sync State Helpers
@@ -505,48 +506,41 @@ export async function getLapsedPatientsFromDB(
 
     if (salesResult.rows.length === 0) return [];
 
-    // Get treatment info for these clients
+    // Treatment info comes from SALES line items (the appointments table has no
+    // treatment names). Normalize each item description to a canonical clinical
+    // treatment; most-recent = first qualifying item walking sales newest-first.
     const clientIds = salesResult.rows.map(r => r.client_id);
     const clientIdsCsv = clientIds.join(',');
-    const treatmentResult = await sql`
-        SELECT DISTINCT ON (client_id)
-            client_id,
-            session_type_name,
-            start_date
-        FROM mb_appointments_history
-        WHERE client_id = ANY(string_to_array(${clientIdsCsv}, ','))
-          AND status IN ('Completed', 'Arrived')
-          AND session_type_name IS NOT NULL
-          AND session_type_name NOT ILIKE '%follow%up%'
-          AND session_type_name NOT ILIKE '%block%'
-          AND session_type_name NOT ILIKE '%unavailable%'
-        ORDER BY client_id, start_date DESC
-    `;
 
-    const treatmentMap = new Map<string, { name: string; date: string }>();
-    for (const row of treatmentResult.rows) {
-        treatmentMap.set(row.client_id, {
-            name: row.session_type_name,
-            date: row.start_date,
-        });
-    }
+    const treatmentMap = new Map<string, { name: string; date: string }>(); // most recent treatment
+    const historyMap = new Map<string, string[]>();                          // distinct treatments
 
-    // Get all treatment types per client (for treatmentHistory)
-    const historyResult = await sql`
-        SELECT client_id, ARRAY_AGG(DISTINCT session_type_name) as treatments
-        FROM mb_appointments_history
-        WHERE client_id = ANY(string_to_array(${clientIdsCsv}, ','))
-          AND status IN ('Completed', 'Arrived')
-          AND session_type_name IS NOT NULL
-          AND session_type_name NOT ILIKE '%follow%up%'
-          AND session_type_name NOT ILIKE '%block%'
-          AND session_type_name NOT ILIKE '%unavailable%'
-        GROUP BY client_id
-    `;
-
-    const historyMap = new Map<string, string[]>();
-    for (const row of historyResult.rows) {
-        historyMap.set(row.client_id, row.treatments || []);
+    if (clientIds.length > 0) {
+        const itemRows = await sql`
+            SELECT client_id, sale_date, items_json
+            FROM mb_sales_history
+            WHERE client_id = ANY(string_to_array(${clientIdsCsv}, ','))
+              AND jsonb_typeof(items_json) = 'array'
+            ORDER BY sale_date DESC
+        `;
+        const histSets = new Map<string, Set<string>>();
+        for (const row of itemRows.rows) {
+            let items: Array<{ Description?: string }> = [];
+            try {
+                const parsed = typeof row.items_json === 'string' ? JSON.parse(row.items_json) : row.items_json;
+                if (Array.isArray(parsed)) items = parsed;
+            } catch { /* skip malformed */ }
+            for (const it of items) {
+                const t = normalizeTreatment(it.Description);
+                if (!t) continue;
+                if (!treatmentMap.has(row.client_id)) {
+                    treatmentMap.set(row.client_id, { name: t, date: row.sale_date }); // newest-first → most recent
+                }
+                if (!histSets.has(row.client_id)) histSets.set(row.client_id, new Set());
+                histSets.get(row.client_id)!.add(t);
+            }
+        }
+        for (const [cid, set] of histSets) historyMap.set(cid, [...set]);
     }
 
     // Get client details (name, phone, email) from cache
@@ -575,12 +569,13 @@ export async function getLapsedPatientsFromDB(
         if (!details?.phone) continue; // Must have a phone to be contactable
 
         const treatment = treatmentMap.get(clientId);
+        const history = historyMap.get(clientId) || [];
 
-        // Apply treatment filter if specified
-        if (treatmentFilter && treatment?.name) {
-            if (!treatment.name.toLowerCase().includes(treatmentFilter.toLowerCase())) continue;
-        } else if (treatmentFilter && !treatment?.name) {
-            continue; // No treatment data, skip if filtering
+        // Apply treatment filter if specified — match anyone who has EVER had the
+        // treatment (canonical name), not just their most recent one.
+        if (treatmentFilter) {
+            const wanted = treatmentFilter.toLowerCase();
+            if (!history.some(t => t.toLowerCase() === wanted)) continue;
         }
 
         const daysSince = Number(row.days_since);
@@ -614,17 +609,19 @@ export async function getLapsedPatientsFromDB(
  */
 export async function getAvailableTreatments(): Promise<string[]> {
     try {
+        // Treatments come from sales line items, normalized to canonical clinical names.
         const result = await sql`
-            SELECT DISTINCT session_type_name
-            FROM mb_appointments_history
-            WHERE status IN ('Completed', 'Arrived')
-              AND session_type_name IS NOT NULL
-              AND session_type_name NOT ILIKE '%follow%up%'
-              AND session_type_name NOT ILIKE '%block%'
-              AND session_type_name NOT ILIKE '%unavailable%'
-            ORDER BY session_type_name
+            SELECT DISTINCT item->>'Description' AS descr
+            FROM mb_sales_history s, jsonb_array_elements(s.items_json) item
+            WHERE jsonb_typeof(s.items_json) = 'array'
+              AND item->>'Description' IS NOT NULL
         `;
-        return result.rows.map(r => r.session_type_name);
+        const set = new Set<string>();
+        for (const r of result.rows) {
+            const t = normalizeTreatment(r.descr);
+            if (t) set.add(t);
+        }
+        return [...set].sort();
     } catch {
         return [];
     }
