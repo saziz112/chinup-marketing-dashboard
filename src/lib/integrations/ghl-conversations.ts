@@ -16,6 +16,7 @@ import {
 import { getClientMatchMaps, normalizePhone, type Client, getPurchasingClients, getAppointments, getClients, type StaffAppointment } from '@/lib/integrations/mindbody';
 import { checkDNDSimple } from '@/lib/dnd-check';
 import { pgCacheGet, pgCacheSet } from '@/lib/pg-cache';
+import { sql } from '@/lib/db/sql';
 
 const GHL_V2_BASE = 'https://services.leadconnectorhq.com';
 const GHL_API_VERSION = '2021-07-28';
@@ -1894,22 +1895,84 @@ export interface ConsultOnlyPatient {
 
 const consultCache = new Map<string, CacheEntry<ConsultOnlyPatient[]>>();
 
-/**
- * NEW ALGORITHM: Find ANY completed appointment (except Follow-Up / block / unavailable)
- * where the client had $0 revenue on that same day. Much broader than old "consult" name match.
+/* ── Treatment vs. Consultation classification ─────────────────────────────
  *
- * Steps:
- * 1. getAppointments(180 days)
- * 2. getPurchasingClients(180 days) → build Map<clientId_date, totalRevenue>
- * 3. For each completed/arrived appointment:
- *    a. SKIP if SessionType.Name matches /follow.?up/i
- *    b. SKIP if SessionType.Name matches /block|unavailable/i (admin blocks)
- *    c. Lookup revenue for (ClientId, appointmentDate as YYYY-MM-DD)
- *    d. If revenue == 0 → untreated consultation
- * 4. Deduplicate by client (keep most recent)
- * 5. Exclude clients who had ANY revenue-generating sale AFTER the qualifying appointment
- * 6. Get phone via purchasing clients + getClients() fallback
- * 7. Match to GHL via unified phone map
+ * "Treated" is detected by line-item TYPE, not by revenue, because two kinds of
+ * real treatment produce $0 revenue and used to slip through:
+ *   1. Comped treatments — a product dispensed but discounted to $0 (e.g. free Botox)
+ *   2. Prepaid redemptions — paid earlier (often outside the window), redeemed now at $0
+ *
+ * Signals:
+ *   - A product/inventory line (IsService === false) = something was dispensed
+ *     (Botox units, "X Treatment", "X_Inventory_Only", retail) → treated, even at $0.
+ *   - A paid service line (TotalAmount > 0) = a delivered paid service
+ *     (e.g. "Emsculpt Neo – Maintenance Session" $2,296) → treated.
+ *   - A lone $0 service line with no product (e.g. "Skin Pen Microneedling – Service",
+ *     "Complementary Consultation") = consultation/assessment only → NOT treated.
+ */
+type SaleItemLike = { IsService?: boolean; TotalAmount?: number; Description?: string };
+
+const FOLLOW_UP_RE = /follow.?up/i;
+
+/** True if a day's sale items represent an actual treatment (vs a consult/freebie). */
+export function isTreatmentSale(items: SaleItemLike[] | undefined): boolean {
+    if (!items || items.length === 0) return false;
+    for (const it of items) {
+        if (it.IsService === false) return true;        // product/inventory dispensed (even comped)
+        if ((it.TotalAmount || 0) > 0) return true;     // paid service = delivered treatment
+    }
+    return false;
+}
+
+/** True if any line on the visit is a follow-up (follow-ups are not consultations). */
+export function isFollowUpSale(items: SaleItemLike[] | undefined): boolean {
+    return !!items?.some(it => FOLLOW_UP_RE.test(it.Description || ''));
+}
+
+/**
+ * Query Postgres mb_sales_history for clients who received an actual TREATMENT
+ * within the trailing `months` window. Uses the backfill so we can look back a
+ * full year at zero API cost (covers prepaid packages purchased long ago).
+ * Returns the set of client IDs to EXCLUDE as still-active patients.
+ */
+export async function getTreatedClientIds(clientIds: string[], months = 12): Promise<Set<string>> {
+    const treated = new Set<string>();
+    if (clientIds.length === 0) return treated;
+
+    const cutoff = new Date(Date.now() - months * 30 * 86400000).toISOString().split('T')[0];
+
+    const result = await sql`
+        SELECT client_id, items_json
+        FROM mb_sales_history
+        WHERE client_id = ANY(${clientIds})
+          AND sale_date >= ${cutoff}
+    `;
+
+    for (const row of result.rows) {
+        if (treated.has(row.client_id)) continue;
+        let items: SaleItemLike[] = [];
+        try {
+            const parsed = typeof row.items_json === 'string' ? JSON.parse(row.items_json) : row.items_json;
+            if (Array.isArray(parsed)) items = parsed;
+        } catch { /* malformed row — skip */ }
+        if (isTreatmentSale(items)) treated.add(row.client_id);
+    }
+
+    return treated;
+}
+
+/**
+ * Find clients who completed a consultation/assessment visit but were NOT treated.
+ *
+ * A client qualifies when BOTH:
+ *   A) They have a recent qualifying consult visit — a completed/arrived appointment
+ *      (not follow-up/block/unavailable) where that day's sale is NOT a treatment
+ *      (no product line, no paid service) and not a follow-up line.
+ *   B) They are not an active patient — no actual treatment in the trailing 12 months
+ *      (checked via mb_sales_history + the live 180d sales we already fetched).
+ *
+ * Re-entry rule: a patient last treated >12 months ago who consults again re-enters
+ * the pool — the recent consult is the signal, not lifetime history.
  */
 export async function getConsultOnlyPatients(
     locationFilter?: LocationKey,
@@ -1940,29 +2003,26 @@ export async function getConsultOnlyPatients(
         buildUnifiedPhoneMap(locationFilter).catch(() => new Map<string, PhoneMapEntry>()),
     ]);
 
-    // Build revenue map: "clientId_YYYY-MM-DD" → total revenue that day
-    const revenueByClientDate = new Map<string, number>();
-    // Also track all sale dates per client for the "any revenue after" check
-    const salesByClient = new Map<string, Array<{ date: string; revenue: number }>>();
+    // Build a map of the day's sale items per client: "clientId_YYYY-MM-DD" → items[]
+    // We classify by item TYPE (product vs service) rather than summing revenue, so
+    // comped treatments and prepaid redemptions are correctly seen as "treated".
+    const itemsByClientDate = new Map<string, SaleItemLike[]>();
 
     for (const sale of purchasingData.sales) {
         if (!sale.ClientId) continue;
         const saleDate = (sale.SaleDate || sale.SaleDateTime || '').split('T')[0];
         if (!saleDate) continue;
-        const total = sale.PurchasedItems?.reduce((s, i) => s + (i.TotalAmount || 0), 0) || 0;
-
         const key = `${sale.ClientId}_${saleDate}`;
-        revenueByClientDate.set(key, (revenueByClientDate.get(key) || 0) + total);
-
-        if (!salesByClient.has(sale.ClientId)) salesByClient.set(sale.ClientId, []);
-        salesByClient.get(sale.ClientId)!.push({ date: saleDate, revenue: total });
+        const bucket = itemsByClientDate.get(key) || [];
+        for (const it of sale.PurchasedItems || []) bucket.push(it);
+        itemsByClientDate.set(key, bucket);
     }
 
-    // Find completed appointments with $0 revenue that day
-    // Exclude appointments from last 7 days (too soon to reach out)
+    // Find completed appointments that were a CONSULT (not a treatment) that day.
+    // Exclude appointments from last 7 days (too soon to reach out).
     const SKIP_SESSION = /follow.?up|block|unavailable/i;
     const sevenDaysAgo = new Date(now - 7 * 86400000).toISOString().split('T')[0];
-    const zeroRevenueAppts: StaffAppointment[] = [];
+    const consultAppts: StaffAppointment[] = [];
 
     for (const appt of appointments) {
         const status = (appt.Status || '').toLowerCase();
@@ -1970,22 +2030,21 @@ export async function getConsultOnlyPatients(
         if (!appt.ClientId) continue;
 
         const sessionName = appt.SessionType?.Name || '';
-        if (SKIP_SESSION.test(sessionName)) continue;
+        if (SKIP_SESSION.test(sessionName)) continue; // follow-up / admin block — not a consult
 
         const apptDate = (appt.StartDateTime || '').split('T')[0];
         if (apptDate > sevenDaysAgo) continue; // Too recent — give them time to book on their own
 
-        const revenueKey = `${appt.ClientId}_${apptDate}`;
-        const dayRevenue = revenueByClientDate.get(revenueKey) || 0;
+        const dayItems = itemsByClientDate.get(`${appt.ClientId}_${apptDate}`);
+        if (isTreatmentSale(dayItems)) continue;  // got a treatment that day (comped or redeemed) — not a consult
+        if (isFollowUpSale(dayItems)) continue;    // follow-up logged on the sale line — not a consult
 
-        if (dayRevenue === 0) {
-            zeroRevenueAppts.push(appt);
-        }
+        consultAppts.push(appt);
     }
 
-    // Deduplicate by client (keep most recent zero-revenue appointment)
+    // Deduplicate by client (keep most recent consult appointment)
     const byClient = new Map<string, StaffAppointment>();
-    for (const appt of zeroRevenueAppts) {
+    for (const appt of consultAppts) {
         const existing = byClient.get(appt.ClientId!);
         if (!existing || appt.StartDateTime > existing.StartDateTime) {
             byClient.set(appt.ClientId!, appt);
@@ -2011,16 +2070,21 @@ export async function getConsultOnlyPatients(
         }
     }
 
-    // Build results — exclude clients who had ANY revenue in the lookback period
-    // (not just after the appointment — covers series purchases before follow-up consultations)
+    // Exclude active patients: anyone with an actual treatment in the trailing 12 months.
+    // Two sources, unioned:
+    //   - Postgres mb_sales_history (full 12mo — catches prepaid packages bought long ago)
+    //   - the live 180d sales we already fetched (catches treatments not yet synced to PG)
+    const candidateIds = [...byClient.keys()];
+    const treatedIds = await getTreatedClientIds(candidateIds, 12).catch(() => new Set<string>());
+    for (const sale of purchasingData.sales) {
+        if (sale.ClientId && isTreatmentSale(sale.PurchasedItems)) treatedIds.add(sale.ClientId);
+    }
+
+    // Build results
     const result: ConsultOnlyPatient[] = [];
 
     for (const [clientId, appt] of byClient) {
-        const clientSales = salesByClient.get(clientId) || [];
-
-        // If this client has ANY revenue-generating sale in the period, they're not "consulted only"
-        const hasAnyRevenue = clientSales.some(s => s.revenue > 0);
-        if (hasAnyRevenue) continue; // They've paid for treatments — skip
+        if (treatedIds.has(clientId)) continue; // treated within 12 months — active patient, not a consult-only lead
 
         const client = clientMap.get(clientId);
         const phone = client?.MobilePhone || client?.HomePhone || '';
