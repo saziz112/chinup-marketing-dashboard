@@ -1760,46 +1760,65 @@ export async function getCancelledAppointments(
     }
 
     const now = Date.now();
-    const startDate = new Date(now - 180 * 86400000).toISOString().split('T')[0]; // 180 days (was 90)
+    const startDate = new Date(now - 180 * 86400000).toISOString().split('T')[0]; // 180-day cancel lookback
     const endDate = new Date().toISOString().split('T')[0];
     const todayISO = new Date().toISOString();
+    // Look ahead so we can see whether a cancelled patient rebooked a future visit.
+    const apptEndDate = new Date(now + 180 * 86400000).toISOString().split('T')[0];
     const lookbackStart = new Date(now - 548 * 86400000).toISOString().split('T')[0];
 
     // Parallelize independent heavy fetches — saves 15-30s on cold start
     const [appointments, purchasingResult, phoneMap] = await Promise.all([
-        getAppointments(startDate, endDate),
+        getAppointments(startDate, apptEndDate),
         getPurchasingClients(lookbackStart, endDate).catch(() => ({ clients: [] as Client[], sales: [] })),
         buildUnifiedPhoneMap(locationFilter).catch(() => new Map<string, PhoneMapEntry>()),
     ]);
 
-    // Separate completed, future-booked, and cancelled/no-show appointments
-    const completedByClient = new Set<string>();
-    const futureBookedByClient = new Set<string>(); // rescheduled check
-    const cancelledAppts: StaffAppointment[] = [];
+    // Classify each client's appointments:
+    //   - most recent PAST cancel / late-cancel / early-cancel / no-show (the missed visit)
+    //   - most recent completed/arrived visit (did they come back?)
+    //   - any future-booked appointment (did they rebook?)
+    const CANCEL_RE = /cancel|no.?show|missed/i;
+    const cancelByClient = new Map<string, StaffAppointment>(); // most recent past cancel/no-show
+    const lastCompletedByClient = new Map<string, string>();    // most recent completed date
+    const futureBookedByClient = new Set<string>();             // has an upcoming booking
 
     for (const appt of appointments) {
+        if (!appt.ClientId) continue;
         const status = (appt.Status || '').toLowerCase();
+        const start = appt.StartDateTime || '';
         if (status === 'completed' || status === 'arrived') {
-            if (appt.ClientId) completedByClient.add(appt.ClientId);
-        } else if ((status === 'booked' || status === 'confirmed') && appt.StartDateTime > todayISO) {
-            // Future appointment = they rebooked
-            if (appt.ClientId) futureBookedByClient.add(appt.ClientId);
-        } else if (/cancel|no.?show|late.?cancel|early.?cancel/i.test(status)) {
-            cancelledAppts.push(appt);
+            const ex = lastCompletedByClient.get(appt.ClientId);
+            if (!ex || start > ex) lastCompletedByClient.set(appt.ClientId, start);
+        } else if ((status === 'booked' || status === 'confirmed') && start > todayISO) {
+            futureBookedByClient.add(appt.ClientId); // rebooked
+        } else if (CANCEL_RE.test(status) && start <= todayISO) {
+            const ex = cancelByClient.get(appt.ClientId);
+            if (!ex || start > ex.StartDateTime) cancelByClient.set(appt.ClientId, appt);
         }
     }
 
-    // Deduplicate by client (keep most recent cancelled appointment)
-    // Exclude clients who completed OR have a future booking (rescheduled)
+    // Most recent purchase (any sale) per client — "made a purchase" = came back.
+    const lastSaleByClient = new Map<string, string>();
+    for (const sale of purchasingResult.sales) {
+        if (!sale.ClientId) continue;
+        const d = (sale.SaleDate || sale.SaleDateTime || '').split('T')[0];
+        if (!d) continue;
+        const ex = lastSaleByClient.get(sale.ClientId);
+        if (!ex || d > ex) lastSaleByClient.set(sale.ClientId, d);
+    }
+
+    // Keep only clients who cancelled/no-showed and then went silent:
+    // no rebooking, no completed visit since, no purchase since.
     const byClient = new Map<string, StaffAppointment>();
-    for (const appt of cancelledAppts) {
-        if (!appt.ClientId) continue;
-        if (completedByClient.has(appt.ClientId)) continue; // They came back
-        if (futureBookedByClient.has(appt.ClientId)) continue; // They rescheduled
-        const existing = byClient.get(appt.ClientId);
-        if (!existing || appt.StartDateTime > existing.StartDateTime) {
-            byClient.set(appt.ClientId, appt);
-        }
+    for (const [clientId, appt] of cancelByClient) {
+        if (futureBookedByClient.has(clientId)) continue; // rebooked → coming back
+        const cancelDay = appt.StartDateTime.split('T')[0];
+        const completedDay = lastCompletedByClient.get(clientId)?.split('T')[0];
+        if (completedDay && completedDay >= cancelDay) continue; // came back since the cancel
+        const saleDay = lastSaleByClient.get(clientId);
+        if (saleDay && saleDay >= cancelDay) continue; // purchased since the cancel
+        byClient.set(clientId, appt);
     }
 
     // Build result list

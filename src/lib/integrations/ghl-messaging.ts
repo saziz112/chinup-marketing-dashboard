@@ -400,25 +400,26 @@ export interface SmsVariant {
 export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: string; variants: SmsVariant[] }> = {
     'cancelled': {
         label: "Let's Reschedule",
+        // NOTE: "$25 off" below is a PLACEHOLDER incentive — confirm/adjust the amount before sending.
         defaultVariantId: 'warmth',
         variants: [
             {
                 id: 'warmth',
                 label: 'Personalized warmth',
-                strategy: 'Held-slot framing, no pressure. Best when relationship was warm before cancellation.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} here — we held your slot when you rescheduled. Want a new time? Reply YES. Reply STOP to opt out.",
+                strategy: 'Warm "we missed you" re-invite with an incentive. Best when the relationship was warm before the cancel/no-show.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} here — we missed you! Come back and we'll take $25 off your next visit. Reply YES to rebook. Reply STOP to opt out.",
             },
             {
                 id: 'curiosity',
                 label: 'Curiosity hook',
-                strategy: 'Open-ended check-in invites a reply. Use for ghosted reschedules where the cause is unclear.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} — anything come up after your booking? Reply YES to find a new time. Reply STOP to opt out.",
+                strategy: 'No-judgment check-in for late/early cancels & no-shows where the cause is unclear. Incentive lowers the barrier to reply.',
+                template: "Hi {{firstName}}, Chin Up! {{locationName}} — life happens! Ready to pick a new time? We'll take $25 off when you rebook. Reply YES. Reply STOP to opt out.",
             },
             {
                 id: 'direct',
                 label: 'Direct CTA',
-                strategy: 'Frictionless rebook with a clear keyword. Best for action-oriented patients.',
-                template: "Hi {{firstName}}, ready to rebook at Chin Up! {{locationName}}? Reply BOOK and we'll get you on the calendar. Reply STOP to opt out.",
+                strategy: 'Frictionless rebook keyword + incentive. Best for action-oriented patients.',
+                template: "Hi {{firstName}}, ready to rebook at Chin Up! {{locationName}}? Reply BOOK for your new time + $25 off. Reply STOP to opt out.",
             },
         ],
     },
