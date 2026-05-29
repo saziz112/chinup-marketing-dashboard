@@ -38,6 +38,9 @@ export type SqlResult<T = Row> = {
 interface SqlFn {
     <T = Row>(strings: TemplateStringsArray, ...values: unknown[]): Promise<SqlResult<T>>;
     query<T = Row>(text: string, values?: unknown[]): Promise<SqlResult<T>>;
+    /** Wrap a JS value so postgres.js sends it as a single json/jsonb param
+     *  (NOT a Postgres array). Use for jsonb columns: sql`... ${sql.json(obj)}`. */
+    json(value: unknown): unknown;
 }
 
 function wrap<T>(p: Promise<unknown>): Promise<SqlResult<T>> {
@@ -65,6 +68,11 @@ sqlImpl.query = function <T = Row>(text: string, values: unknown[] = []): Promis
     const client = getClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return wrap<T>(client.unsafe(text, values as any));
+};
+
+sqlImpl.json = function (value: unknown): unknown {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (getClient() as any).json(value);
 };
 
 export const sql = sqlImpl;

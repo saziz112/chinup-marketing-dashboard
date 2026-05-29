@@ -31,7 +31,13 @@ export async function pgCacheGet<T>(key: string): Promise<T | null> {
             WHERE cache_key = ${key} AND expires_at > NOW()
         `;
         if (result.rows.length > 0) {
-            const data = result.rows[0].cache_data as T;
+            let data = result.rows[0].cache_data as T;
+            // Defensive: older rows were double-encoded (an array/object stored as a
+            // JSON *string* inside jsonb) by the previous pgCacheSet bug. Parse those
+            // back transparently so callers always get the real value.
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data) as T; } catch { /* not double-encoded — leave as-is */ }
+            }
             // Promote to memory
             memCache.set(key, { data, expiresAt: Date.now() + MEM_TTL_MS });
             return data;
@@ -59,9 +65,11 @@ export async function pgCacheSet(
 
     // Tier 2: Postgres (upsert)
     try {
+        // Pass the value via sql.json so postgres.js serializes it once into jsonb.
+        // (The old ${JSON.stringify(data)}::jsonb double-encoded it into a jsonb string.)
         await sql`
             INSERT INTO sms_data_cache (cache_key, cache_data, expires_at)
-            VALUES (${key}, ${JSON.stringify(data)}::jsonb, NOW() + ${`${ttlHours} hours`}::interval)
+            VALUES (${key}, ${sql.json(data)}, NOW() + ${`${ttlHours} hours`}::interval)
             ON CONFLICT (cache_key) DO UPDATE SET
                 cache_data = EXCLUDED.cache_data,
                 expires_at = EXCLUDED.expires_at,
