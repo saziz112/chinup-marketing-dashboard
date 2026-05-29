@@ -2001,13 +2001,29 @@ export async function getConsultOnlyPatients(
     const now = Date.now();
     const startDate = new Date(now - 180 * 86400000).toISOString().split('T')[0];
     const endDate = new Date().toISOString().split('T')[0];
+    // Look ahead too, so we can see whether a consult patient rebooked a future visit.
+    const apptEndDate = new Date(now + 180 * 86400000).toISOString().split('T')[0];
 
-    // Fetch appointments, sales, and phone map in parallel
+    // Fetch appointments (past + future), sales, and phone map in parallel
     const [appointments, purchasingData, phoneMap] = await Promise.all([
-        getAppointments(startDate, endDate),
+        getAppointments(startDate, apptEndDate),
         getPurchasingClients(startDate, endDate),
         buildUnifiedPhoneMap(locationFilter).catch(() => new Map<string, PhoneMapEntry>()),
     ]);
+
+    // Clients with an upcoming (future-dated) active appointment = they rebooked and
+    // are already coming back, so they are NOT a lost consult-only lead. A cancelled or
+    // no-showed future booking does not count (they'd be a lead again).
+    const todayStr = endDate;
+    const REBOOK_DEAD = /cancel|no.?show|miss|declin/i;
+    const rebookedIds = new Set<string>();
+    for (const appt of appointments) {
+        if (!appt.ClientId) continue;
+        const d = (appt.StartDateTime || '').split('T')[0];
+        if (d <= todayStr) continue;                      // only future dates count as a rebooking
+        if (REBOOK_DEAD.test(appt.Status || '')) continue; // cancelled/no-show ≠ rebooked
+        rebookedIds.add(appt.ClientId);
+    }
 
     // Build a map of the day's sale items per client: "clientId_YYYY-MM-DD" → items[]
     // We classify by item TYPE (product vs service) rather than summing revenue, so
@@ -2091,6 +2107,7 @@ export async function getConsultOnlyPatients(
 
     for (const [clientId, appt] of byClient) {
         if (treatedIds.has(clientId)) continue; // treated within 12 months — active patient, not a consult-only lead
+        if (rebookedIds.has(clientId)) continue; // already rebooked a future visit — not a lost lead
 
         const client = clientMap.get(clientId);
         const phone = client?.MobilePhone || client?.HomePhone || '';

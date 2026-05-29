@@ -25,13 +25,25 @@ export async function GET() {
     const now = Date.now();
     const startDate = new Date(now - 180 * 86400000).toISOString().split('T')[0];
     const endDate = new Date().toISOString().split('T')[0];
+    const apptEndDate = new Date(now + 180 * 86400000).toISOString().split('T')[0];
     const sevenDaysAgo = new Date(now - 7 * 86400000).toISOString().split('T')[0];
     const SKIP_SESSION = /follow.?up|block|unavailable/i;
 
     const [appointments, purchasingData] = await Promise.all([
-        getAppointments(startDate, endDate),
+        getAppointments(startDate, apptEndDate),
         getPurchasingClients(startDate, endDate),
     ]);
+
+    // Clients who rebooked a future active appointment (excluded as not-a-lost-lead).
+    const REBOOK_DEAD = /cancel|no.?show|miss|declin/i;
+    const rebookedIds = new Set<string>();
+    for (const appt of appointments) {
+        if (!appt.ClientId) continue;
+        const d = (appt.StartDateTime || '').split('T')[0];
+        if (d <= endDate) continue;
+        if (REBOOK_DEAD.test(appt.Status || '')) continue;
+        rebookedIds.add(appt.ClientId);
+    }
 
     // Per-day revenue (OLD) + per-day items (NEW), plus all sales per client.
     const revenueByDate = new Map<string, number>();
@@ -120,6 +132,7 @@ export async function GET() {
     const newSet = new Set<string>();
     for (const id of newCand.keys()) {
         if (treated12mo.has(id) || liveTreated.has(id)) continue;
+        if (rebookedIds.has(id)) continue;
         newSet.add(id);
     }
 
@@ -134,6 +147,7 @@ export async function GET() {
             const t = treated12mo.get(id);
             if (t) reason = `treated within 12mo (${t.date}: ${t.desc})`;
             else if (liveTreated.has(id)) reason = `treated within 180d (live sale)`;
+            else if (rebookedIds.has(id)) reason = `rebooked a future appointment`;
             else reason = 'no longer a consult candidate';
         }
         return { client: nameOf(id), mbClientId: id, reason };
