@@ -398,31 +398,6 @@ export interface SmsVariant {
 }
 
 export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: string; variants: SmsVariant[] }> = {
-    'cancelled': {
-        label: "Let's Reschedule",
-        // NOTE: "$25 off" below is a PLACEHOLDER incentive — confirm/adjust the amount before sending.
-        defaultVariantId: 'warmth',
-        variants: [
-            {
-                id: 'warmth',
-                label: 'Personalized warmth',
-                strategy: 'Warm "we missed you" re-invite with an incentive. Best when the relationship was warm before the cancel/no-show.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} here — we missed you! Come back and we'll take $25 off your next visit. Reply YES to rebook. Reply STOP to opt out.",
-            },
-            {
-                id: 'curiosity',
-                label: 'Curiosity hook',
-                strategy: 'No-judgment check-in for late/early cancels & no-shows where the cause is unclear. Incentive lowers the barrier to reply.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} — life happens! Ready to pick a new time? We'll take $25 off when you rebook. Reply YES. Reply STOP to opt out.",
-            },
-            {
-                id: 'direct',
-                label: 'Direct CTA',
-                strategy: 'Frictionless rebook keyword + incentive. Best for action-oriented patients.',
-                template: "Hi {{firstName}}, ready to rebook at Chin Up! {{locationName}}? Reply BOOK for your new time + $25 off. Reply STOP to opt out.",
-            },
-        ],
-    },
     'consult-only': {
         label: "We'd Love to See You",
         defaultVariantId: 'financing',
@@ -663,18 +638,6 @@ export function getSmsTemplate(segment: string, variantId?: string): string | nu
 /* ── Email Templates (6 campaigns) ───────────────────────── */
 
 export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; template: string }> = {
-    'cancelled': {
-        label: "Let's Reschedule",
-        subject: "We'd love to see you at Chin Up!",
-        template: `Hi {{firstName}},
-
-We noticed you had to reschedule your appointment at Chin Up! We totally understand — life happens.
-
-We'd love to get you rebooked whenever you're ready. Just reply to this email or call us to schedule.
-
-Looking forward to seeing you!
-Chin Up! Aesthetics {{locationName}}`,
-    },
     'consult-only': {
         label: "We'd Love to See You",
         subject: "Ready for your next step at Chin Up!?",

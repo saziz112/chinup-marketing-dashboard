@@ -13,7 +13,6 @@ import { type LocationKey, isGHLConfigured, getLocations } from '@/lib/integrati
 import {
     getConversationsIntelligence,
     getLapsedPatients,
-    getCancelledAppointments,
     getConsultOnlyPatients,
     buildUnifiedPhoneMap,
     getRecentOutboundContactIds,
@@ -215,53 +214,6 @@ export async function GET(req: NextRequest) {
             getLastCampaignRuns(),
             getRecentOutboundContactIds(14),
         ]);
-
-        // ── Campaign 1: Let's Reschedule (Cancelled / No-Show) ──
-        if (segment === 'cancelled') {
-            const cancelled = await getCancelledAppointments(locationParam || undefined);
-            const sendable = cancelled.filter(c => c.ghlContactId);
-            const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
-            const noDND = sendable.filter(c => {
-                const normalized = normalizePhone(c.phone);
-                const entry = phoneMap.get(normalized);
-                return !entry?.dnd;
-            });
-            const contacts: ContactEntry[] = noDND.map(c => ({
-                contactId: c.ghlContactId!,
-                contactName: c.ghlContactName || `${c.firstName} ${c.lastName}`.trim(),
-                firstName: c.firstName,
-                phone: c.phone,
-                email: phoneMap.get(normalizePhone(c.phone))?.contactEmail || '',
-                maskedPhone: maskPhone(c.phone),
-                locationKey: c.locationKey || locationParam || 'decatur' as LocationKey,
-                locationName: LOCATION_NAMES[c.locationKey || locationParam || 'decatur' as LocationKey] || 'Chin Up!',
-                stageName: `Cancelled — ${c.serviceName}`,
-                monetaryValue: 500,
-                daysSinceOutreach: Math.floor((Date.now() - new Date(c.appointmentDate).getTime()) / 86400000),
-                achievabilityScore: 80,
-                riskLevel: 'going-cold' as const,
-                tags: phoneMap.get(normalizePhone(c.phone))?.tags || [],
-                serviceName: c.serviceName,
-            }));
-
-            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
-            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
-            const { filtered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
-
-            return NextResponse.json({
-                contacts: filtered,
-                totalEligible: filtered.length,
-                segment,
-                forecast: buildForecast(filtered, 0.30),
-                templates: SMS_TEMPLATES,
-                emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: (sendable.length - noDND.length) + v2DndFiltered,
-                cooldownExcluded,
-                outboundExcluded,
-                lastCampaign: lastRuns[segment] || null,
-                source: 'mindbody-appointments',
-            });
-        }
 
         // ── Campaign 2: Consulted, Not Treated ──
         if (segment === 'consult-only') {
