@@ -1914,10 +1914,16 @@ type SaleItemLike = { IsService?: boolean; TotalAmount?: number; Description?: s
 
 const FOLLOW_UP_RE = /follow.?up/i;
 
+// Paid line items that are NOT treatments — a consult fee, tip, or deposit must not
+// make a non-treatment visit look "treated". (MIC B12 is intentionally excluded here:
+// a B12 shot counts as a treatment.)
+const NON_TREATMENT_RE = /consult(?:ation)? fee|gratuity|\btips?\b|\bdeposit\b|cancellation fee|late fee|no.?show/i;
+
 /** True if a day's sale items represent an actual treatment (vs a consult/freebie). */
 export function isTreatmentSale(items: SaleItemLike[] | undefined): boolean {
     if (!items || items.length === 0) return false;
     for (const it of items) {
+        if (NON_TREATMENT_RE.test(it.Description || '')) continue; // fee/tip/deposit — not a treatment
         if (it.IsService === false) return true;        // product/inventory dispensed (even comped)
         if ((it.TotalAmount || 0) > 0) return true;     // paid service = delivered treatment
     }
