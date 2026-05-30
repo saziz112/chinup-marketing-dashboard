@@ -427,7 +427,7 @@ export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: st
                 id: 'one-tap',
                 label: 'One-tap (link)',
                 strategy: 'Zero back-and-forth self-booking for engaged patients; fastest path to a confirmed slot.',
-                template: "{{firstName}}, ready for your next {{lastService}}? Book in 30 sec at Chin Up! {{locationName}}: [link]\n\nReply DELETE to opt out.",
+                template: "{{firstName}}, ready for your next {{lastService}}? Book in 30 sec at Chin Up! {{locationName}}: https://chinupaesthetics.com/booking-calendar/\n\nReply DELETE to opt out.",
             },
         ],
     },
@@ -692,7 +692,7 @@ export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; t
 <p style="margin:0 0 24px;">Your team at Chin Up! {{locationName}} would love to see you again &mdash; booking takes under a minute.</p>
 </td></tr>
 <tr><td align="center" style="padding:0 32px 8px;">
-<a href="BOOKING_LINK_HERE" style="display:inline-block;background:#D8B41D;color:#05173D;font-weight:700;font-size:16px;text-decoration:none;padding:14px 36px;border-radius:6px;">Book My {{lastService}}</a>
+<a href="https://chinupaesthetics.com/booking-calendar/" style="display:inline-block;background:#D8B41D;color:#05173D;font-weight:700;font-size:16px;text-decoration:none;padding:14px 36px;border-radius:6px;">Book My {{lastService}}</a>
 </td></tr>
 <tr><td style="padding:16px 32px 28px;color:#5B6472;font-size:14px;line-height:1.5;text-align:center;">
 <p style="margin:0;">Prefer to talk to a person? Just reply to this email and we'll find a time for you.</p>
