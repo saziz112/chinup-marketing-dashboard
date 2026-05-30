@@ -127,15 +127,23 @@ export async function sendEmail(
 
 export function renderTemplate(
     template: string,
-    vars: { firstName?: string; locationName?: string; lastService?: string; serviceName?: string },
+    vars: { firstName?: string; locationName?: string; lastService?: string; serviceName?: string; phone?: string },
 ): string {
     let rendered = template;
     rendered = rendered.replace(/\{\{firstName\}\}/g, vars.firstName || 'there');
     rendered = rendered.replace(/\{\{locationName\}\}/g, vars.locationName || 'Chin Up!');
     rendered = rendered.replace(/\{\{lastService\}\}/g, vars.lastService || 'your treatment');
     rendered = rendered.replace(/\{\{serviceName\}\}/g, vars.serviceName || 'your appointment');
+    rendered = rendered.replace(/\{\{phone\}\}/g, vars.phone || '');
     return rendered;
 }
+
+/** Per-location call/text number (patient-facing). */
+export const LOCATION_PHONES: Record<LocationKey, string> = {
+    decatur: '770-766-5310',
+    smyrna: '770-274-4220',
+    kennesaw: '678-369-4268',
+};
 
 /* ── DND Check (backward compat — prefer checkDNDSimple from dnd-check.ts) ── */
 
@@ -182,6 +190,7 @@ export async function sendBulkSMS(
             firstName: contact.firstName,
             locationName,
             lastService: contact.lastService,
+            phone: LOCATION_PHONES[locationKey],
         });
 
         const result = await sendSMS(config.locationId, config.pit, contact.contactId, message);
@@ -239,15 +248,18 @@ export async function sendBulkEmail(
             continue;
         }
 
+        const phone = LOCATION_PHONES[locationKey];
         const message = renderTemplate(messageTemplate, {
             firstName: contact.firstName,
             locationName,
             lastService: contact.lastService,
+            phone,
         });
         const renderedSubject = renderTemplate(subject, {
             firstName: contact.firstName,
             locationName,
             lastService: contact.lastService,
+            phone,
         });
 
         const result = await sendEmail(config.locationId, config.pit, contact.contactId, message, renderedSubject);
@@ -695,7 +707,7 @@ export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; t
 <a href="https://chinupaesthetics.com/booking-calendar/" style="display:inline-block;background:#D8B41D;color:#05173D;font-weight:700;font-size:16px;text-decoration:none;padding:14px 36px;border-radius:6px;">Book My {{lastService}}</a>
 </td></tr>
 <tr><td style="padding:16px 32px 28px;color:#5B6472;font-size:14px;line-height:1.5;text-align:center;">
-<p style="margin:0;">Prefer to talk to a person? Just reply to this email and we'll find a time for you.</p>
+<p style="margin:0;">Prefer to talk to a person? Call or text us at <a href="tel:{{phone}}" style="color:#05173D;font-weight:700;text-decoration:none;">{{phone}}</a>.</p>
 </td></tr>
 <tr><td style="padding:18px 32px;background:#05173D;font-size:12px;line-height:1.5;text-align:center;">
 <p style="margin:0 0 4px;color:#E4E4E7;">Chin Up! Aesthetics &mdash; {{locationName}}</p>
