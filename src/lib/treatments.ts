@@ -45,3 +45,45 @@ export const CLINICAL_TREATMENTS = [
     'Chemical Peel', 'CoolPeel', 'Microneedling', 'Dermaplaning',
     'Emsculpt', 'Laser Hair Removal',
 ] as const;
+
+/**
+ * Maintenance-reminder cadence per treatment: a patient is "due" when
+ * daysSinceLastTreatment ∈ [startDays, endDays]. Tuned from Chin Up's REAL
+ * inter-visit data (median/p75 gaps) where the signal is clean, and from clinical
+ * maintenance intervals for series-dominated treatments whose raw gaps reflect
+ * in-series spacing (Emsculpt 7d median, Microneedling, Laser Hair Removal, Filler
+ * build-up). Series/low-confidence windows are flagged — validate at the dry-run.
+ * Empirical medians (days): Botox 102, Dysport 113, Filler 89, HydraFacial 83,
+ * Chemical Peel 83, Microneedling 58, Dermaplaning 109, Laser 112, Emsculpt 7.
+ */
+export const TREATMENT_CADENCE: Record<string, { startDays: number; endDays: number }> = {
+    'Botox': { startDays: 80, endDays: 175 },              // data-clean (median 102)
+    'Dysport': { startDays: 85, endDays: 185 },            // data-clean (median 113)
+    'Lip Flip': { startDays: 60, endDays: 150 },           // small sample
+    'Filler': { startDays: 180, endDays: 365 },            // clinical maintenance (data skewed by build-up) — review
+    'HydraFacial': { startDays: 35, endDays: 120 },
+    'Chemical Peel': { startDays: 35, endDays: 120 },
+    'CoolPeel': { startDays: 150, endDays: 300 },          // low confidence (only ~9 repeat patients)
+    'Microneedling': { startDays: 40, endDays: 120 },      // series-influenced — review
+    'Dermaplaning': { startDays: 45, endDays: 150 },
+    'Emsculpt': { startDays: 90, endDays: 180 },           // clinical maintenance (data = in-series 7d) — review
+    'Laser Hair Removal': { startDays: 42, endDays: 130 }, // series-influenced — review
+};
+
+/** Natural mid-sentence phrasing for {{lastService}} in messages. */
+export const TREATMENT_DISPLAY: Record<string, string> = {
+    'Botox': 'Botox',
+    'Dysport': 'Dysport',
+    'Lip Flip': 'lip flip',
+    'Filler': 'filler',
+    'HydraFacial': 'HydraFacial',
+    'Chemical Peel': 'chemical peel',
+    'CoolPeel': 'CoolPeel',
+    'Microneedling': 'microneedling',
+    'Dermaplaning': 'dermaplaning',
+    'Emsculpt': 'Emsculpt',
+    'Laser Hair Removal': 'laser hair removal',
+};
+
+/** Sales lookback for maintenance detection — max cadence end + buffer. */
+export const MAINTENANCE_LOOKBACK_DAYS = 425;

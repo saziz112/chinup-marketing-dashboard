@@ -17,6 +17,7 @@ import { getClientMatchMaps, normalizePhone, type Client, getPurchasingClients, 
 import { checkDNDSimple } from '@/lib/dnd-check';
 import { pgCacheGet, pgCacheSet } from '@/lib/pg-cache';
 import { sql } from '@/lib/db/sql';
+import { normalizeTreatment, TREATMENT_CADENCE, TREATMENT_DISPLAY, MAINTENANCE_LOOKBACK_DAYS } from '@/lib/treatments';
 
 const GHL_V2_BASE = 'https://services.leadconnectorhq.com';
 const GHL_API_VERSION = '2021-07-28';
@@ -1989,6 +1990,147 @@ export async function getConsultOnlyPatients(
     await pgCacheSet(cacheKey, result, { ttlHours: 2 }).catch(() => {});
     console.log(`[ghl-conversations] Found ${result.length} consult-only patients (${result.filter(c => c.ghlContactId).length} matched to GHL)`);
 
+    return result;
+}
+
+// --- Treatment Maintenance Reminders (proactive re-treatment) ---
+
+export interface MaintenanceDuePatient {
+    mbClientId: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    treatment: string;        // canonical treatment name
+    treatmentDisplay: string; // natural phrasing for {{lastService}}
+    lastTreatmentDate: string;
+    daysSince: number;
+    totalRevenue: number;
+    ghlContactId?: string;
+    ghlContactName?: string;
+    locationKey?: LocationKey;
+}
+
+const maintenanceCache = new Map<string, CacheEntry<MaintenanceDuePatient[]>>();
+
+/**
+ * Find patients DUE for re-treatment: their most-recent treatment (from sales
+ * items) falls within that treatment's cadence window, and they haven't already
+ * rebooked. Proactive — reaches them before they lapse. Sales-derived, zero API.
+ */
+export async function getMaintenanceDuePatients(
+    locationFilter?: LocationKey,
+): Promise<MaintenanceDuePatient[]> {
+    const cacheKey = `maintenance_${locationFilter || 'all'}`;
+
+    const cached = maintenanceCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < LAPSED_CACHE_TTL) return cached.data;
+
+    const pgCached = await pgCacheGet<MaintenanceDuePatient[]>(cacheKey);
+    if (pgCached && Array.isArray(pgCached)) {
+        maintenanceCache.set(cacheKey, { data: pgCached, timestamp: Date.now() });
+        return pgCached;
+    }
+
+    const now = Date.now();
+    const cutoff = new Date(now - MAINTENANCE_LOOKBACK_DAYS * 86400000).toISOString().split('T')[0];
+
+    // Most-recent TREATMENT per client (walk sales newest-first; first treatment item wins)
+    const salesRows = await sql`
+        SELECT client_id, sale_date, items_json
+        FROM mb_sales_history
+        WHERE jsonb_typeof(items_json) = 'array'
+          AND sale_date >= ${cutoff}
+        ORDER BY sale_date DESC
+    `;
+    const mostRecent = new Map<string, { treatment: string; date: string }>();
+    for (const row of salesRows.rows) {
+        if (mostRecent.has(row.client_id)) continue;
+        let items: Array<{ Description?: string }> = [];
+        try {
+            const parsed = typeof row.items_json === 'string' ? JSON.parse(row.items_json) : row.items_json;
+            if (Array.isArray(parsed)) items = parsed;
+        } catch { /* skip malformed */ }
+        for (const it of items) {
+            const t = normalizeTreatment(it.Description);
+            if (t) { mostRecent.set(row.client_id, { treatment: t, date: String(row.sale_date).split('T')[0] }); break; }
+        }
+    }
+
+    // Keep clients whose days-since-last-treatment is inside the cadence window
+    const due = new Map<string, { treatment: string; date: string; daysSince: number }>();
+    for (const [clientId, { treatment, date }] of mostRecent) {
+        const cad = TREATMENT_CADENCE[treatment];
+        if (!cad) continue;
+        const daysSince = Math.floor((now - new Date(date).getTime()) / 86400000);
+        if (daysSince >= cad.startDays && daysSince <= cad.endDays) {
+            due.set(clientId, { treatment, date, daysSince });
+        }
+    }
+    if (due.size === 0) {
+        maintenanceCache.set(cacheKey, { data: [], timestamp: now });
+        return [];
+    }
+
+    const candidateIds = [...due.keys()];
+
+    // Exclude patients who already rebooked a future appointment
+    const futureBooked = new Set<string>();
+    const fbRows = await sql`
+        SELECT DISTINCT client_id FROM mb_appointments_history
+        WHERE status IN ('Booked', 'Confirmed') AND start_date > NOW()
+          AND client_id = ANY(${candidateIds})
+    `;
+    for (const r of fbRows.rows) futureBooked.add(r.client_id);
+
+    // Per-client lifetime revenue (real forecast value) + contact details
+    const revMap = new Map<string, number>();
+    const revRows = await sql`
+        SELECT client_id, SUM(total_amount) AS rev FROM mb_sales_history
+        WHERE client_id = ANY(${candidateIds}) GROUP BY client_id
+    `;
+    for (const r of revRows.rows) revMap.set(r.client_id, Number(r.rev || 0));
+
+    const detail = new Map<string, { firstName: string; lastName: string; phone: string }>();
+    const detailRows = await sql`
+        SELECT client_id, first_name, last_name, phone FROM mb_clients_cache
+        WHERE client_id = ANY(${candidateIds})
+    `;
+    for (const r of detailRows.rows) detail.set(r.client_id, { firstName: r.first_name || '', lastName: r.last_name || '', phone: r.phone || '' });
+
+    const phoneMap = await buildUnifiedPhoneMap(locationFilter).catch(() => new Map<string, PhoneMapEntry>());
+
+    const result: MaintenanceDuePatient[] = [];
+    const seenPhones = new Set<string>();
+    for (const [clientId, { treatment, date, daysSince }] of due) {
+        if (futureBooked.has(clientId)) continue; // already coming back
+        const d = detail.get(clientId);
+        const phone = d?.phone || '';
+        const normalized = normalizePhone(phone);
+        if (normalized.length < 10) continue;
+        if (seenPhones.has(normalized)) continue;
+        seenPhones.add(normalized);
+        const match = phoneMap.get(normalized);
+        if (locationFilter && (!match || match.locationKey !== locationFilter)) continue;
+        result.push({
+            mbClientId: clientId,
+            firstName: d?.firstName || '',
+            lastName: d?.lastName || '',
+            phone,
+            treatment,
+            treatmentDisplay: TREATMENT_DISPLAY[treatment] || treatment.toLowerCase(),
+            lastTreatmentDate: date,
+            daysSince,
+            totalRevenue: revMap.get(clientId) || 0,
+            ghlContactId: match?.contactId,
+            ghlContactName: match?.contactName,
+            locationKey: match?.locationKey,
+        });
+    }
+    result.sort((a, b) => b.daysSince - a.daysSince);
+
+    maintenanceCache.set(cacheKey, { data: result, timestamp: now });
+    await pgCacheSet(cacheKey, result, { ttlHours: 2 }).catch(() => {});
+    console.log(`[ghl-conversations] Found ${result.length} maintenance-due patients (${result.filter(c => c.ghlContactId).length} matched to GHL)`);
     return result;
 }
 
