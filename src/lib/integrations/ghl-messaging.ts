@@ -153,6 +153,7 @@ export async function sendBulkSMS(
         firstName: string;
         phone: string;
         tags: string[];
+        lastService?: string;
     }[],
     messageTemplate: string,
     locationName: string,
@@ -180,6 +181,7 @@ export async function sendBulkSMS(
         const message = renderTemplate(messageTemplate, {
             firstName: contact.firstName,
             locationName,
+            lastService: contact.lastService,
         });
 
         const result = await sendSMS(config.locationId, config.pit, contact.contactId, message);
@@ -205,6 +207,7 @@ export async function sendBulkEmail(
         firstName: string;
         email: string;
         tags: string[];
+        lastService?: string;
     }[],
     messageTemplate: string,
     locationName: string,
@@ -239,9 +242,15 @@ export async function sendBulkEmail(
         const message = renderTemplate(messageTemplate, {
             firstName: contact.firstName,
             locationName,
+            lastService: contact.lastService,
+        });
+        const renderedSubject = renderTemplate(subject, {
+            firstName: contact.firstName,
+            locationName,
+            lastService: contact.lastService,
         });
 
-        const result = await sendEmail(config.locationId, config.pit, contact.contactId, message, subject);
+        const result = await sendEmail(config.locationId, config.pit, contact.contactId, message, renderedSubject);
         results.push({ contactId: contact.contactId, contactName: contact.contactName, ...result });
 
         if (result.success) sent++;
@@ -398,6 +407,30 @@ export interface SmsVariant {
 }
 
 export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: string; variants: SmsVariant[] }> = {
+    'maintenance': {
+        label: 'Maintenance Due',
+        defaultVariantId: 'simple',
+        variants: [
+            {
+                id: 'simple',
+                label: 'Simple reminder',
+                strategy: 'Lowest-friction, neutral nudge. Keyword reply removes the link-tap barrier; works for maintenance and series treatments alike.',
+                template: "Hi {{firstName}}, it's Chin Up! You're due for your next {{lastService}} at {{locationName}}. Reply BOOK and we'll grab you a spot.\n\nReply DELETE to opt out.",
+            },
+            {
+                id: 'results-fading',
+                label: 'Results fading',
+                strategy: 'Loss-aversion tied to the natural treatment cycle — motivates action by protecting an outcome they already paid for.',
+                template: "{{firstName}}, your {{lastService}} results are starting to fade — keep that fresh look going. Reply YES and Chin Up! {{locationName}} will book your next visit.\n\nReply DELETE to opt out.",
+            },
+            {
+                id: 'one-tap',
+                label: 'One-tap (link)',
+                strategy: 'Zero back-and-forth self-booking for engaged patients; fastest path to a confirmed slot.',
+                template: "{{firstName}}, ready for your next {{lastService}}? Book in 30 sec at Chin Up! {{locationName}}: [link]\n\nReply DELETE to opt out.",
+            },
+        ],
+    },
     'consult-only': {
         label: "We'd Love to See You",
         defaultVariantId: 'financing',
@@ -638,6 +671,40 @@ export function getSmsTemplate(segment: string, variantId?: string): string | nu
 /* ── Email Templates (6 campaigns) ───────────────────────── */
 
 export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; template: string }> = {
+    'maintenance': {
+        label: 'Maintenance Due',
+        subject: 'Time for your next {{lastService}}, {{firstName}}?',
+        // Branded HTML (navy #05173D + gold #D8B41D, serif headings). NOTE: replace
+        // BOOKING_LINK_HERE with the real online-booking URL before first send.
+        template: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FBFAF7;padding:24px 0;font-family:Assistant,Helvetica,Arial,sans-serif;">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#FFFFFF;border-radius:8px;overflow:hidden;border:1px solid #ECE7DA;">
+<tr><td align="center" style="padding:28px 24px 4px;">
+<img src="https://chinup-marketing-dashboard.vercel.app/logo.png" alt="Chin Up! Aesthetics" width="150" style="display:block;max-width:150px;height:auto;">
+</td></tr>
+<tr><td style="padding:8px 32px 0;">
+<h1 style="font-family:Georgia,'Times New Roman',serif;color:#05173D;font-size:24px;font-weight:400;margin:16px 0 6px;text-align:center;">Time for your next {{lastService}}</h1>
+<div style="height:2px;width:48px;background:#D8B41D;margin:6px auto 20px;"></div>
+</td></tr>
+<tr><td style="padding:0 32px;color:#05173D;font-size:16px;line-height:1.6;">
+<p style="margin:0 0 16px;">Hi {{firstName}},</p>
+<p style="margin:0 0 16px;">Based on your last visit, you're right at the ideal window to book your next {{lastService}}. Treating on schedule keeps your results looking their most natural and consistent.</p>
+<p style="margin:0 0 24px;">Your team at Chin Up! {{locationName}} would love to see you again &mdash; booking takes under a minute.</p>
+</td></tr>
+<tr><td align="center" style="padding:0 32px 8px;">
+<a href="BOOKING_LINK_HERE" style="display:inline-block;background:#D8B41D;color:#05173D;font-weight:700;font-size:16px;text-decoration:none;padding:14px 36px;border-radius:6px;">Book My {{lastService}}</a>
+</td></tr>
+<tr><td style="padding:16px 32px 28px;color:#5B6472;font-size:14px;line-height:1.5;text-align:center;">
+<p style="margin:0;">Prefer to talk to a person? Just reply to this email and we'll find a time for you.</p>
+</td></tr>
+<tr><td style="padding:18px 32px;background:#05173D;font-size:12px;line-height:1.5;text-align:center;">
+<p style="margin:0 0 4px;color:#E4E4E7;">Chin Up! Aesthetics &mdash; {{locationName}}</p>
+<p style="margin:0;color:#A9B3C4;">You're receiving this as a patient of Chin Up! Aesthetics. To unsubscribe, reply DELETE.</p>
+</td></tr>
+</table>
+</td></tr>
+</table>`,
+    },
     'consult-only': {
         label: "We'd Love to See You",
         subject: "Ready for your next step at Chin Up!?",

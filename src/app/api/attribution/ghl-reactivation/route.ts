@@ -14,6 +14,7 @@ import {
     getConversationsIntelligence,
     getLapsedPatients,
     getConsultOnlyPatients,
+    getMaintenanceDuePatients,
     buildUnifiedPhoneMap,
     getRecentOutboundContactIds,
     getV2SmsDndContactIds,
@@ -84,6 +85,25 @@ async function getRecentlyContactedHashes(): Promise<Set<string>> {
         return new Set(result.rows.map(r => r.phone_hash));
     } catch {
         return new Set(); // Table may not exist yet
+    }
+}
+
+/**
+ * Phone hashes sent a MAINTENANCE reminder in the last 90 days — so a patient gets
+ * at most one reminder per treatment cycle (windows are multiple weeks long).
+ */
+async function getMaintenanceCooldownHashes(): Promise<Set<string>> {
+    try {
+        const result = await sql`
+            SELECT DISTINCT phone_hash FROM campaign_contacts
+            WHERE sent_at > NOW() - INTERVAL '90 days'
+              AND status = 'sent'
+              AND phone_hash IS NOT NULL
+              AND run_id IN (SELECT run_id FROM campaign_runs WHERE segment = 'maintenance')
+        `;
+        return new Set(result.rows.map(r => r.phone_hash));
+    } catch {
+        return new Set();
     }
 }
 
@@ -258,6 +278,56 @@ export async function GET(req: NextRequest) {
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
                 source: 'mindbody-appointments',
+            });
+        }
+
+        // ── Campaign: Maintenance Due (proactive re-treatment reminders) ──
+        if (segment === 'maintenance') {
+            const duePatients = await getMaintenanceDuePatients(locationParam || undefined);
+            const sendable = duePatients.filter(c => c.ghlContactId);
+            const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
+            const maintenanceCooldown = await getMaintenanceCooldownHashes();
+            const noDND = sendable.filter(c => {
+                const normalized = normalizePhone(c.phone);
+                const entry = phoneMap.get(normalized);
+                if (entry?.dnd) return false;
+                if (maintenanceCooldown.has(hashPhone(c.phone))) return false; // one reminder per cycle
+                return true;
+            });
+            const contacts: ContactEntry[] = noDND.map(c => ({
+                contactId: c.ghlContactId!,
+                contactName: c.ghlContactName || `${c.firstName} ${c.lastName}`.trim(),
+                firstName: c.firstName,
+                phone: c.phone,
+                email: phoneMap.get(normalizePhone(c.phone))?.contactEmail || '',
+                maskedPhone: maskPhone(c.phone),
+                locationKey: c.locationKey || locationParam || 'decatur' as LocationKey,
+                locationName: LOCATION_NAMES[c.locationKey || locationParam || 'decatur' as LocationKey] || 'Chin Up!',
+                stageName: `Due — ${c.treatment}`,
+                monetaryValue: c.totalRevenue || 350,
+                daysSinceOutreach: c.daysSince,
+                achievabilityScore: 75,
+                riskLevel: 'going-cold' as const,
+                tags: phoneMap.get(normalizePhone(c.phone))?.tags || [],
+                lastTreatmentType: c.treatmentDisplay, // {{lastService}} token source
+            }));
+
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
+
+            return NextResponse.json({
+                contacts: filtered,
+                totalEligible: filtered.length,
+                segment,
+                forecast: buildForecast(filtered, 0.22),
+                templates: SMS_TEMPLATES,
+                emailTemplates: EMAIL_TEMPLATES,
+                dndFiltered: (sendable.length - noDND.length) + v2DndFiltered,
+                cooldownExcluded,
+                outboundExcluded,
+                lastCampaign: lastRuns[segment] || null,
+                source: 'mindbody-sales',
             });
         }
 
@@ -806,7 +876,7 @@ export async function POST(req: NextRequest) {
             contactIds: string[];
             message: string;
             locationKey: LocationKey;
-            contacts: { contactId: string; contactName: string; firstName: string; phone: string; email?: string; tags: string[] }[];
+            contacts: { contactId: string; contactName: string; firstName: string; phone: string; email?: string; tags: string[]; lastTreatmentType?: string }[];
             channel?: 'sms' | 'email';
             segment?: string;
             subject?: string;
@@ -852,6 +922,7 @@ export async function POST(req: NextRequest) {
                 selectedContacts.map(c => ({
                     ...c,
                     email: c.email || '',
+                    lastService: c.lastTreatmentType, // {{lastService}} personalization
                 })),
                 message,
                 LOCATION_NAMES[locationKey] || 'Chin Up!',
@@ -860,7 +931,7 @@ export async function POST(req: NextRequest) {
         } else {
             result = await sendBulkSMS(
                 locationKey,
-                selectedContacts,
+                selectedContacts.map(c => ({ ...c, lastService: c.lastTreatmentType })),
                 message,
                 LOCATION_NAMES[locationKey] || 'Chin Up!',
             );
