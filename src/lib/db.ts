@@ -385,9 +385,16 @@ async function initCampaignContactsTable() {
             channel VARCHAR(10) NOT NULL DEFAULT 'sms',
             status VARCHAR(20) NOT NULL DEFAULT 'sent',
             error_message VARCHAR(200),
+            holdout BOOLEAN DEFAULT false,
+            treatment TEXT,
+            cadence_days INTEGER,
             sent_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         )
     `;
+    // Self-migrate existing tables (additive, idempotent)
+    await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS holdout BOOLEAN DEFAULT false`;
+    await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS treatment TEXT`;
+    await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS cadence_days INTEGER`;
     await sql`CREATE INDEX IF NOT EXISTS idx_cc_run ON campaign_contacts(run_id)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_cc_phone_hash ON campaign_contacts(phone_hash)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_cc_email_hash ON campaign_contacts(email_hash)`;

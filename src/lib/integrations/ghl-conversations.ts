@@ -2005,12 +2005,23 @@ export interface MaintenanceDuePatient {
     lastTreatmentDate: string;
     daysSince: number;
     totalRevenue: number;
+    holdout: boolean;         // ~12% control group (not messaged) for lift measurement
     ghlContactId?: string;
     ghlContactName?: string;
     locationKey?: LocationKey;
 }
 
 const maintenanceCache = new Map<string, CacheEntry<MaintenanceDuePatient[]>>();
+
+/**
+ * Stable ~12% holdout assignment, deterministic per patient (same control group
+ * over time) so the optimizer can measure messaged-vs-holdout booking lift.
+ */
+export function isMaintenanceHoldout(key: string): boolean {
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    return (h % 100) < 12;
+}
 
 /**
  * Find patients DUE for re-treatment: their most-recent treatment (from sales
@@ -2123,6 +2134,7 @@ export async function getMaintenanceDuePatients(
             lastTreatmentDate: date,
             daysSince,
             totalRevenue: revMap.get(clientId) || 0,
+            holdout: isMaintenanceHoldout(clientId),
             ghlContactId: match?.contactId,
             ghlContactName: match?.contactName,
             locationKey: match?.locationKey,

@@ -284,7 +284,8 @@ export async function GET(req: NextRequest) {
         // ── Campaign: Maintenance Due (proactive re-treatment reminders) ──
         if (segment === 'maintenance') {
             const duePatients = await getMaintenanceDuePatients(locationParam || undefined);
-            const sendable = duePatients.filter(c => c.ghlContactId);
+            const holdoutCount = duePatients.filter(c => c.ghlContactId && c.holdout).length;
+            const sendable = duePatients.filter(c => c.ghlContactId && !c.holdout); // exclude ~12% control group
             const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
             const maintenanceCooldown = await getMaintenanceCooldownHashes();
             const noDND = sendable.filter(c => {
@@ -326,6 +327,7 @@ export async function GET(req: NextRequest) {
                 dndFiltered: (sendable.length - noDND.length) + v2DndFiltered,
                 cooldownExcluded,
                 outboundExcluded,
+                holdoutControl: holdoutCount, // ~12% held back to measure booking lift
                 lastCampaign: lastRuns[segment] || null,
                 source: 'mindbody-sales',
             });
@@ -876,7 +878,7 @@ export async function POST(req: NextRequest) {
             contactIds: string[];
             message: string;
             locationKey: LocationKey;
-            contacts: { contactId: string; contactName: string; firstName: string; phone: string; email?: string; tags: string[]; lastTreatmentType?: string }[];
+            contacts: { contactId: string; contactName: string; firstName: string; phone: string; email?: string; tags: string[]; lastTreatmentType?: string; daysSinceOutreach?: number }[];
             channel?: 'sms' | 'email';
             segment?: string;
             subject?: string;
@@ -951,6 +953,11 @@ export async function POST(req: NextRequest) {
                 VALUES (${segment || 'unknown'}, ${segmentLabel}, ${channel}, ${locationKey}, ${selectedContacts.length}, ${result.sent}, ${result.failed}, ${result.skipped}, ${segment || 'custom'}, ${session.user.email})
                 RETURNING run_id
             `;
+            // Self-migrate instrumentation columns (idempotent, additive)
+            await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS holdout BOOLEAN DEFAULT false`;
+            await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS treatment TEXT`;
+            await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS cadence_days INTEGER`;
+
             const runId = runResult.rows[0]?.run_id;
             if (runId && result.results) {
                 // Insert contact records with phone/email hashes (no PII)
@@ -959,9 +966,25 @@ export async function POST(req: NextRequest) {
                     const ph = contact?.phone ? hashPhone(contact.phone) : null;
                     const eh = contact?.email ? hashEmail(contact.email) : null;
                     await sql`
-                        INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, email_hash, location_key, channel, status, error_message)
-                        VALUES (${runId}, ${r.contactId}, ${ph}, ${eh}, ${locationKey}, ${channel}, ${r.success ? 'sent' : 'failed'}, ${r.error?.slice(0, 200) || null})
+                        INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, email_hash, location_key, channel, status, error_message, holdout, treatment, cadence_days)
+                        VALUES (${runId}, ${r.contactId}, ${ph}, ${eh}, ${locationKey}, ${channel}, ${r.success ? 'sent' : 'failed'}, ${r.error?.slice(0, 200) || null}, false, ${contact?.lastTreatmentType || null}, ${contact?.daysSinceOutreach ?? null})
                     `;
+                }
+
+                // Record the ~12% holdout control group (not messaged) for lift measurement
+                if (segment === 'maintenance') {
+                    try {
+                        const due = await getMaintenanceDuePatients(locationKey);
+                        const controls = due.filter(p => p.holdout && p.ghlContactId && p.phone);
+                        for (const p of controls) {
+                            await sql`
+                                INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, location_key, channel, status, holdout, treatment, cadence_days)
+                                VALUES (${runId}, ${p.ghlContactId!}, ${hashPhone(p.phone)}, ${locationKey}, ${channel}, 'holdout', true, ${p.treatmentDisplay}, ${p.daysSince})
+                            `;
+                        }
+                    } catch (e) {
+                        console.warn('[ghl-reactivation] Holdout logging failed:', e);
+                    }
                 }
             }
         } catch (err) {
