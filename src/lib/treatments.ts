@@ -27,14 +27,14 @@ export function normalizeTreatment(descRaw: string | null | undefined): string |
     if (/lip ?flip/.test(s)) return 'Lip Flip';
     if (/botox/.test(s)) return 'Botox';
     if (/dysport/.test(s)) return 'Dysport';
-    if (/sculptra|restylane|juvederm|versa|\brha\b|filler|kysse|defyne|refyne|contour|\blyft\b|voluma|vollure|radiesse/.test(s)) return 'Filler';
+    if (/sculptra|restylane|juvederm|versa|\brha\b|filler|kysse|defyne|refyne|contour|\blyft\b|voluma|vollure|radiesse|profile balancing/.test(s)) return 'Filler';
     if (/hydra ?facial|\bhf\b|hf -/.test(s)) return 'HydraFacial';
     if (/cool ?peel/.test(s)) return 'CoolPeel';
     if (/chemical peel|vi peel|\bpeel\b/.test(s)) return 'Chemical Peel';
     if (/microneedling|skin ?pen|skinpen|rf micro|venus rf|virtue/.test(s)) return 'Microneedling';
     if (/dermaplaning/.test(s)) return 'Dermaplaning';
     if (/emsculpt|emsella/.test(s)) return 'Emsculpt';
-    if (/\bhr\b|laser hair|\blhr\b/.test(s)) return 'Laser Hair Removal';
+    if (/laser hair|\bhr\b|lhr/.test(s)) return 'Laser Hair Removal'; // 'lhr' substring also catches LHR_Inventory_Only
 
     return null; // unrecognized → not a targetable clinical treatment
 }
