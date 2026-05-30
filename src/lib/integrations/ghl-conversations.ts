@@ -2034,9 +2034,11 @@ export async function getMaintenanceDuePatients(
     const now = Date.now();
     const cutoff = new Date(now - MAINTENANCE_LOOKBACK_DAYS * 86400000).toISOString().split('T')[0];
 
-    // Most-recent TREATMENT per client (walk sales newest-first; first treatment item wins)
+    // Most-recent TREATMENT per client (walk sales newest-first; first treatment item wins).
+    // to_char keeps sale_date a clean 'YYYY-MM-DD' string (the raw `date` column comes
+    // back as a JS Date whose String() form breaks naive date parsing).
     const salesRows = await sql`
-        SELECT client_id, sale_date, items_json
+        SELECT client_id, to_char(sale_date, 'YYYY-MM-DD') AS sale_date, items_json
         FROM mb_sales_history
         WHERE jsonb_typeof(items_json) = 'array'
           AND sale_date >= ${cutoff}
@@ -2052,7 +2054,7 @@ export async function getMaintenanceDuePatients(
         } catch { /* skip malformed */ }
         for (const it of items) {
             const t = normalizeTreatment(it.Description);
-            if (t) { mostRecent.set(row.client_id, { treatment: t, date: String(row.sale_date).split('T')[0] }); break; }
+            if (t) { mostRecent.set(row.client_id, { treatment: t, date: row.sale_date }); break; }
         }
     }
 
