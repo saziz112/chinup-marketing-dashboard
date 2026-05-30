@@ -27,7 +27,8 @@ export function normalizeTreatment(descRaw: string | null | undefined): string |
     if (/lip ?flip/.test(s)) return 'Lip Flip';
     if (/botox/.test(s)) return 'Botox';
     if (/dysport/.test(s)) return 'Dysport';
-    if (/sculptra|restylane|juvederm|versa|\brha\b|filler|kysse|defyne|refyne|contour|\blyft\b|voluma|vollure|radiesse|profile balancing/.test(s)) return 'Filler';
+    if (/sculptra/.test(s)) return 'Sculptra'; // biostimulator — distinct from dermal filler
+    if (/restylane|juvederm|versa|\brha\b|filler|kysse|defyne|refyne|contour|\blyft\b|voluma|vollure|radiesse|profile balancing/.test(s)) return 'Dermal Filler';
     if (/hydra ?facial|\bhf\b|hf -/.test(s)) return 'HydraFacial';
     if (/cool ?peel/.test(s)) return 'CoolPeel';
     if (/chemical peel|vi peel|\bpeel\b/.test(s)) return 'Chemical Peel';
@@ -41,7 +42,7 @@ export function normalizeTreatment(descRaw: string | null | undefined): string |
 
 /** Canonical treatment names, useful for validation/ordering. */
 export const CLINICAL_TREATMENTS = [
-    'Botox', 'Dysport', 'Lip Flip', 'Filler', 'HydraFacial',
+    'Botox', 'Dysport', 'Lip Flip', 'Dermal Filler', 'Sculptra', 'HydraFacial',
     'Chemical Peel', 'CoolPeel', 'Microneedling', 'Dermaplaning',
     'Emsculpt', 'Laser Hair Removal',
 ] as const;
@@ -60,7 +61,8 @@ export const TREATMENT_CADENCE: Record<string, { startDays: number; endDays: num
     'Botox': { startDays: 80, endDays: 175 },              // data-clean (median 102)
     'Dysport': { startDays: 85, endDays: 185 },            // data-clean (median 113)
     'Lip Flip': { startDays: 60, endDays: 150 },           // small sample
-    'Filler': { startDays: 180, endDays: 365 },            // clinical maintenance (data skewed by build-up) — review
+    'Dermal Filler': { startDays: 180, endDays: 365 },     // clinical maintenance (data skewed by build-up) — review
+    'Sculptra': { startDays: 60, endDays: 180 },           // biostimulator: series + early maintenance — review
     'HydraFacial': { startDays: 35, endDays: 120 },
     'Chemical Peel': { startDays: 35, endDays: 120 },
     'CoolPeel': { startDays: 150, endDays: 300 },          // low confidence (only ~9 repeat patients)
@@ -75,7 +77,8 @@ export const TREATMENT_DISPLAY: Record<string, string> = {
     'Botox': 'Botox',
     'Dysport': 'Dysport',
     'Lip Flip': 'lip flip',
-    'Filler': 'filler',
+    'Dermal Filler': 'dermal filler',
+    'Sculptra': 'Sculptra',
     'HydraFacial': 'HydraFacial',
     'Chemical Peel': 'chemical peel',
     'CoolPeel': 'CoolPeel',
