@@ -421,25 +421,27 @@ export interface SmsVariant {
 export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: string; variants: SmsVariant[] }> = {
     'maintenance': {
         label: 'Maintenance Due',
-        defaultVariantId: 'simple',
+        // Copy in Chin Up's brand voice (warm, confident, "refreshed & defined", glow-up).
+        // Emoji-free for SMS deliverability/cost (email keeps emojis).
+        defaultVariantId: 'thinking-of-you',
         variants: [
             {
-                id: 'simple',
-                label: 'Simple reminder',
-                strategy: 'Lowest-friction, neutral nudge. Keyword reply removes the link-tap barrier; works for maintenance and series treatments alike.',
-                template: "Hi {{firstName}}, it's Chin Up! You're due for your next {{lastService}} at {{locationName}}. Reply BOOK and we'll grab you a spot.\n\nReply DELETE to opt out.",
+                id: 'maintain',
+                label: 'Maintain results',
+                strategy: 'Results-confidence: frames the visit as keeping their look effortless/natural. Confident, on-brand.',
+                template: "Hi {{firstName}}! Your {{lastService}} is right at the point where a little refresh keeps everything looking effortless and natural. We'd love to see you back at Chin Up! {{locationName}}. Book: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
             },
             {
-                id: 'results-fading',
-                label: 'Results fading',
-                strategy: 'Loss-aversion tied to the natural treatment cycle — motivates action by protecting an outcome they already paid for.',
-                template: "{{firstName}}, your {{lastService}} results are starting to fade — keep that fresh look going. Reply YES and Chin Up! {{locationName}} will book your next visit.\n\nReply DELETE to opt out.",
+                id: 'thinking-of-you',
+                label: 'Thinking of you',
+                strategy: 'Warm/personal — leads with care ("we\'ve been thinking about you"). Warmth is the strongest converter for warm patients.',
+                template: "Hi {{firstName}}, we've been thinking about you! You're due to refresh your {{lastService}} — let's keep you looking refreshed and defined. Grab your spot: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
             },
             {
-                id: 'one-tap',
-                label: 'One-tap (link)',
-                strategy: 'Zero back-and-forth self-booking for engaged patients; fastest path to a confirmed slot.',
-                template: "{{firstName}}, ready for your next {{lastService}}? Book in 30 sec at Chin Up! {{locationName}}: https://chinupaesthetics.com/booking-calendar/\n\nReply DELETE to opt out.",
+                id: 'glow',
+                label: 'Treat-yourself glow',
+                strategy: 'Aspirational self-care/glow-up framing — very on-brand, invites a treat-yourself moment.',
+                template: "Hi {{firstName}}, ready for a little glow-up? It's the perfect time for your next {{lastService}} at Chin Up! {{locationName}}. Treat yourself — book here: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
             },
         ],
     },
@@ -685,7 +687,7 @@ export function getSmsTemplate(segment: string, variantId?: string): string | nu
 export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; template: string }> = {
     'maintenance': {
         label: 'Maintenance Due',
-        subject: 'Time for your next {{lastService}}, {{firstName}}?',
+        subject: 'Consider this your sign to refresh your {{lastService}} ✨',
         // Branded HTML (navy #05173D + gold #D8B41D, serif headings). NOTE: replace
         // BOOKING_LINK_HERE with the real online-booking URL before first send.
         template: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FBFAF7;padding:24px 0;font-family:Assistant,Helvetica,Arial,sans-serif;">
@@ -695,13 +697,13 @@ export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; t
 <img src="https://chinup-marketing-dashboard.vercel.app/logo.png" alt="Chin Up! Aesthetics" width="150" style="display:block;max-width:150px;height:auto;">
 </td></tr>
 <tr><td style="padding:8px 32px 0;">
-<h1 style="font-family:Georgia,'Times New Roman',serif;color:#05173D;font-size:24px;font-weight:400;margin:16px 0 6px;text-align:center;">Time for your next {{lastService}}</h1>
+<h1 style="font-family:Georgia,'Times New Roman',serif;color:#05173D;font-size:24px;font-weight:400;margin:16px 0 6px;text-align:center;">Consider this your sign &#10024;</h1>
 <div style="height:2px;width:48px;background:#D8B41D;margin:6px auto 20px;"></div>
 </td></tr>
 <tr><td style="padding:0 32px;color:#05173D;font-size:16px;line-height:1.6;">
 <p style="margin:0 0 16px;">Hi {{firstName}},</p>
-<p style="margin:0 0 16px;">Based on your last visit, you're right at the ideal window to book your next {{lastService}}. Treating on schedule keeps your results looking their most natural and consistent.</p>
-<p style="margin:0 0 24px;">Your team at Chin Up! {{locationName}} would love to see you again &mdash; booking takes under a minute.</p>
+<p style="margin:0 0 16px;">It's been a little while &mdash; and you're right at the sweet spot to refresh your {{lastService}}, keeping everything looking natural, refreshed, and defined.</p>
+<p style="margin:0 0 24px;">The secret to results that always look effortless? Staying on a gentle rhythm. Consistent treatments keep you looking like <em>you</em>, just your most polished self &mdash; no guesswork, our team handles the details. Let's get you back on the schedule. &#128156;</p>
 </td></tr>
 <tr><td align="center" style="padding:0 32px 8px;">
 <a href="https://chinupaesthetics.com/booking-calendar/" style="display:inline-block;background:#D8B41D;color:#05173D;font-weight:700;font-size:16px;text-decoration:none;padding:14px 36px;border-radius:6px;">Book My {{lastService}}</a>

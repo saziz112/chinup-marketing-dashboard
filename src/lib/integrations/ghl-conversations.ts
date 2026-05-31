@@ -2058,15 +2058,22 @@ export async function getMaintenanceDuePatients(
     const mostRecent = new Map<string, { treatment: string; date: string }>();
     for (const row of salesRows.rows) {
         if (mostRecent.has(row.client_id)) continue;
-        let items: Array<{ Description?: string }> = [];
+        let items: Array<{ Description?: string; IsService?: boolean }> = [];
         try {
             const parsed = typeof row.items_json === 'string' ? JSON.parse(row.items_json) : row.items_json;
             if (Array.isArray(parsed)) items = parsed;
         } catch { /* skip malformed */ }
+        // Prefer the actual PRODUCT line (what was injected/performed, IsService===false)
+        // over a generic "— Service" label — e.g. a visit with "Botox - Service" + "Dysport"
+        // product is a Dysport visit, not Botox. Fall back to any treatment line otherwise.
+        let chosen: string | null = null;
         for (const it of items) {
-            const t = normalizeTreatment(it.Description);
-            if (t) { mostRecent.set(row.client_id, { treatment: t, date: row.sale_date }); break; }
+            if (it.IsService === false) { const t = normalizeTreatment(it.Description); if (t) { chosen = t; break; } }
         }
+        if (!chosen) {
+            for (const it of items) { const t = normalizeTreatment(it.Description); if (t) { chosen = t; break; } }
+        }
+        if (chosen) mostRecent.set(row.client_id, { treatment: chosen, date: row.sale_date });
     }
 
     // Keep clients whose days-since-last-treatment is inside the cadence window
