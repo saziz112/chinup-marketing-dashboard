@@ -421,27 +421,29 @@ export interface SmsVariant {
 export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: string; variants: SmsVariant[] }> = {
     'maintenance': {
         label: 'Maintenance Due',
-        // Copy in Chin Up's brand voice (warm, confident, "refreshed & defined", glow-up).
-        // Emoji-free for SMS deliverability/cost (email keeps emojis).
+        // Copy in Chin Up's brand voice — warm, low-pressure SUGGESTION (the patient
+        // decides; avoids presumptuous "you're due" framing). Emoji (☺️) intentionally
+        // kept per Sam's 2026-06 direction; note it pushes SMS to UCS-2 encoding
+        // (~70 chars/segment) so these run ~4 segments each.
         defaultVariantId: 'thinking-of-you',
         variants: [
             {
                 id: 'maintain',
                 label: 'Maintain results',
-                strategy: 'Results-confidence: frames the visit as keeping their look effortless/natural. Confident, on-brand.',
-                template: "Hi {{firstName}}! Your {{lastService}} is right at the point where a little refresh keeps everything looking effortless and natural. We'd love to see you back at Chin Up! {{locationName}}. Book: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
+                strategy: 'Results-confidence, low-pressure: frames a refresh as keeping their look effortless/natural, and leaves the decision to them.',
+                template: "Hi {{firstName}}! Your {{lastService}} is right at the point where you may want a little refresher — it keeps everything looking effortless and natural ☺️ If that feels right for you, we'd love to see you back at Chin Up! {{locationName}}. Book anytime: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
             },
             {
                 id: 'thinking-of-you',
                 label: 'Thinking of you',
-                strategy: 'Warm/personal — leads with care ("we\'ve been thinking about you"). Warmth is the strongest converter for warm patients.',
-                template: "Hi {{firstName}}, we've been thinking about you! You're due to refresh your {{lastService}} — let's keep you looking refreshed and defined. Grab your spot: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
+                strategy: 'Warm/personal, no-pressure — leads with care and explicitly leaves timing up to them ("whenever you are").',
+                template: "Hi {{firstName}}, thinking of you ☺️ Your {{lastService}} may be ready for a little refresh whenever you are — no rush at all. If you'd like to keep things looking refreshed and natural, we'd love to see you back at Chin Up! {{locationName}}. Book: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
             },
             {
                 id: 'glow',
                 label: 'Treat-yourself glow',
-                strategy: 'Aspirational self-care/glow-up framing — very on-brand, invites a treat-yourself moment.',
-                template: "Hi {{firstName}}, ready for a little glow-up? It's the perfect time for your next {{lastService}} at Chin Up! {{locationName}}. Treat yourself — book here: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
+                strategy: 'Aspirational self-care/glow-up framing as a gentle invitation — "totally your call".',
+                template: "Hi {{firstName}}! If you're feeling ready for a little glow-up, it could be a lovely time to refresh your {{lastService}} ☺️ Totally your call — but if you'd like to, we'd love to see you at Chin Up! {{locationName}}. Treat yourself: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
             },
         ],
     },
@@ -702,8 +704,8 @@ export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; t
 </td></tr>
 <tr><td style="padding:0 32px;color:#05173D;font-size:16px;line-height:1.6;">
 <p style="margin:0 0 16px;">Hi {{firstName}},</p>
-<p style="margin:0 0 16px;">It's been a little while &mdash; and you're right at the sweet spot to refresh your {{lastService}}, keeping everything looking natural, refreshed, and defined.</p>
-<p style="margin:0 0 24px;">The secret to results that always look effortless? Staying on a gentle rhythm. Consistent treatments keep you looking like <em>you</em>, just your most polished self &mdash; no guesswork, our team handles the details. Let's get you back on the schedule. &#128156;</p>
+<p style="margin:0 0 16px;">Your {{lastService}} may be right at the point where a little refresher keeps everything looking natural, refreshed, and defined &mdash; if that feels right for you. &#9786;&#65039;</p>
+<p style="margin:0 0 24px;">The secret to results that always look effortless? Staying on a gentle rhythm. Consistent treatments keep you looking like <em>you</em>, just your most polished self &mdash; no guesswork, our team handles the details. Whenever you're ready, we'd love to see you back. &#128156;</p>
 </td></tr>
 <tr><td align="center" style="padding:0 32px 8px;">
 <a href="https://chinupaesthetics.com/booking-calendar/" style="display:inline-block;background:#D8B41D;color:#05173D;font-weight:700;font-size:16px;text-decoration:none;padding:14px 36px;border-radius:6px;">Book My {{lastService}}</a>
