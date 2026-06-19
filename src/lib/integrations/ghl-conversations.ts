@@ -2051,7 +2051,10 @@ export async function getMaintenanceDuePatients(
     const salesRows = await sql`
         SELECT client_id, to_char(sale_date, 'YYYY-MM-DD') AS sale_date, items_json
         FROM mb_sales_history
-        WHERE jsonb_typeof(items_json) = 'array'
+        -- 'string' = legacy double-encoded rows (jsonb string holding a JSON array);
+        -- the JS parse below unwraps them. Excluding them silently dropped recent
+        -- visits and mis-flagged patients as maintenance-due. See backfill + sql.json fix.
+        WHERE jsonb_typeof(items_json) IN ('array', 'string')
           AND sale_date >= ${cutoff}
         ORDER BY sale_date DESC
     `;

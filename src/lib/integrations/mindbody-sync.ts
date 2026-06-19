@@ -520,7 +520,8 @@ export async function getLapsedPatientsFromDB(
             SELECT client_id, sale_date, items_json
             FROM mb_sales_history
             WHERE client_id = ANY(string_to_array(${clientIdsCsv}, ','))
-              AND jsonb_typeof(items_json) = 'array'
+              -- include legacy double-encoded ('string') rows; JS parse below unwraps them
+              AND jsonb_typeof(items_json) IN ('array', 'string')
             ORDER BY sale_date DESC
         `;
         const histSets = new Map<string, Set<string>>();
@@ -612,9 +613,15 @@ export async function getAvailableTreatments(): Promise<string[]> {
         // Treatments come from sales line items, normalized to canonical clinical names.
         const result = await sql`
             SELECT DISTINCT item->>'Description' AS descr
-            FROM mb_sales_history s, jsonb_array_elements(s.items_json) item
-            WHERE jsonb_typeof(s.items_json) = 'array'
-              AND item->>'Description' IS NOT NULL
+            FROM mb_sales_history s, jsonb_array_elements(
+                -- normalize legacy double-encoded ('string') rows back to a JSON array
+                CASE jsonb_typeof(s.items_json)
+                    WHEN 'array' THEN s.items_json
+                    WHEN 'string' THEN (s.items_json #>> '{}')::jsonb
+                    ELSE '[]'::jsonb
+                END
+            ) item
+            WHERE item->>'Description' IS NOT NULL
         `;
         const set = new Set<string>();
         for (const r of result.rows) {
@@ -669,10 +676,10 @@ async function upsertSales(sales: Sale[]): Promise<number> {
         await sql`
             INSERT INTO mb_sales_history (sale_id, client_id, sale_date, location_id, total_amount, items_json, payments_total, synced_at)
             VALUES (${sale.Id}, ${sale.ClientId}, ${saleDate}, ${sale.LocationId || 0}, ${totalAmount},
-                    ${JSON.stringify(sale.PurchasedItems || [])}, ${paymentsTotal}, NOW())
+                    ${sql.json(sale.PurchasedItems || [])}, ${paymentsTotal}, NOW())
             ON CONFLICT (sale_id) DO UPDATE SET
                 total_amount = ${totalAmount},
-                items_json = ${JSON.stringify(sale.PurchasedItems || [])},
+                items_json = ${sql.json(sale.PurchasedItems || [])},
                 payments_total = ${paymentsTotal},
                 synced_at = NOW()
         `;

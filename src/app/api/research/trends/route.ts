@@ -394,7 +394,15 @@ export async function POST(req: Request) {
                     SUM((item->>'TotalAmount')::numeric)::numeric(10,2) AS total_revenue,
                     COUNT(DISTINCT sale_id)::int AS sale_count
                 FROM mb_sales_history,
-                    jsonb_array_elements(items_json) AS item
+                    jsonb_array_elements(
+                        -- normalize legacy double-encoded ('string') rows; raw
+                        -- jsonb_array_elements errors on a scalar string row
+                        CASE jsonb_typeof(items_json)
+                            WHEN 'array' THEN items_json
+                            WHEN 'string' THEN (items_json #>> '{}')::jsonb
+                            ELSE '[]'::jsonb
+                        END
+                    ) AS item
                 WHERE sale_date >= CURRENT_DATE - 365
                     AND (item->>'TotalAmount')::numeric > 0
                 GROUP BY treatment_name

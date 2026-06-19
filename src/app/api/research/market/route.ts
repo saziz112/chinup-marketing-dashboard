@@ -59,7 +59,15 @@ export async function GET(req: NextRequest) {
                     item->>'Description' AS name,
                     COUNT(*)::int AS count
                 FROM mb_sales_history,
-                    jsonb_array_elements(items_json) AS item
+                    jsonb_array_elements(
+                        -- normalize legacy double-encoded ('string') rows; raw
+                        -- jsonb_array_elements errors on a scalar string row
+                        CASE jsonb_typeof(items_json)
+                            WHEN 'array' THEN items_json
+                            WHEN 'string' THEN (items_json #>> '{}')::jsonb
+                            ELSE '[]'::jsonb
+                        END
+                    ) AS item
                 WHERE sale_date > NOW() - INTERVAL '90 days'
                 AND item->>'IsService' = 'true'
                 AND item->>'Description' IS NOT NULL
