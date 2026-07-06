@@ -175,18 +175,51 @@ async function upsertGuestContacts(guests: GuestContact[]): Promise<number> {
         await sql`
             INSERT INTO mb_clients_cache
                 (client_id, first_name, last_name, email, phone, referred_by, creation_date, source, synced_at)
-            VALUES (${g.id}, ${g.firstName}, ${g.lastName}, ${g.email}, ${g.phone}, '', NULL, 'zenoti', NOW())
+            VALUES (${g.id}, ${g.firstName}, ${g.lastName}, ${g.email}, ${g.phone}, '', NOW(), 'zenoti', NOW())
             ON CONFLICT (client_id) DO UPDATE SET
                 first_name = ${g.firstName},
                 last_name = ${g.lastName},
                 email = ${g.email},
                 phone = ${g.phone},
+                -- keep the earliest creation date we've ever recorded (reconcile refines
+                -- it to the true first-activity date afterwards). Zenoti's guest payload
+                -- carries no registration date, so NOW() is only a first-seen fallback.
+                creation_date = COALESCE(mb_clients_cache.creation_date, EXCLUDED.creation_date),
                 source = 'zenoti',
                 synced_at = NOW()
         `;
         n++;
     }
     return n;
+}
+
+/**
+ * Set each Zenoti client's creation_date to their earliest observed activity (first
+ * sale or appointment). The guest payload has no registration date, so without this a
+ * Zenoti-first patient has NULL creation_date and getNewClientsCountFromDB (which
+ * filters creation_date >= start) never counts them as a new client — undercounting
+ * post-cutover acquisition. Self-correcting: only overwrites NULL or too-late values.
+ * Cheap and idempotent — safe to run at the end of every backfill/incremental sync.
+ */
+export async function reconcileZenotiCreationDates(): Promise<number> {
+    const result = await sql`
+        UPDATE mb_clients_cache c
+        SET creation_date = act.first_seen
+        FROM (
+            SELECT client_id, MIN(d) AS first_seen FROM (
+                SELECT client_id, sale_date::timestamptz AS d
+                    FROM mb_sales_history WHERE source = 'zenoti'
+                UNION ALL
+                SELECT client_id, start_date AS d
+                    FROM mb_appointments_history WHERE source = 'zenoti'
+            ) x
+            GROUP BY client_id
+        ) act
+        WHERE c.client_id = act.client_id
+          AND c.source = 'zenoti'
+          AND (c.creation_date IS NULL OR c.creation_date > act.first_seen)
+    `;
+    return result.rowCount ?? 0;
 }
 
 /** Harvest contact rows embedded in appointment payloads — free (no extra API calls). */
@@ -294,7 +327,8 @@ export async function backfillZenotiGuests(): Promise<{ total: number; done: boo
                 total_records = (SELECT COUNT(*) FROM mb_clients_cache WHERE source = 'zenoti'),
                 updated_at = NOW()
         `;
-        return { total: 0, done: true, label: 'Zenoti guest backfill complete' };
+        const fixed = await reconcileZenotiCreationDates().catch(() => 0);
+        return { total: 0, done: true, label: `Zenoti guest backfill complete (creation_date set on ${fixed})` };
     }
 
     const contacts: GuestContact[] = [];
@@ -397,6 +431,9 @@ export async function incrementalZenotiSync(): Promise<{
         }
         await new Promise(res => setTimeout(res, 1100));
     }
+
+    // Derive creation_date from first activity so Zenoti-first patients count as new clients.
+    await reconcileZenotiCreationDates().catch(() => 0);
 
     console.log(`[zenoti-sync] Incremental: ${newSales} sales, ${newAppts} appts, ${newGuests} guests`);
     return { newSales, newAppts, newGuests };
