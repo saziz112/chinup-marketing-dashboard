@@ -1948,12 +1948,46 @@ export async function getConsultOnlyPatients(
         if (sale.ClientId && isTreatmentSale(sale.PurchasedItems)) treatedIds.add(sale.ClientId);
     }
 
+    // Cross-source suppression. getTreatedClientIds keys on client_id, so a consult
+    // patient who converted in Zenoti (a different GUID id after the 2026-07-01 cutover)
+    // looks "unconverted" and would be texted "you never booked". Suppress anyone whose
+    // phone/email-matched Zenoti identity was treated after their consult date. Mirrors
+    // the merge in getMaintenanceDuePatients. Guarded for pre-migration (no source col).
+    const zenotiLast = new Map<string, string>();
+    try {
+        const zlRows = await sql`
+            WITH cand AS (
+                SELECT client_id,
+                       NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                       NULLIF(LOWER(TRIM(email)),'') AS email
+                FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
+            ),
+            zn AS (
+                SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+                       NULLIF(LOWER(TRIM(c.email)),'') AS email,
+                       s.sale_date
+                FROM mb_clients_cache c
+                JOIN mb_sales_history s ON s.client_id = c.client_id AND s.source = 'zenoti'
+                WHERE c.source = 'zenoti'
+            )
+            SELECT cand.client_id, to_char(MAX(zn.sale_date), 'YYYY-MM-DD') AS zn_last
+            FROM cand
+            JOIN zn
+              ON (zn.phone IS NOT NULL AND zn.phone = cand.phone)
+              OR (zn.email IS NOT NULL AND zn.email = cand.email)
+            GROUP BY cand.client_id
+        `;
+        for (const r of zlRows.rows) zenotiLast.set(r.client_id, r.zn_last);
+    } catch { /* pre-migration: no source column — skip */ }
+
     // Build results
     const result: ConsultOnlyPatient[] = [];
 
     for (const [clientId, appt] of byClient) {
         if (treatedIds.has(clientId)) continue; // treated within 12 months — active patient, not a consult-only lead
         if (rebookedIds.has(clientId)) continue; // already rebooked a future visit — not a lost lead
+        const znLast = zenotiLast.get(clientId);
+        if (znLast && znLast > (appt.StartDateTime || '').split('T')[0]) continue; // converted in Zenoti after the consult
 
         const client = clientMap.get(clientId);
         const phone = client?.MobilePhone || client?.HomePhone || '';
@@ -2105,6 +2139,42 @@ export async function getMaintenanceDuePatients(
     `;
     for (const r of fbRows.rows) futureBooked.add(r.client_id);
 
+    // Cross-source recency suppression. `daysSince` is computed per client_id, but the
+    // same person can have a MORE RECENT visit under a different identity — notably an
+    // old MindBody numeric id vs. a new Zenoti GUID after the 2026-07-01 cutover (also
+    // MindBody's own duplicate registrations). If any phone/email-matched identity has
+    // activity after this candidate's anchor date, they were seen more recently and are
+    // NOT actually due — suppress to avoid a premature "you're due" text. Mirrors the
+    // identity merge in getLapsedPatientsFromDB.
+    const mergedLast = new Map<string, string>();
+    const mlRows = await sql`
+        WITH cand AS (
+            SELECT client_id,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(LOWER(TRIM(email)),'') AS email
+            FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
+        ),
+        activity AS (
+            SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(LOWER(TRIM(c.email)),'') AS email,
+                   a.activity_date
+            FROM (
+                SELECT client_id, sale_date AS activity_date FROM mb_sales_history
+                UNION ALL
+                SELECT client_id, start_date AS activity_date FROM mb_appointments_history
+                WHERE status IN ('Completed', 'Arrived')
+            ) a
+            JOIN mb_clients_cache c ON c.client_id = a.client_id
+        )
+        SELECT cand.client_id, to_char(MAX(act.activity_date), 'YYYY-MM-DD') AS merged_last
+        FROM cand
+        JOIN activity act
+          ON (act.phone IS NOT NULL AND act.phone = cand.phone)
+          OR (act.email IS NOT NULL AND act.email = cand.email)
+        GROUP BY cand.client_id
+    `;
+    for (const r of mlRows.rows) mergedLast.set(r.client_id, r.merged_last);
+
     // Per-client lifetime revenue (real forecast value) + contact details
     const revMap = new Map<string, number>();
     const revRows = await sql`
@@ -2126,6 +2196,10 @@ export async function getMaintenanceDuePatients(
     const seenPhones = new Set<string>();
     for (const [clientId, { treatment, date, daysSince }] of due) {
         if (futureBooked.has(clientId)) continue; // already coming back
+        // Seen more recently under a phone/email-matched identity (e.g. a post-cutover
+        // Zenoti visit) than this client_id's anchor date → not actually due, don't text.
+        const merged = mergedLast.get(clientId);
+        if (merged && merged > date) continue;
         const d = detail.get(clientId);
         const phone = d?.phone || '';
         const normalized = normalizePhone(phone);

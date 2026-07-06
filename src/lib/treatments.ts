@@ -88,6 +88,7 @@ export const TREATMENT_DISPLAY: Record<string, string> = {
     'Dermaplaning': 'dermaplaning',
     'Emsculpt': 'Emsculpt',
     'Laser Hair Removal': 'laser hair removal',
+    'PRP': 'PRP',
 };
 
 /** Sales lookback for maintenance detection — max cadence end + buffer. */
