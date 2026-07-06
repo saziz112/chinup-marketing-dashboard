@@ -10,7 +10,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { incrementalSocialSync } from '@/lib/integrations/social-posts-sync';
 import { incrementalSearchConsoleSync } from '@/lib/integrations/search-console-sync';
-import { incrementalSync as incrementalMbSync } from '@/lib/integrations/mindbody-sync';
+import { incrementalZenotiSync } from '@/lib/integrations/zenoti-sync';
 import { incrementalGhlSync } from '@/lib/integrations/ghl-contacts-sync';
 import { pgCacheInvalidatePrefix } from '@/lib/pg-cache';
 
@@ -35,7 +35,10 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-        const [social, gsc, mb, ghl] = await Promise.all([
+        // MindBody incremental sync is FROZEN at the 2026-07-01 cutover (MindBody is
+        // authoritative ≤ 6/30 and produces no new data after). Zenoti now owns the
+        // incremental path into the same unified tables.
+        const [social, gsc, zenoti, ghl] = await Promise.all([
             incrementalSocialSync().catch(e => ({
                 total: 0, apiCalls: 0, done: true,
                 chunkLabel: `Social sync error: ${e.message}`,
@@ -44,8 +47,8 @@ export async function GET(req: NextRequest) {
                 total: 0, apiCalls: 0, done: true,
                 chunkLabel: `GSC sync error: ${e.message}`,
             })),
-            incrementalMbSync().catch(e => ({
-                newSales: 0, newAppts: 0, newClients: 0, apiCalls: 0,
+            incrementalZenotiSync().catch(e => ({
+                newSales: 0, newAppts: 0, newGuests: 0,
                 error: e.message,
             })),
             incrementalGhlSync().catch(e => ({
@@ -54,7 +57,7 @@ export async function GET(req: NextRequest) {
             })),
         ]);
 
-        console.log(`[sync-research] Social: ${social.chunkLabel} | GSC: ${gsc.chunkLabel} | MB: ${mb.newSales} sales, ${mb.newAppts} appts, ${mb.newClients} clients | GHL: ${ghl.newContacts} new contacts`);
+        console.log(`[sync-research] Social: ${social.chunkLabel} | GSC: ${gsc.chunkLabel} | Zenoti: ${zenoti.newSales} sales, ${zenoti.newAppts} appts, ${zenoti.newGuests} guests | GHL: ${ghl.newContacts} new contacts`);
 
         // Fresh MindBody/GHL data just landed — drop campaign-segment caches so the next
         // request rebuilds from the updated tables (prevents targeting patients who just visited).
@@ -67,9 +70,9 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({
             social,
             searchConsole: gsc,
-            mindbody: mb,
+            zenoti,
             ghl,
-            totalApiCalls: social.apiCalls + gsc.apiCalls + mb.apiCalls + ghl.apiCalls,
+            totalApiCalls: social.apiCalls + gsc.apiCalls + ghl.apiCalls,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Sync failed';

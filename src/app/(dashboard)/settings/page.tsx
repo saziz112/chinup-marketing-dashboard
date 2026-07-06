@@ -738,10 +738,43 @@ export default function SettingsPage() {
                                     ))}
                                 </div>
 
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px', fontWeight: 600, textTransform: 'uppercase' }}>Zenoti Cutover (One-Time · run in order)</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 }}>
+                                    MindBody is authoritative through 6/30; Zenoti owns 7/1 onward. Run <b>Full Cutover</b> once
+                                    (migrates schema → purges post-6/30 MindBody stragglers → backfills Zenoti sales, appointments &amp; guests).
+                                    The individual steps below are for re-runs/recovery only.
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+                                    {[
+                                        { action: 'backfill-zenoti', label: '▶ Full Cutover (migrate + purge + backfill)', danger: true, confirm: 'Run the FULL Zenoti cutover?\n\nThis will:\n• widen sale_id/appointment_id to TEXT + add source column\n• DELETE the 4 post-6/30 MindBody sales + 72 appts dated ≥7/1\n• backfill Zenoti sales, appointments & guests from 7/1\n\nMindBody data ≤6/30 is untouched. Proceed?' },
+                                        { action: 'migrate-zenoti-schema', label: 'Migrate schema only', danger: false, confirm: 'Widen sale_id/appointment_id → TEXT and add source column? Idempotent.' },
+                                        { action: 'purge-mindbody-post-cutover', label: 'Purge post-cutover MB only', danger: true, confirm: 'DELETE the 4 post-6/30 MindBody sales + 72 appointments dated ≥7/1? (Requires schema migrated first.)' },
+                                        { action: 'backfill-zenoti-sales', label: 'Backfill Zenoti sales', danger: false, confirm: 'Backfill Zenoti sales from 7/1 → today?' },
+                                        { action: 'backfill-zenoti-appointments', label: 'Backfill Zenoti appts', danger: false, confirm: 'Backfill Zenoti appointments (+ harvest guests) from 7/1 → today?' },
+                                        { action: 'backfill-zenoti-guests', label: 'Backfill Zenoti guests', danger: false, confirm: 'Fetch contact details for sales-only Zenoti guests (chunked)?' },
+                                    ].map(btn => (
+                                        <button
+                                            key={btn.action}
+                                            disabled={!!syncAction}
+                                            onClick={() => { if (confirm(btn.confirm)) triggerSync(btn.action); }}
+                                            style={{
+                                                padding: '8px 16px', fontSize: '0.8125rem', fontWeight: 500,
+                                                background: btn.danger ? 'rgba(168,85,247,0.14)' : 'rgba(168,85,247,0.08)',
+                                                border: `1px solid rgba(168,85,247,${btn.danger ? 0.5 : 0.3})`,
+                                                borderRadius: '8px', color: '#A855F7', cursor: syncAction ? 'wait' : 'pointer',
+                                                opacity: syncAction ? 0.6 : 1,
+                                            }}
+                                        >
+                                            {syncAction === btn.action ? 'Running...' : btn.label}
+                                        </button>
+                                    ))}
+                                </div>
+
                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px', fontWeight: 600, textTransform: 'uppercase' }}>Incremental Sync (Daily)</div>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                                     {[
                                         { action: 'sync', label: 'Sync All (MB + GHL)', est: '~10 calls' },
+                                        { action: 'sync-zenoti', label: 'Sync Zenoti Only', est: '~6 calls' },
                                         { action: 'sync-mindbody', label: 'Sync MindBody Only', est: '~5 calls' },
                                         { action: 'sync-ghl', label: 'Sync GHL Only', est: '~5 calls' },
                                         { action: 'sync-social', label: 'Sync Social Posts', est: '~50 calls' },

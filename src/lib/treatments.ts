@@ -36,6 +36,7 @@ export function normalizeTreatment(descRaw: string | null | undefined): string |
     if (/dermaplaning/.test(s)) return 'Dermaplaning';
     if (/emsculpt|emsella/.test(s)) return 'Emsculpt';
     if (/laser hair|\bhr\b|lhr/.test(s)) return 'Laser Hair Removal'; // 'lhr' substring also catches LHR_Inventory_Only
+    if (/\bprp\b/.test(s)) return 'PRP'; // after microneedling: a combined "Microneedling + PRP" line stays Microneedling
 
     return null; // unrecognized → not a targetable clinical treatment
 }
@@ -44,7 +45,7 @@ export function normalizeTreatment(descRaw: string | null | undefined): string |
 export const CLINICAL_TREATMENTS = [
     'Botox', 'Dysport', 'Lip Flip', 'Dermal Filler', 'Sculptra', 'HydraFacial',
     'Chemical Peel', 'CoolPeel', 'Microneedling', 'Dermaplaning',
-    'Emsculpt', 'Laser Hair Removal',
+    'Emsculpt', 'Laser Hair Removal', 'PRP',
 ] as const;
 
 /**
@@ -70,6 +71,7 @@ export const TREATMENT_CADENCE: Record<string, { startDays: number; endDays: num
     'Dermaplaning': { startDays: 45, endDays: 150 },
     'Emsculpt': { startDays: 90, endDays: 180 },           // clinical maintenance (data = in-series 7d) — review
     'Laser Hair Removal': { startDays: 42, endDays: 130 }, // series-influenced — review
+    'PRP': { startDays: 90, endDays: 240 },                // Zenoti-only add-on; low confidence, clinical series+maintenance — review
 };
 
 /** Natural mid-sentence phrasing for {{lastService}} in messages. */

@@ -3,7 +3,7 @@
 
 import { sql } from '@/lib/db/sql';
 
-type ApiName = 'mindbody' | 'meta' | 'metaAds' | 'youtube' | 'googleAds' | 'googleBusiness' | 'ghl' | 'yelp' | 'realself' | 'googleSearchConsole' | 'kieAi' | 'apify';
+type ApiName = 'mindbody' | 'zenoti' | 'meta' | 'metaAds' | 'youtube' | 'googleAds' | 'googleBusiness' | 'ghl' | 'yelp' | 'realself' | 'googleSearchConsole' | 'kieAi' | 'apify';
 
 interface CallRecord {
   timestamp: number;
@@ -49,6 +49,12 @@ const API_CONFIGS: Record<ApiName, {
     quotaLimit: 5000,
     quotaUnit: 'calls',
     quotaPeriod: 'month',
+  },
+  zenoti: {
+    displayName: 'Zenoti',
+    quotaLimit: null, // no daily cap; org-wide 60 calls/min rate limit
+    quotaUnit: 'calls',
+    quotaPeriod: 'day',
   },
   meta: {
     displayName: 'Meta (IG + FB)',
