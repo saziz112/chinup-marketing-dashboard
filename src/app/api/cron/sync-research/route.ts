@@ -14,7 +14,7 @@ import { incrementalZenotiSync } from '@/lib/integrations/zenoti-sync';
 import { incrementalGhlSync } from '@/lib/integrations/ghl-contacts-sync';
 import { pgCacheInvalidatePrefix } from '@/lib/pg-cache';
 
-export const maxDuration = 60;
+export const maxDuration = 300; // Zenoti incremental sync now pulls a 120-day forward appt window
 
 export async function GET(req: NextRequest) {
     // Verify cron secret (Vercel sets this header for cron jobs)

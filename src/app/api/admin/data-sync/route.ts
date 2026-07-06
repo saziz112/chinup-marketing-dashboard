@@ -41,7 +41,7 @@ import {
     incrementalZenotiSync,
 } from '@/lib/integrations/zenoti-sync';
 
-export const maxDuration = 60; // Vercel Hobby limit
+export const maxDuration = 300; // Zenoti sync now pulls a 120-day forward appt window (~54 rate-limited calls)
 
 export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);

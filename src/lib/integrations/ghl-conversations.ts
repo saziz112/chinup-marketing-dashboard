@@ -2130,12 +2130,30 @@ export async function getMaintenanceDuePatients(
 
     const candidateIds = [...due.keys()];
 
-    // Exclude patients who already rebooked a future appointment
+    // Exclude patients who already rebooked a future appointment. Match across the
+    // full phone/email identity group, not just this client_id: post-cutover a future
+    // booking lives under the patient's Zenoti GUID while the maintenance candidate is
+    // their old MindBody numeric id (also covers MindBody duplicate registrations). A
+    // client_id-only check would miss the rebooking and text someone who's already coming
+    // in. Mirrors the peer-expansion in mindbody-db.getAppointmentsByClientIds.
     const futureBooked = new Set<string>();
     const fbRows = await sql`
-        SELECT DISTINCT client_id FROM mb_appointments_history
-        WHERE status IN ('Booked', 'Confirmed') AND start_date > NOW()
-          AND client_id = ANY(${candidateIds})
+        WITH cand AS (
+            SELECT client_id,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(LOWER(TRIM(email)),'') AS email
+            FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
+        ),
+        peers AS (
+            SELECT DISTINCT cand.client_id AS req_id, c.client_id AS peer_id
+            FROM cand JOIN mb_clients_cache c
+              ON (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') = cand.phone)
+              OR (cand.email IS NOT NULL AND NULLIF(LOWER(TRIM(c.email)),'') = cand.email)
+        )
+        SELECT DISTINCT p.req_id AS client_id
+        FROM peers p
+        JOIN mb_appointments_history a ON a.client_id = p.peer_id
+        WHERE a.status IN ('Booked', 'Confirmed') AND a.start_date > NOW()
     `;
     for (const r of fbRows.rows) futureBooked.add(r.client_id);
 

@@ -35,6 +35,17 @@ import {
 /** MindBody ≤ this date; Zenoti owns everything after. */
 export const ZENOTI_CUTOVER_DATE = '2026-07-01';
 
+/**
+ * How far forward to pull Zenoti appointments. Zenoti is the live booking system,
+ * so upcoming appointments live there — and the maintenance/consult suppressions
+ * ("already rebooked, don't remind them") can only see a future booking if it's in
+ * mb_appointments_history. Fetching to today+120d captures any realistically
+ * pre-booked maintenance visit. Sales stay bounded at today (no future sales exist).
+ */
+const FUTURE_APPT_WINDOW_DAYS = 120;
+const apptFetchEndDate = (): string =>
+    new Date(Date.now() + FUTURE_APPT_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+
 // ---------------------------------------------------------------------------
 // One-time schema migration (idempotent, guarded)
 // ---------------------------------------------------------------------------
@@ -275,8 +286,10 @@ export async function backfillZenotiSales(
 export async function backfillZenotiAppointments(
     startDate: string = ZENOTI_CUTOVER_DATE,
 ): Promise<{ total: number; guests: number; done: boolean; label: string }> {
+    // Record the sync watermark as today, but fetch forward to capture upcoming bookings.
     const endDate = new Date().toISOString().slice(0, 10);
-    const appts = await getZenotiAppointments(startDate, endDate);
+    const fetchEnd = apptFetchEndDate();
+    const appts = await getZenotiAppointments(startDate, fetchEnd);
     const inserted = await upsertZenotiAppointments(appts);
     const guests = await upsertGuestContacts(guestsFromAppointments(appts));
 
@@ -292,7 +305,7 @@ export async function backfillZenotiAppointments(
         total: inserted,
         guests,
         done: true,
-        label: `Zenoti appts ${startDate}→${endDate}: ${inserted} appts, ${guests} guests harvested`,
+        label: `Zenoti appts ${startDate}→${fetchEnd} (incl. future): ${inserted} appts, ${guests} guests harvested`,
     };
 }
 
@@ -398,7 +411,11 @@ export async function incrementalZenotiSync(): Promise<{
     }
 
     if (apptsState) {
-        const appts = await getZenotiAppointments(overlapFrom(apptsState.last_sync_date), endDate);
+        // Fetch forward to today+120d so upcoming bookings are visible to the
+        // "already rebooked" suppressions. The 2-day overlap back re-pulls recently
+        // changed rows; the forward window re-pulls all future appts each run, so
+        // reschedules/cancellations of future bookings are captured via the upsert.
+        const appts = await getZenotiAppointments(overlapFrom(apptsState.last_sync_date), apptFetchEndDate());
         newAppts = await upsertZenotiAppointments(appts);
         newGuests = await upsertGuestContacts(guestsFromAppointments(appts));
         await sql`
