@@ -145,21 +145,37 @@ export async function getAppointmentsByClientIds(
     const start = startDate.split('T')[0];
     const end = endDate.split('T')[0];
 
-    // Query appointments for matched clients within the date range
-    // Process in chunks to avoid parameter limits
+    // Count appointments across the requested client's full identity group, not just the
+    // one client_id passed in. Post-Zenoti-cutover a lead's MindBody identity (numeric id)
+    // and Zenoti identity (GUID id) are separate rows; appointments booked under the other
+    // id would be missed by a client_id-only match. `peers` expands each requested id to
+    // every client_id sharing its phone/email, then attributes counts back to the
+    // requested id. DISTINCT prevents double-counting a peer matched on both phone+email.
+    // Process in chunks to keep the ANY() arrays and joins bounded.
     const allRows: Array<{ client_id: string; status: string; cnt: number }> = [];
     const chunkSize = 50;
     for (let i = 0; i < clientIds.length; i += chunkSize) {
         const chunk = clientIds.slice(i, i + chunkSize);
-        const placeholders = chunk.map((_, idx) => `$${idx + 3}`).join(',');
-        const result = await sql.query(
-            `SELECT client_id, status, COUNT(*)::int AS cnt
-             FROM mb_appointments_history
-             WHERE client_id IN (${placeholders})
-               AND start_date::date BETWEEN $1 AND $2
-             GROUP BY client_id, status`,
-            [start, end, ...chunk],
-        );
+        const result = await sql`
+            WITH requested AS (
+                SELECT client_id AS req_id,
+                       NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                       NULLIF(LOWER(TRIM(email)),'') AS email
+                FROM mb_clients_cache WHERE client_id = ANY(${chunk})
+            ),
+            peers AS (
+                SELECT DISTINCT r.req_id, c.client_id AS peer_id
+                FROM requested r
+                JOIN mb_clients_cache c
+                  ON (r.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') = r.phone)
+                  OR (r.email IS NOT NULL AND NULLIF(LOWER(TRIM(c.email)),'') = r.email)
+            )
+            SELECT p.req_id AS client_id, a.status, COUNT(*)::int AS cnt
+            FROM peers p
+            JOIN mb_appointments_history a ON a.client_id = p.peer_id
+            WHERE a.start_date::date BETWEEN ${start} AND ${end}
+            GROUP BY p.req_id, a.status
+        `;
         allRows.push(...result.rows as any[]);
     }
 
