@@ -72,7 +72,5 @@ export const NAV_ITEMS: NavItem[] = [
     { id: 'ads', label: 'Paid Ads', href: '/ads', icon: 'dollar-sign', group: 'Analytics' },
     { id: 'attribution', label: 'Leads & Pipeline', href: '/attribution', icon: 'git-branch', group: 'Analytics' },
     { id: 'research', label: 'Research', href: '/research', icon: 'search', group: 'Content' },
-    { id: 'publish', label: 'Publish', href: '/publish', icon: 'send', group: 'Content' },
-    { id: 'creatives', label: 'Creatives', href: '/creatives', icon: 'sparkles', group: 'Content' },
     { id: 'settings', label: 'Settings', href: '/settings', icon: 'settings', adminOnly: true },
 ];

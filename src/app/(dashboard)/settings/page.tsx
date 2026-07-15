@@ -629,7 +629,7 @@ export default function SettingsPage() {
                         <div>
                             <h3 style={{ margin: 0 }}>Data Sync</h3>
                             <p style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', marginTop: '4px' }}>
-                                Sync MindBody &amp; GHL data to Postgres for unlimited lookback and advanced segmentation.
+                                Sync Zenoti &amp; GHL data to Postgres for unlimited lookback and advanced segmentation. (MindBody is frozen history — pre-7/1 only.)
                             </p>
                         </div>
                         <button
@@ -773,9 +773,7 @@ export default function SettingsPage() {
                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px', fontWeight: 600, textTransform: 'uppercase' }}>Incremental Sync (Daily)</div>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                                     {[
-                                        { action: 'sync', label: 'Sync All (MB + GHL)', est: '~10 calls' },
-                                        { action: 'sync-zenoti', label: 'Sync Zenoti Only', est: '~6 calls' },
-                                        { action: 'sync-mindbody', label: 'Sync MindBody Only', est: '~5 calls' },
+                                        { action: 'sync-zenoti', label: 'Sync Zenoti', est: '~6 calls' },
                                         { action: 'sync-ghl', label: 'Sync GHL Only', est: '~5 calls' },
                                         { action: 'sync-social', label: 'Sync Social Posts', est: '~50 calls' },
                                         { action: 'sync-search-console', label: 'Sync Search Console', est: '1 call' },

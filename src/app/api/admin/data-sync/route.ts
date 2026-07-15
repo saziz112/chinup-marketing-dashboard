@@ -13,7 +13,6 @@ import {
     backfillSales,
     backfillAppointments,
     backfillClients,
-    incrementalSync,
     getSyncStats,
     getAvailableTreatments,
     rebackfillClientColumns,
@@ -178,22 +177,15 @@ export async function POST(req: NextRequest) {
                 await sql`DELETE FROM ghl_contacts_map`;
                 return NextResponse.json({ action, message: 'GHL sync state and contacts cleared. Run backfill again.' });
             }
-            case 'sync': {
-                // Incremental sync for both MindBody and GHL
-                const [mb, ghl] = await Promise.all([
-                    incrementalSync(),
-                    incrementalGhlSync(),
-                ]);
+            case 'sync':
+            case 'sync-mindbody': {
+                // MindBody is frozen at the 2026-07-01 Zenoti cutover. Re-running its
+                // incremental sync could re-introduce post-cutover rows that Zenoti
+                // already owns (integer vs GUID ids never conflict → double-counting).
                 return NextResponse.json({
                     action,
-                    mindbody: mb,
-                    ghl,
-                    totalApiCalls: mb.apiCalls + ghl.apiCalls,
-                });
-            }
-            case 'sync-mindbody': {
-                const result = await incrementalSync();
-                return NextResponse.json({ action, ...result });
+                    error: 'MindBody sync is retired — MindBody is frozen history as of the 2026-07-01 Zenoti cutover. Use sync-zenoti / sync-ghl.',
+                }, { status: 410 });
             }
             case 'sync-ghl': {
                 const result = await incrementalGhlSync();

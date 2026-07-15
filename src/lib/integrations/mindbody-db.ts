@@ -74,13 +74,34 @@ export async function getNewClientsCountFromDB(
     const start = startDate.split('T')[0];
     const end = endDate.split('T')[0];
 
+    // A client only counts as NEW if no other client record sharing their
+    // phone/email existed before the window. Post-Zenoti-cutover a returning
+    // MindBody patient gets a second (Zenoti GUID) row whose creation_date is
+    // their first Zenoti activity — without the peer check they'd be counted
+    // as a brand-new lead.
     const result = await sql`
-        SELECT COUNT(DISTINCT c.client_id) as count
-        FROM mb_clients_cache c
-        JOIN mb_sales_history s ON s.client_id = c.client_id
-        WHERE c.creation_date >= ${startDate}
-          AND c.creation_date <= ${endDate}
-          AND s.sale_date BETWEEN ${start} AND ${end}
+        WITH candidates AS (
+            SELECT DISTINCT c.client_id,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(LOWER(TRIM(c.email)),'') AS email
+            FROM mb_clients_cache c
+            JOIN mb_sales_history s ON s.client_id = c.client_id
+            WHERE c.creation_date >= ${startDate}
+              AND c.creation_date <= ${endDate}
+              AND s.sale_date BETWEEN ${start} AND ${end}
+        ),
+        pre_existing AS (
+            SELECT DISTINCT cand.client_id
+            FROM candidates cand
+            JOIN mb_clients_cache prior
+              ON prior.client_id <> cand.client_id
+             AND ((cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(prior.phone,''),'\D','','g'),10),'') = cand.phone)
+               OR (cand.email IS NOT NULL AND NULLIF(LOWER(TRIM(prior.email)),'') = cand.email))
+            WHERE prior.creation_date < ${startDate}
+        )
+        SELECT COUNT(*) as count
+        FROM candidates
+        WHERE client_id NOT IN (SELECT client_id FROM pre_existing)
     `;
 
     return Number(result.rows[0]?.count || 0);
@@ -97,22 +118,53 @@ export async function getClientEmailMapFromDB(
     const start = startDate.split('T')[0];
     const end = endDate.split('T')[0];
 
+    // Aggregate revenue across each email's single-hop identity group (all
+    // client rows sharing the email, or sharing a phone with a row that has
+    // it — sufficient for the MindBody→Zenoti GUID split; not a transitive
+    // closure across chained phone/email changes).
+    // Post-Zenoti-cutover the same patient exists as a MindBody row and a
+    // Zenoti row; a per-client_id GROUP BY would let one of them (with $0
+    // window revenue) shadow the other's purchases. The representative row
+    // per email is the earliest-created client (usually the original
+    // MindBody record). DISTINCT in peers prevents double-counting a peer
+    // matched on both phone and email.
     const result = await sql`
-        SELECT c.client_id, c.email, c.first_name, c.last_name, c.phone,
-               c.referred_by, c.creation_date,
-               COALESCE(SUM(s.total_amount), 0) as revenue
-        FROM mb_clients_cache c
-        LEFT JOIN mb_sales_history s
-            ON s.client_id = c.client_id
-           AND s.sale_date BETWEEN ${start} AND ${end}
-        WHERE c.email IS NOT NULL AND c.email != ''
-        GROUP BY c.client_id, c.email, c.first_name, c.last_name, c.phone,
-                 c.referred_by, c.creation_date
+        WITH clients AS (
+            SELECT client_id, email, first_name, last_name, phone,
+                   referred_by, creation_date,
+                   NULLIF(LOWER(TRIM(email)),'') AS norm_email,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS norm_phone
+            FROM mb_clients_cache
+        ),
+        emailed AS (
+            SELECT * FROM clients WHERE norm_email IS NOT NULL
+        ),
+        peers AS (
+            SELECT DISTINCT e.norm_email, c.client_id AS peer_id
+            FROM emailed e
+            JOIN clients c
+              ON c.norm_email = e.norm_email
+              OR (e.norm_phone IS NOT NULL AND c.norm_phone = e.norm_phone)
+        ),
+        rev AS (
+            SELECT p.norm_email, COALESCE(SUM(s.total_amount), 0) AS revenue
+            FROM peers p
+            LEFT JOIN mb_sales_history s
+                ON s.client_id = p.peer_id
+               AND s.sale_date BETWEEN ${start} AND ${end}
+            GROUP BY p.norm_email
+        )
+        SELECT DISTINCT ON (e.norm_email)
+               e.norm_email, e.client_id, e.email, e.first_name, e.last_name,
+               e.phone, e.referred_by, e.creation_date, r.revenue
+        FROM emailed e
+        JOIN rev r ON r.norm_email = e.norm_email
+        ORDER BY e.norm_email, e.creation_date ASC NULLS LAST
     `;
 
     const emailMap = new Map<string, ClientRevenue>();
     for (const row of result.rows) {
-        const email = (row.email as string).toLowerCase().trim();
+        const email = row.norm_email as string;
         if (!email) continue;
         emailMap.set(email, {
             client: {

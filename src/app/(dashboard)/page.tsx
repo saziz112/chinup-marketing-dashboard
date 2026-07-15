@@ -47,7 +47,7 @@ export default function OverviewPage() {
             setMetrics({ leads: { val: '--', loading: true } });
 
             try {
-                const res = await fetch('/api/metrics/leads');
+                const res = await fetch(`/api/metrics/leads?period=${period}`);
                 const leadsData = await res.json();
                 setMetrics({
                     leads: { val: leadsData.count?.toString() || '0', loading: false },

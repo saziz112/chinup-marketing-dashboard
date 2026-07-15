@@ -680,18 +680,16 @@ export async function GET(req: NextRequest) {
                     const p = normalizePhone(row.phone || '');
                     if (p.length === 10) mbPhones.add(p);
                 }
-            } catch {
-                // Fallback: use current API-based purchasing clients
-                try {
-                    const startDate = new Date(Date.now() - 548 * 86400000).toISOString().split('T')[0];
-                    const endDate = new Date().toISOString().split('T')[0];
-                    const { getPurchasingClients } = await import('@/lib/integrations/mindbody');
-                    const { clients } = await getPurchasingClients(startDate, endDate);
-                    for (const c of clients) {
-                        const phone = normalizePhone(c.MobilePhone || c.HomePhone || '');
-                        if (phone.length === 10) mbPhones.add(phone);
-                    }
-                } catch { /* empty set = no filtering */ }
+            } catch (err) {
+                // No fallback: the MindBody API is frozen at the 2026-07-01 Zenoti
+                // cutover, so an API-built phone set would silently omit Zenoti
+                // patients and mislabel them "never booked". Better to fail the
+                // segment than build it from a known-incomplete filter.
+                console.error('[ghl-reactivation] never-booked: client phone lookup failed', err);
+                return NextResponse.json(
+                    { error: 'Client phone cross-reference unavailable — never-booked segment aborted to avoid messaging existing patients.' },
+                    { status: 503 },
+                );
             }
 
             // Find GHL contacts whose phone is NOT in MindBody

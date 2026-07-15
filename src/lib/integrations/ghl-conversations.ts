@@ -740,6 +740,23 @@ export async function getConversationsIntelligence(
                     }
                 }
 
+                // Sales from the unified history table. getPurchasingClients hits the
+                // MindBody API, which is frozen at the 2026-07-01 Zenoti cutover — a
+                // patient whose only recent activity is a Zenoti SALE (no completed
+                // appointment row) would otherwise look inactive here.
+                const salesResult = await pgSql`
+                    SELECT client_id, MAX(sale_date) AS last_activity
+                    FROM mb_sales_history
+                    GROUP BY client_id
+                `;
+                for (const row of salesResult.rows) {
+                    const saleDate = row.last_activity as string;
+                    const existing = mbSalesByClient.get(row.client_id);
+                    if (!existing || saleDate > existing) {
+                        mbSalesByClient.set(row.client_id, saleDate);
+                    }
+                }
+
                 // Also enrich match maps with appointment-only clients.
                 // getClientMatchMaps only includes clients with SALES in the window,
                 // so package redemptions / complimentary visits / cross-location visits
@@ -753,6 +770,12 @@ export async function getConversationsIntelligence(
                         SELECT DISTINCT client_id FROM mb_appointments_history
                         WHERE status IN ('Completed', 'Arrived')
                           AND start_date > NOW() - INTERVAL '365 days'
+                        UNION
+                        -- Zenoti-era (and any DB-recorded) sales: the MB API feed above
+                        -- can't see post-cutover purchases, so sale-only clients need
+                        -- to enter the match maps here or isActive never fires.
+                        SELECT DISTINCT client_id FROM mb_sales_history
+                        WHERE sale_date > NOW() - INTERVAL '365 days'
                     )
                 `;
                 for (const row of apptOnlyResult.rows) {

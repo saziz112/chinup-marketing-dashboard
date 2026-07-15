@@ -35,10 +35,6 @@ export default function ResearchPage() {
     const [calendarLastGenerated, setCalendarLastGenerated] = useState<string | null>(null);
     const [calendarError, setCalendarError] = useState<string | null>(null);
     const [expandedDay, setExpandedDay] = useState<string | null>(null);
-    const [queueLoading, setQueueLoading] = useState(false);
-    const [queueResult, setQueueResult] = useState<{ created: number; failed: number; replaced: number } | null>(null);
-    const [scheduledDates, setScheduledDates] = useState<Set<string>>(new Set());
-    const [dayScheduleLoading, setDayScheduleLoading] = useState<string | null>(null);
     const [calendarLoadingFromDB, setCalendarLoadingFromDB] = useState(false);
 
     // --- Market Intel state ---
@@ -76,25 +72,6 @@ export default function ResearchPage() {
             loadSavedCalendar(selectedMonth, selectedYear);
         }
     }, [activeTab, selectedMonth, selectedYear, loadSavedCalendar]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Fetch scheduled dates for calendar overlap indicators
-    useEffect(() => {
-        if (activeTab === 'Content Calendar') {
-            fetch('/api/content/publish?type=posts')
-                .then(r => r.json())
-                .then(data => {
-                    const dates = new Set<string>();
-                    for (const post of (data.posts || [])) {
-                        if (post.status === 'SCHEDULED' && post.scheduledFor) {
-                            const d = new Date(post.scheduledFor);
-                            dates.add(d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }));
-                        }
-                    }
-                    setScheduledDates(dates);
-                })
-                .catch(() => {});
-        }
-    }, [activeTab, selectedMonth, selectedYear]);
 
     // --- Trend Scout ---
     const generateTrends = async () => {
@@ -287,15 +264,7 @@ export default function ResearchPage() {
                     calendarLastGenerated={calendarLastGenerated}
                     expandedDay={expandedDay}
                     setExpandedDay={setExpandedDay}
-                    queueLoading={queueLoading}
-                    setQueueLoading={setQueueLoading}
-                    queueResult={queueResult}
-                    setQueueResult={setQueueResult}
                     setCalendarError={setCalendarError}
-                    scheduledDates={scheduledDates}
-                    setScheduledDates={setScheduledDates}
-                    dayScheduleLoading={dayScheduleLoading}
-                    setDayScheduleLoading={setDayScheduleLoading}
                     calendarGrid={calendarGrid}
                     calendarSummary={calendarSummary}
                     trends={trends}

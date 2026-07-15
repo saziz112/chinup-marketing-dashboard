@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import { useRouter } from 'next/navigation';
 
 // ================================================================
 //  Types & Interfaces
@@ -242,8 +241,6 @@ export function TrendScoutTab({
     trendFocus, setTrendFocus, generateTrends, trendLoading, trendLastGenerated,
     trendError, trends,
 }: TrendScoutTabProps) {
-    const router = useRouter();
-
     return (
         <div>
             {/* Feedback Banner */}
@@ -365,22 +362,11 @@ export function TrendScoutTab({
                                 <button
                                     style={{ ...smallBtnStyle, flex: 1 }}
                                     onClick={() => {
-                                        const platformMap: Record<string, string> = { 'Instagram': 'instagram', 'Facebook': 'facebook', 'YouTube': 'youtube', 'All': 'instagram' };
-                                        const postTypeMap: Record<string, string> = {
-                                            'Reel': 'reel', 'Story': 'story', 'Post': 'feed', 'Carousel': 'feed',
-                                            'YouTube Short': 'reel', 'YouTube Video': 'feed',
-                                        };
-                                        const caption = [topic.hook, '', topic.rationale, '', topic.suggested_cta, '', topic.booking_url].filter(Boolean).join('\n');
-                                        sessionStorage.setItem('research_prefill', JSON.stringify({
-                                            caption,
-                                            platforms: [platformMap[topic.platform] || 'instagram'],
-                                            postType: postTypeMap[topic.format] || 'feed',
-                                            source: 'research',
-                                        }));
-                                        router.push('/publish');
+                                        const text = [topic.hook, '', topic.rationale, '', topic.suggested_cta, '', topic.booking_url].filter(Boolean).join('\n');
+                                        copyToClipboard(text);
                                     }}
                                 >
-                                    Use This
+                                    Copy Post
                                 </button>
                                 <button
                                     style={{ ...smallBtnStyle, flex: 1, background: 'rgba(52,168,83,0.08)', color: '#34A853', borderColor: 'rgba(52,168,83,0.3)' }}
@@ -391,21 +377,6 @@ export function TrendScoutTab({
                                 >
                                     Copy CTA
                                 </button>
-                                {!isVideoFormat(topic.format) && (
-                                    <button
-                                        style={{ ...smallBtnStyle, flex: 1, background: 'rgba(216,180,29,0.1)', color: 'var(--accent-primary)', borderColor: 'rgba(216,180,29,0.3)' }}
-                                        onClick={() => {
-                                            sessionStorage.setItem('research_prefill', JSON.stringify({
-                                                prompt: topic.title,
-                                                caption: `${topic.hook}\n\n${topic.suggested_cta}`,
-                                                platforms: ['instagram'],
-                                            }));
-                                            router.push('/creatives');
-                                        }}
-                                    >
-                                        Generate Visual
-                                    </button>
-                                )}
                             </div>
                         </div>
                     ))}
@@ -445,15 +416,7 @@ export interface ContentCalendarTabProps {
     calendarLastGenerated: string | null;
     expandedDay: string | null;
     setExpandedDay: (d: string | null) => void;
-    queueLoading: boolean;
-    setQueueLoading: (v: boolean) => void;
-    queueResult: { created: number; failed: number; replaced: number } | null;
-    setQueueResult: (v: { created: number; failed: number; replaced: number } | null) => void;
     setCalendarError: (e: string | null) => void;
-    scheduledDates: Set<string>;
-    setScheduledDates: React.Dispatch<React.SetStateAction<Set<string>>>;
-    dayScheduleLoading: string | null;
-    setDayScheduleLoading: (d: string | null) => void;
     calendarGrid: (CalendarDay | null)[];
     calendarSummary: { byPlatform: Record<string, number>; byCategory: Record<string, number>; total: number } | null;
     trends: TrendTopic[];
@@ -462,9 +425,7 @@ export interface ContentCalendarTabProps {
 export function ContentCalendarTab({
     selectedMonth, selectedYear, goMonth, generateCalendar, calendarLoading,
     calendarLoadingFromDB, calendarDays, calendarError, calendarLastGenerated,
-    expandedDay, setExpandedDay, queueLoading, setQueueLoading, queueResult,
-    setQueueResult, setCalendarError, scheduledDates, setScheduledDates,
-    dayScheduleLoading, setDayScheduleLoading, calendarGrid, calendarSummary,
+    expandedDay, setExpandedDay, setCalendarError, calendarGrid, calendarSummary,
     trends,
 }: ContentCalendarTabProps) {
     return (
@@ -481,37 +442,6 @@ export function ContentCalendarTab({
                     <button onClick={generateCalendar} disabled={calendarLoading || calendarLoadingFromDB} style={primaryBtnStyle}>
                         {calendarLoading ? 'Generating...' : calendarLoadingFromDB ? 'Loading...' : calendarDays.length > 0 ? 'Regenerate' : 'Generate Calendar'}
                     </button>
-                    {calendarDays.length > 0 && (
-                        <button
-                            style={smallBtnStyle}
-                            disabled={queueLoading}
-                            onClick={async () => {
-                                setQueueLoading(true);
-                                setQueueResult(null);
-                                try {
-                                    const res = await fetch('/api/research/calendar/queue', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ days: calendarDays, month: selectedMonth, year: selectedYear }),
-                                    });
-                                    const data = await res.json();
-                                    if (!res.ok) throw new Error(data.error || 'Failed');
-                                    setQueueResult(data);
-                                } catch (e: any) {
-                                    setCalendarError(e.message);
-                                } finally {
-                                    setQueueLoading(false);
-                                }
-                            }}
-                        >
-                            {queueLoading ? 'Scheduling...' : 'Schedule All to Queue'}
-                        </button>
-                    )}
-                    {queueResult && (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>
-                            {queueResult.created} scheduled{queueResult.replaced > 0 ? `, ${queueResult.replaced} replaced` : ''}{queueResult.failed > 0 ? `, ${queueResult.failed} failed` : ''}
-                        </span>
-                    )}
                 </div>
             </div>
 
@@ -537,9 +467,6 @@ export function ContentCalendarTab({
                                             <>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                                                     <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>{dayNum}</span>
-                                                    {day && scheduledDates.has(day.date) && (
-                                                        <span style={{ fontSize: '0.5rem', padding: '1px 4px', borderRadius: 4, background: 'rgba(34,197,94,0.12)', color: '#22c55e', fontWeight: 700 }}>Queued</span>
-                                                    )}
                                                 </div>
                                                 {day && (
                                                     <>
@@ -582,25 +509,14 @@ export function ContentCalendarTab({
                                     {day.hashtags && <div style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--accent-primary)' }}>{day.hashtags}</div>}
                                     <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
                                         <button
-                                            style={{ ...smallBtnStyle, background: scheduledDates.has(day.date) ? 'rgba(34,197,94,0.1)' : undefined, color: scheduledDates.has(day.date) ? '#22c55e' : undefined }}
-                                            disabled={dayScheduleLoading === day.date || scheduledDates.has(day.date)}
-                                            onClick={async (e) => {
+                                            style={smallBtnStyle}
+                                            onClick={(e) => {
                                                 e.stopPropagation();
-                                                setDayScheduleLoading(day.date);
-                                                try {
-                                                    const res = await fetch('/api/research/calendar/queue', {
-                                                        method: 'POST',
-                                                        headers: { 'Content-Type': 'application/json' },
-                                                        body: JSON.stringify({ days: [day], month: selectedMonth, year: selectedYear }),
-                                                    });
-                                                    if (res.ok) {
-                                                        setScheduledDates(prev => new Set([...prev, day.date]));
-                                                    }
-                                                } catch { /* ignore */ }
-                                                setDayScheduleLoading(null);
+                                                const text = [day.topic, '', day.caption, '', day.hashtags].filter(Boolean).join('\n');
+                                                copyToClipboard(text);
                                             }}
                                         >
-                                            {scheduledDates.has(day.date) ? 'Scheduled' : dayScheduleLoading === day.date ? 'Scheduling...' : 'Schedule This Post'}
+                                            Copy Post
                                         </button>
                                     </div>
                                 </div>
