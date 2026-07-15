@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { sql } from '@/lib/db/sql';
 import { seedUsers } from '@/lib/users';
 import { initAllTables } from '@/lib/db';
@@ -7,9 +9,19 @@ import { initAllTables } from '@/lib/db';
  * POST /api/db/init
  *
  * Initializes the database schema and seeds initial users.
- * This is a one-time setup endpoint.
+ * This is a one-time setup endpoint. Destructive (drops + reseeds the
+ * users table), so it requires an authenticated admin session.
  */
 export async function POST() {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.email) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const user = session.user as Record<string, unknown>;
+    if (user.isAdmin !== true) {
+        return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    }
+
     try {
         console.log('[DB Init] Dropping existing users table if exists...');
 
