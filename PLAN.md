@@ -14,8 +14,13 @@ Rule: a data section is ✅ only after its numbers match Zenoti's own reports (J
 ## Phase 2 — Cuts
 8. ✅ **Remove Content + Publish** — pages, `/api/content/*`, and the 7am `publish-scheduled` cron (posting happens elsewhere).
 9. ✅ **Remove Creatives** — page + `/api/creatives/*` (creatives generated in other tools).
-10. 🔄 **Campaign performance readout** — pull sent/reply/booked numbers per segment; confirm ghost-reactivation is dead, decide fate of any other non-performers.
-11. ⬜ **Cut dead campaigns** — remove ghost (+ any others from #10) from Attribution UI and reactivation API.
+10. ✅ **Campaign performance readout** — pull sent/reply/booked numbers per segment; confirm ghost-reactivation is dead, decide fate of any other non-performers.
+11. ✅ **Cut dead campaigns** — remove ghost (+ any others from #10) from Attribution UI and reactivation API.
+
+### Readout results (2026-07-15, items 10+18)
+- Runs to date: maintenance 45 runs/773 sent (live, ran today), lapsed-vip 23/817 (live), consult-only 15/359 (live), lapsed-winback 12/1244 (dormant since 5/5), lapsed-long 3/385 (one day, 4/27). ghost + never-booked: ZERO runs ever.
+- 30-day booking rate: maintenance treated 16.0% vs holdout 14.8% (+1.2pp, NOT yet statistically significant, ~0.75σ; caveat: holdout rows logged per-run, some patients repeat). consult-only 3.1%, lapsed-vip 1.8%, lapsed-long 1.6%, lapsed-winback 0.6%.
+- Maintenance failure count high: 391 failed contact rows vs 773 sent — investigate (missing GHL contact/phone?).
 
 ## Phase 3 — Label & copy sweep
 12. ⬜ **Relabel MindBody → unified** — Overview "From MindBody", Ads "MB Revenue"/"MindBody verified", Attribution `source:'mindbody'` badges + stageName strings, Knowledge page copy rewrite.

@@ -68,16 +68,13 @@ const CAMPAIGN_SEGMENTS: Array<{
     { id: 'consult-only',      label: 'Consulted, Not Treated', desc: 'Had consult, never booked',              source: 'mindbody',      channel: 'sms+email' },
     { id: 'lapsed-vip',        label: 'Lapsed VIPs ($500+)',    desc: '120-365 days since last visit',          source: 'mindbody',      channel: 'sms+email' },
     { id: 'lapsed-treatment',  label: 'Treatment-Specific',     desc: 'By treatment type, 90+ days',            source: 'mindbody',      channel: 'sms+email' },
-    // Email-only (colder, but recoverable)
-    { id: 'lapsed-winback',    label: 'Win-Back VIPs',          desc: '$500+, 365+ days — too cold for SMS',    source: 'mindbody',      channel: 'email' },
-    { id: 'ghost',             label: 'Ghosted',                desc: 'Silent 14+ days — email re-engages',     source: 'conversations', channel: 'email' },
     // Skipped (hidden from picker)
+    // Cut 2026-07-15 (data-driven, see PLAN.md readout): ghost + re-engage-ghost +
+    // never-booked (zero runs ever), lapsed-winback (0.6% 30d booking, dormant since 5/5).
     { id: 'untouched',         label: 'Never Contacted',        desc: 'Zero outreach — low conversion',         source: 'conversations', channel: 'skip' },
     { id: 'attempted-no-reply', label: 'Attempted, No Reply',   desc: 'Already ignored — diminishing returns',  source: 'conversations', channel: 'skip' },
-    { id: 're-engage-ghost',   label: 'Re-engage Ghosts',       desc: 'Conversation-based, timeout-prone',      source: 'conversations', channel: 'skip' },
     { id: 'quoted-followup',   label: 'Quoted, Not Booked',     desc: 'Conversation-based, narrow window',      source: 'conversations', channel: 'skip' },
     { id: 'lapsed-long',       label: 'Long-Lapsed',            desc: '180+ days, no value filter — cold',      source: 'mindbody',      channel: 'skip' },
-    { id: 'never-booked',      label: 'Never Booked',           desc: 'Cold inquiries, ~8% response',           source: 'ghl',           channel: 'skip' },
 ];
 
 const VISIBLE_SEGMENTS = CAMPAIGN_SEGMENTS.filter(s => s.channel !== 'skip');

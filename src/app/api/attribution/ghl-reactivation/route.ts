@@ -333,57 +333,13 @@ export async function GET(req: NextRequest) {
             });
         }
 
-        // ── Campaign 5: Ghosted Quotes (conversation-based) ──
-        if (segment === 'ghost') {
-            const intelligence = await getConversationsIntelligence({
-                locationFilter: locationParam || undefined,
-            });
-            const eligible = intelligence.engagementGaps.filter(g => {
-                if (g.engagement?.lifecycleStage !== 'ghost') return false;
-                if (!g.engagement?.phone) return false;
-                if (g.engagement?.isDND) return false;
-                if (g.mindbodyMatch?.isActive) return false;
-                return true;
-            });
-            const contacts: ContactEntry[] = eligible.map(g => ({
-                contactId: g.opportunity.contactId,
-                contactName: g.opportunity.contactName,
-                firstName: g.opportunity.contactName?.split(' ')[0] || '',
-                phone: g.engagement?.phone || '',
-                email: g.opportunity.contactEmail || '',
-                maskedPhone: maskPhone(g.engagement?.phone || ''),
-                locationKey: g.locationKey as LocationKey,
-                locationName: g.locationName,
-                stageName: `Ghost — ${g.stageName}`,
-                monetaryValue: g.monetaryValue,
-                daysSinceOutreach: g.daysSinceOutreach,
-                achievabilityScore: g.achievabilityScore,
-                riskLevel: g.riskLevel as ContactEntry['riskLevel'],
-                tags: [] as string[],
-            }));
-
-            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
-            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
-            const { filtered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
-
-            return NextResponse.json({
-                contacts: filtered,
-                totalEligible: filtered.length,
-                segment,
-                forecast: buildForecast(filtered, 0.18),
-                templates: SMS_TEMPLATES,
-                emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: intelligence.summary.dndFiltered + v2DndFiltered,
-                cooldownExcluded,
-                outboundExcluded,
-                lastCampaign: lastRuns[segment] || null,
-                source: 'ghl-conversations',
-            });
-        }
+        // Campaigns cut 2026-07-15 (data-driven, see PLAN.md readout):
+        // 'ghost' + 're-engage-ghost' + 'never-booked' never ran; 'lapsed-winback'
+        // booked 0.6% in 30d and has been dormant since 5/5.
 
         // ── Conversation-Based Segments (replace pipeline-followup) ──
-        // These 4 segments use conversation lifecycle stages as the primary signal
-        if (segment === 'untouched' || segment === 'attempted-no-reply' || segment === 're-engage-ghost' || segment === 'quoted-followup') {
+        // These segments use conversation lifecycle stages as the primary signal
+        if (segment === 'untouched' || segment === 'attempted-no-reply' || segment === 'quoted-followup') {
             const intelligence = await getConversationsIntelligence({
                 locationFilter: locationParam || undefined,
             });
@@ -400,12 +356,6 @@ export async function GET(req: NextRequest) {
                 if (segment === 'attempted-no-reply') {
                     return g.engagement.lifecycleStage === 'attempted' && g.daysSinceOutreach >= 7;
                 }
-                if (segment === 're-engage-ghost') {
-                    return g.engagement.lifecycleStage === 'ghost'
-                        && g.engagement.daysSinceLastContact !== null
-                        && g.engagement.daysSinceLastContact >= 14
-                        && g.engagement.daysSinceLastContact <= 60;
-                }
                 if (segment === 'quoted-followup') {
                     return g.engagement.lifecycleStage === 'quoted' && g.daysSinceOutreach >= 7;
                 }
@@ -415,7 +365,6 @@ export async function GET(req: NextRequest) {
             const responseRates: Record<string, number> = {
                 'untouched': 0.10,
                 'attempted-no-reply': 0.08,
-                're-engage-ghost': 0.18,
                 'quoted-followup': 0.25,
             };
 
@@ -528,72 +477,6 @@ export async function GET(req: NextRequest) {
             });
         }
 
-        // ── Campaign 7: Win-Back VIPs ($500+, 365+ days) ──
-        if (segment === 'lapsed-winback') {
-            const lapsedPatients = await getLapsedPatients(365, locationParam || undefined, treatmentParam);
-            if (!Array.isArray(lapsedPatients)) {
-                throw new Error(`getLapsedPatients(365) returned ${typeof lapsedPatients} (${Object.prototype.toString.call(lapsedPatients)}), expected array`);
-            }
-            let filtered = lapsedPatients.filter(p => p.totalRevenue >= 500);
-
-            // Phone-level dedup
-            const seenPhones = new Set<string>();
-            filtered = filtered.filter(p => {
-                const normalized = normalizePhone(p.phone);
-                if (seenPhones.has(normalized)) return false;
-                seenPhones.add(normalized);
-                return true;
-            });
-
-            // GHL-matched + DND check
-            const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
-            const sendable = filtered.filter(p => {
-                if (!p.ghlContactId) return false;
-                const normalized = normalizePhone(p.phone);
-                const entry = phoneMap.get(normalized);
-                if (entry?.dnd) return false;
-                return true;
-            });
-
-            const contacts: ContactEntry[] = sendable.map(p => ({
-                contactId: p.ghlContactId!,
-                contactName: p.ghlContactName || `${p.firstName} ${p.lastName}`.trim(),
-                firstName: p.firstName,
-                phone: p.phone,
-                email: p.email || phoneMap.get(normalizePhone(p.phone))?.contactEmail || '',
-                maskedPhone: maskPhone(p.phone),
-                locationKey: p.locationKey || locationParam || 'decatur' as LocationKey,
-                locationName: LOCATION_NAMES[p.locationKey || locationParam || 'decatur' as LocationKey] || 'Chin Up!',
-                stageName: `Win-Back — ${p.lastTreatmentType || p.segment}`,
-                monetaryValue: p.totalRevenue,
-                daysSinceOutreach: p.daysSinceLastVisit,
-                achievabilityScore: Math.max(15, 50 - Math.floor(p.daysSinceLastVisit / 30)),
-                riskLevel: 'abandoned' as const,
-                tags: phoneMap.get(normalizePhone(p.phone))?.tags || [],
-                mbRevenue: p.totalRevenue,
-                mbLastVisit: p.lastSaleDate,
-                lastTreatmentType: p.lastTreatmentType,
-            }));
-
-            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
-            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
-            const { filtered: finalFiltered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
-
-            return NextResponse.json({
-                contacts: finalFiltered,
-                totalEligible: finalFiltered.length,
-                segment,
-                forecast: buildForecast(finalFiltered, 0.06),
-                templates: SMS_TEMPLATES,
-                emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: (filtered.filter(p => p.ghlContactId).length - sendable.length) + v2DndFiltered,
-                cooldownExcluded,
-                outboundExcluded,
-                lastCampaign: lastRuns[segment] || null,
-                source: 'mindbody',
-            });
-        }
-
         // ── Campaign 8: Treatment-Specific Lapsed (90+ days, filtered by treatment type) ──
         if (segment === 'lapsed-treatment') {
             if (!treatmentParam) {
@@ -661,81 +544,6 @@ export async function GET(req: NextRequest) {
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
                 source: 'mindbody',
-            });
-        }
-
-        // ── Campaign 9: Inquired But Never Booked (GHL contacts without MindBody match) ──
-        if (segment === 'never-booked') {
-            const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
-
-            // Get all MindBody client phones for cross-reference.
-            // Normalize in JS (not just trusting the stored value) — older rows may
-            // predate the sync-side normalization, and any non-10-digit values must
-            // be discarded so they can't mask a legitimate GHL phone.
-            let mbPhones = new Set<string>();
-            try {
-                const { sql: pgSql } = await import('@/lib/db/sql');
-                const mbResult = await pgSql`SELECT DISTINCT phone FROM mb_clients_cache WHERE phone IS NOT NULL AND phone != ''`;
-                for (const row of mbResult.rows) {
-                    const p = normalizePhone(row.phone || '');
-                    if (p.length === 10) mbPhones.add(p);
-                }
-            } catch (err) {
-                // No fallback: the MindBody API is frozen at the 2026-07-01 Zenoti
-                // cutover, so an API-built phone set would silently omit Zenoti
-                // patients and mislabel them "never booked". Better to fail the
-                // segment than build it from a known-incomplete filter.
-                console.error('[ghl-reactivation] never-booked: client phone lookup failed', err);
-                return NextResponse.json(
-                    { error: 'Client phone cross-reference unavailable — never-booked segment aborted to avoid messaging existing patients.' },
-                    { status: 503 },
-                );
-            }
-
-            // Find GHL contacts whose phone is NOT in MindBody
-            const neverBooked: ContactEntry[] = [];
-            const seenPhones = new Set<string>();
-            for (const [phone, entry] of phoneMap) {
-                if (phone.length < 10) continue;
-                if (seenPhones.has(phone)) continue;
-                seenPhones.add(phone);
-                if (mbPhones.has(phone)) continue; // They ARE in MindBody, skip
-                if (entry.dnd) continue;
-
-                neverBooked.push({
-                    contactId: entry.contactId,
-                    contactName: entry.contactName,
-                    firstName: entry.contactName.split(' ')[0] || '',
-                    phone,
-                    email: entry.contactEmail || '',
-                    maskedPhone: maskPhone(phone),
-                    locationKey: entry.locationKey,
-                    locationName: LOCATION_NAMES[entry.locationKey] || 'Chin Up!',
-                    stageName: 'Inquired — Never Booked',
-                    monetaryValue: 0,
-                    daysSinceOutreach: 0,
-                    achievabilityScore: 40,
-                    riskLevel: 'going-cold' as const,
-                    tags: entry.tags,
-                });
-            }
-
-            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(neverBooked, recentHashes);
-            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
-            const { filtered: finalFiltered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
-
-            return NextResponse.json({
-                contacts: finalFiltered,
-                totalEligible: finalFiltered.length,
-                segment,
-                forecast: buildForecast(finalFiltered, 0.08),
-                templates: SMS_TEMPLATES,
-                emailTemplates: EMAIL_TEMPLATES,
-                dndFiltered: v2DndFiltered,
-                cooldownExcluded,
-                outboundExcluded,
-                lastCampaign: lastRuns[segment] || null,
-                source: 'ghl-contacts',
             });
         }
 

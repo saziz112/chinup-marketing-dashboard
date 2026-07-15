@@ -519,30 +519,6 @@ export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: st
             },
         ],
     },
-    'ghost': {
-        label: 'Still Thinking?',
-        defaultVariantId: 'offer',
-        variants: [
-            {
-                id: 'offer',
-                label: 'Cost-objection killer',
-                strategy: '$199 HydraFacial is a price-objection killer for cold leads. Removes the biggest blocker upfront.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} here — our $199 HydraFacial is a great way to start. Want details? Reply YES. Reply STOP to opt out.",
-            },
-            {
-                id: 'social',
-                label: 'Social proof',
-                strategy: 'Authority framing for cautious leads. Quantifies trust without being pushy.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} — we've helped 2,000+ Atlanta clients feel their best. Ready to try? Reply YES. Reply STOP to opt out.",
-            },
-            {
-                id: 'curiosity',
-                label: 'Curiosity hook',
-                strategy: 'Open question surfaces objections. Lower friction than a CTA — invites conversation.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} — we never got to meet. Quick question — what's been on your mind? Reply STOP to opt out.",
-            },
-        ],
-    },
     'pipeline-followup': {
         label: 'Quick Follow-Up',
         defaultVariantId: 'direct',
@@ -591,36 +567,6 @@ export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: st
             },
         ],
     },
-    'lapsed-winback': {
-        label: 'Win-Back VIP',
-        defaultVariantId: 'combo',
-        variants: [
-            {
-                id: 'combo',
-                label: 'Re-intro + offer',
-                strategy: "Combines what's-new with returning-VIP pricing. Hedges between two strong angles.",
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} — over a year since we've seen you. VIP pricing's waiting. Reply YES. Reply STOP to opt out.",
-            },
-            {
-                id: 'loss',
-                label: 'Loss aversion',
-                strategy: 'Results degradation framing — strongest for 12+ month lapsed patients with prior treatments.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} — over a year and your results may have faded. Reply YES to refresh. Reply STOP to opt out.",
-            },
-            {
-                id: 'soft',
-                label: 'Soft check-in',
-                strategy: 'No offer, no CTA pressure. Use after a previous offer-led message had no reply.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} — just thinking of you. It's been a while. Reply YES if you'd like to chat. Reply STOP to opt out.",
-            },
-            {
-                id: 'seasonal',
-                label: 'Seasonal warmth',
-                strategy: 'Spring/seasonal hook + tease at VIP promos. Multi-line, emoji-friendly — feels personal, not corporate. Multi-segment SMS (~270 chars).',
-                template: "Hi {{firstName}}! It’s Chin Up! {{locationName}} 🌸\n\nSpring is here… perfect time for a little refresh, right?\n\nIt’s been over a year since we’ve seen you, so we put together some VIP promos just for our returning patients 👀\n\nReply YES to see them or STOP to opt out.",
-            },
-        ],
-    },
     'lapsed-treatment': {
         label: 'Treatment Reminder',
         defaultVariantId: 'maintenance',
@@ -642,30 +588,6 @@ export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: st
                 label: 'Direct CTA',
                 strategy: 'Action keyword. Use when you know the patient is action-oriented (e.g., responded fast before).',
                 template: "Hi {{firstName}}, Chin Up! {{locationName}} — ready for a touch-up? Reply BOOK and we'll get you on the calendar. Reply STOP to opt out.",
-            },
-        ],
-    },
-    'never-booked': {
-        label: 'First Visit Invite',
-        defaultVariantId: 'offer',
-        variants: [
-            {
-                id: 'offer',
-                label: 'Entry-point offer',
-                strategy: '$199 HydraFacial as a low-commitment first visit. Removes price anxiety from cold leads.',
-                template: "Hi {{firstName}}, thanks for reaching out to Chin Up! {{locationName}} — start with our $199 HydraFacial? Reply YES. Reply STOP to opt out.",
-            },
-            {
-                id: 'social',
-                label: 'Social proof',
-                strategy: 'Quantified trust signal. Best for cautious first-timers nervous about going to "any" medspa.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} — 2,000+ Atlanta clients trust us. Ready to book your first visit? Reply YES. Reply STOP to opt out.",
-            },
-            {
-                id: 'curiosity',
-                label: "What's the blocker?",
-                strategy: 'Surfaces objections via direct question. Sales-team friendly — invites a 1:1 reply.',
-                template: "Hi {{firstName}}, Chin Up! {{locationName}} — quick question: what's been holding you back? Happy to help. Reply STOP to opt out.",
             },
         ],
     },
@@ -757,24 +679,6 @@ Reply to this email or call us for details.
 Best,
 Chin Up! Aesthetics {{locationName}}`,
     },
-    'ghost': {
-        label: 'Still Thinking?',
-        subject: "Still considering treatments at Chin Up!?",
-        template: `Hi {{firstName}},
-
-Still considering treatments at Chin Up!? We wanted to let you know about a couple things:
-
-🌟 Cherry Financing — Apply here: https://pay.withcherry.com/chinupaesthetics
-   Break your treatment into easy monthly payments with no impact on your credit score.
-
-💧 HydraFacials starting at $199
-   Our most popular facial treatment — great for first-timers and regulars alike.
-
-Reply to this email or call us to schedule. We'd love to help you get started!
-
-Best,
-Chin Up! Aesthetics {{locationName}}`,
-    },
     'pipeline-followup': {
         label: 'Quick Follow-Up',
         subject: "Following up from Chin Up! Aesthetics",
@@ -815,20 +719,6 @@ Warmly,
 Sam
 Chin Up! Aesthetics {{locationName}}`,
     },
-    'lapsed-winback': {
-        label: 'Win-Back VIP',
-        subject: "We'd love to welcome you back, {{firstName}}!",
-        template: `Hi {{firstName}},
-
-It's been over a year since your last visit to Chin Up! Aesthetics and we truly miss seeing you.
-
-We've added some exciting new treatments and would love to welcome you back with special VIP pricing.
-
-Reply to this email or call us to schedule your return visit.
-
-Warmly,
-Chin Up! Aesthetics {{locationName}}`,
-    },
     'lapsed-treatment': {
         label: 'Treatment Reminder',
         subject: "Time for a touch-up, {{firstName}}?",
@@ -837,26 +727,6 @@ Chin Up! Aesthetics {{locationName}}`,
 It's been a while since your last treatment at Chin Up! Aesthetics. Many of our patients find that regular maintenance keeps their results looking fresh.
 
 We'd love to help you schedule your next session. Reply to this email or call us anytime.
-
-Best,
-Chin Up! Aesthetics {{locationName}}`,
-    },
-    'never-booked': {
-        label: 'First Visit Invite',
-        subject: "Ready to get started, {{firstName}}?",
-        template: `Hi {{firstName}},
-
-Thanks for your interest in Chin Up! Aesthetics! We'd love to help you take the next step and schedule your first visit.
-
-A few things to know:
-
-Cherry Financing — https://pay.withcherry.com/chinupaesthetics
-Break your treatment into easy monthly payments.
-
-HydraFacials starting at $199
-Our most popular treatment for first-time visitors.
-
-Reply to this email or call us to schedule. We look forward to meeting you!
 
 Best,
 Chin Up! Aesthetics {{locationName}}`,
