@@ -112,10 +112,11 @@ export async function GET(req: NextRequest) {
     const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID;
     const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
     if (!actionId || !customerId || !loginCustomerId) {
-        return NextResponse.json(
-            { error: 'GOOGLE_ADS_OFFLINE_CONVERSION_ACTION_ID / CUSTOMER_ID / LOGIN_CUSTOMER_ID not set' },
-            { status: 500 },
-        );
+        // Parked (2026-07-15): offline-conversions pipeline was never provisioned
+        // (gclid_captures / google_offline_uploads tables never created, action id unset).
+        // To revive: create the conversion action in Google Ads, run db init, set the env
+        // vars, and re-add the daily cron in vercel.json. Return 200 so it stays quiet.
+        return NextResponse.json({ ok: true, parked: true, reason: 'offline-conversions not provisioned' });
     }
     const conversionAction = `customers/${customerId}/conversionActions/${actionId}`;
 

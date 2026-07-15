@@ -44,6 +44,13 @@ export async function POST(req: NextRequest) {
     const origin = req.headers.get('origin');
     const headers = corsHeaders(origin);
 
+    // Parked (2026-07-15): the offline-conversions pipeline this feeds was never
+    // provisioned (gclid_captures table doesn't exist). Ack the beacon with 200 so
+    // site form-submits don't 500. Revive by creating the table + setting the action id.
+    if (!process.env.GOOGLE_ADS_OFFLINE_CONVERSION_ACTION_ID) {
+        return NextResponse.json({ ok: true, parked: true }, { headers });
+    }
+
     let body: { email?: string; gclid?: string; wbraid?: string; gbraid?: string; landing_url?: string };
     try {
         body = await req.json();
