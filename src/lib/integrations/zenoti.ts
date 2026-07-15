@@ -279,7 +279,11 @@ export async function getZenotiAppointments(
             const apiEnd = addDays(end, 1); // exclusive end → +1 to include `end`
             const data = await zenotiCall<Omit<ZenotiAppointment, 'location' | 'center_id'>[]>(
                 'GET',
-                `/v1/appointments?center_id=${centerId}&start_date=${start}&end_date=${apiEnd}`
+                // include_no_show_cancel: without it Zenoti omits cancelled (-1) and
+                // no-show (-2) rows entirely, so a cancelled booking stays frozen at
+                // 'Booked'/'Confirmed' in mb_appointments_history forever (verified
+                // 2026-07-15: 85 stale rows in the 7/1–7/14 window).
+                `/v1/appointments?center_id=${centerId}&start_date=${start}&end_date=${apiEnd}&include_no_show_cancel=true`
             );
             for (const appt of data || []) {
                 all.push({ ...appt, location, center_id: centerId });

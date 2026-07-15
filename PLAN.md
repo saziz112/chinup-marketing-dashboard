@@ -27,7 +27,10 @@ Rule: a data section is ✅ only after its numbers match Zenoti's own reports (J
 13. ✅ **Fix client deep-links** — MB deep-link now only built for legacy numeric client IDs (roas route + google-ads.ts); Zenoti GUIDs show a "Zenoti" badge (no admin URL available — revisit if Sam wants Zenoti guest deep-links). `SaleRow.sale_id` type corrected to string.
 
 ## Phase 4 — Verification vs Zenoti (section by section)
-14. ⬜ **Overview** — new-client count + revenue vs Zenoti reports, July window.
+14. 🔄 **Overview** — verified 7/1–7/14 vs Zenoti API (2026-07-15):
+    - Revenue: Zenoti accrual report $132,911.02 vs DB $132,043.04 (Δ $867.98, fully explained: 4 late-closing membership lines never synced + 1 invoice edited after sync). Root cause = 2-day sync overlap → **widened to 14 days** (`zenoti-sync.ts`). Self-heals on first sync after deploy (deploy by ~7/16–7/19 so the lookback still covers 7/2–7/5).
+    - Completed appointments: exact match (373 = 373). But 85 stale Booked/Confirmed rows for past dates = cancellations Zenoti's API omits by default → **fixed: `include_no_show_cancel=true`** in `getZenotiAppointments` (also unblocks item 20 no-show recovery + fixes future-booked suppression). Stale 7/1 rows may need one manual Sync Zenoti if deploy lands after 7/15.
+    - New Leads (identity-merged): 45 for 7/1–7/14. Ground truth pending: Sam to pull Zenoti admin "New guests" report for the same window. ✅ once that matches.
 15. ⬜ **Ads** — ROAS match-rate + matched revenue vs Zenoti sales; offline-conversions cron uploading Zenoti-era conversions.
 16. ⬜ **Attribution** — each surviving segment returns correct patients (spot-check suppression: future-booked, recently active, rebooked).
 17. ⬜ **Organic + Reputation + Research** — pipelines fetch fresh data without error; fix whatever surfaces.

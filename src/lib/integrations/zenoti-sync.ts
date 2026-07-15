@@ -388,7 +388,11 @@ export async function incrementalZenotiSync(): Promise<{
     const endDate = new Date().toISOString().slice(0, 10);
     const overlapFrom = (lastSyncDate: string): string => {
         const d = new Date(lastSyncDate);
-        d.setDate(d.getDate() - 2);
+        // 14-day overlap: membership invoices can stay Open for days before
+        // closing, and staff edit past invoices — a 2-day overlap missed 4
+        // membership lines + 1 amount edit ($868) in the 7/1–7/14 window
+        // (verified vs Zenoti's accrual report 2026-07-15).
+        d.setDate(d.getDate() - 14);
         // Never reach back before the cutover (protects the clean seam).
         const s = d.toISOString().slice(0, 10);
         return s < ZENOTI_CUTOVER_DATE ? ZENOTI_CUTOVER_DATE : s;
@@ -412,9 +416,10 @@ export async function incrementalZenotiSync(): Promise<{
 
     if (apptsState) {
         // Fetch forward to today+120d so upcoming bookings are visible to the
-        // "already rebooked" suppressions. The 2-day overlap back re-pulls recently
+        // "already rebooked" suppressions. The 14-day overlap back re-pulls recently
         // changed rows; the forward window re-pulls all future appts each run, so
-        // reschedules/cancellations of future bookings are captured via the upsert.
+        // reschedules/cancellations of future bookings are captured via the upsert
+        // (cancelled/no-show rows included via include_no_show_cancel).
         const appts = await getZenotiAppointments(overlapFrom(apptsState.last_sync_date), apptFetchEndDate());
         newAppts = await upsertZenotiAppointments(appts);
         newGuests = await upsertGuestContacts(guestsFromAppointments(appts));
