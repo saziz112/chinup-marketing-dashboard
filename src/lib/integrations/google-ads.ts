@@ -397,18 +397,20 @@ export async function enrichGhlLeadsWithMindBody(
     const emailMap = await getClientEmailMapFromDB(mbStart, mbEnd).catch(() => new Map());
     const matchedClientIds: string[] = [];
 
-    // 2. Match each GHL lead to a MindBody client by email
+    // 2. Match each GHL lead to a POS client (Zenoti or MindBody history) by email
     for (const lead of leads) {
         const email = (lead.contactEmail || '').toLowerCase().trim();
         if (!email) continue;
         const mb = emailMap.get(email);
         if (mb) {
-            lead.mbClientId = String(mb.client.Id);
+            const clientId = String(mb.client.Id);
+            lead.mbClientId = clientId;
             lead.mbRevenue = mb.revenue;
-            lead.mbUrl = mbSiteId
-                ? `https://clients.mindbodyonline.com/Asp/adm/adm_clt_personal.asp?clientID=${mb.client.Id}&studioid=${mbSiteId}`
+            // Deep-link only works for legacy numeric MindBody IDs; Zenoti GUIDs have no admin URL here
+            lead.mbUrl = mbSiteId && /^\d+$/.test(clientId)
+                ? `https://clients.mindbodyonline.com/Asp/adm/adm_clt_personal.asp?clientID=${clientId}&studioid=${mbSiteId}`
                 : null;
-            matchedClientIds.push(String(mb.client.Id));
+            matchedClientIds.push(clientId);
         }
     }
 

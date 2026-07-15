@@ -32,7 +32,7 @@ const KEY_DATES: Record<number, string[]> = {
     12: ['Holiday party season', 'Dec 25 - Christmas', 'Dec 31 - New Year\'s Eve', 'Year-end gift cards'],
 };
 
-// MindBody booking links per treatment — shared with trends route
+// Booking links per treatment — shared with trends route
 const BOOKING_LINKS: Record<string, string> = {
     '_default': 'https://www.chinupaesthetics.com/book',
 };

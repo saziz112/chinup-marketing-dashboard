@@ -813,7 +813,7 @@ export function MarketIntelTab({
                                             </div>
                                         );
                                     }) : (
-                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Requires MindBody appointment data. Run backfill in Settings.</div>
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Requires POS appointment data. Run a Zenoti sync in Settings.</div>
                                     )}
                                 </div>
                             </div>

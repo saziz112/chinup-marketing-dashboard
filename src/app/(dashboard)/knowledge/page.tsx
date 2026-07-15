@@ -96,7 +96,7 @@ export default function KnowledgeBasePage() {
                         </p>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
                             {[
-                                { label: 'MindBody', desc: 'POS, appointments, client data' },
+                                { label: 'Zenoti', desc: 'POS, appointments, patient data (MindBody history pre-7/1)' },
                                 { label: 'GoHighLevel', desc: 'CRM, pipelines, conversations' },
                                 { label: 'Meta (FB + IG)', desc: 'Organic posts & paid ads' },
                                 { label: 'YouTube', desc: 'Channel & video analytics' },
@@ -255,7 +255,7 @@ export default function KnowledgeBasePage() {
                                 'Industry benchmarks with A-F grading vs. med spa averages (CTR, CPM, Cost/Lead, ROAS)',
                                 'Per-campaign breakdown with sortable table and status filtering (Active/Paused/All)',
                                 'Lead form integration — counts leads per campaign',
-                                'Appointment attribution: booked and completed appointments per campaign (MindBody cross-reference)',
+                                'Appointment attribution: booked and completed appointments per campaign (POS cross-reference)',
                                 'Ad copy fetching — view the creative text for each campaign',
                                 'AI Campaign Analysis — Claude-powered grading with priority actions and creative suggestions (expand/collapse per campaign)',
                             ]}
@@ -276,9 +276,9 @@ export default function KnowledgeBasePage() {
                         />
                         <Feature
                             name="ROAS Reconciliation"
-                            source="Cross-referenced: Meta Lead Forms (email) vs. MindBody sales"
+                            source="Cross-referenced: Meta Lead Forms (email) vs. POS sales (Zenoti + MindBody history)"
                             features={[
-                                'True ROAS: matches Meta lead form emails to MindBody purchasing clients',
+                                'True ROAS: matches Meta lead form emails to purchasing patients in the POS',
                                 'Meta ROAS vs. True ROAS side-by-side comparison',
                                 'Per-campaign ROAS breakdown with matched client count',
                                 'Match rate tracking (what % of leads became paying clients)',
@@ -288,7 +288,7 @@ export default function KnowledgeBasePage() {
                             ]}
                             notes={[
                                 'Requires a Lead Generation campaign with native Facebook forms (email collection)',
-                                'Matching is done by email address — accuracy depends on leads using the same email in MindBody',
+                                'Matching is done by email address — accuracy depends on leads using the same email in Zenoti',
                                 'Admin-only feature — marketing managers see lead counts but not dollar values',
                             ]}
                         />
@@ -338,7 +338,7 @@ export default function KnowledgeBasePage() {
                                 'Analysis is capped at 150 contacts per run to respect GHL API rate limits (100 req/10s)',
                                 'Contacts are prioritized by a blend of monetary value (60%) and recency (40%)',
                                 'Contacts beyond the 150 cap get timestamp-only classification (shown with "Limited Data" indicator)',
-                                'DND contacts and active MindBody patients (purchased within 120 days) are automatically excluded',
+                                'DND contacts and active patients (purchased within 120 days, per POS records) are automatically excluded',
                             ]}
                         />
                         <Feature
@@ -393,25 +393,17 @@ export default function KnowledgeBasePage() {
                             </div>
                         </div>
                         <Feature
-                            name="Conversation-Based Segments"
-                            source="GHL v2 Conversations API"
+                            name="Patient-History Segments"
+                            source="Zenoti + MindBody (pre-7/1) appointment & sales history in Postgres"
                             features={[
-                                'Never Contacted — Leads with zero outreach attempts',
-                                'Attempted, No Reply — Outbound sent 7+ days ago, no response',
-                                'Re-engage Ghosts — Was engaged, silent 14-60 days',
-                                'Quoted, Not Booked — Discussed pricing 7+ days ago, no booking',
-                            ]}
-                        />
-                        <Feature
-                            name="MindBody-Based Segments"
-                            source="MindBody appointment & sales history (via Postgres backfill)"
-                            features={[
-                                'Cancelled Appointments — Patients who cancelled, cross-referenced with GHL for phone',
+                                'Maintenance Due — Due for re-treatment by cadence, based on last treatment received (~12% holdout for lift measurement)',
                                 'Consulted, Not Treated — Had consultation but never booked treatment',
                                 'Lapsed VIPs ($500+) — High-value patients, 120-365 days since last visit',
-                                'Long-Lapsed — 180+ days since last visit',
-                                'Win-Back VIPs — $500+ revenue, 365+ days absent',
                                 'Treatment-Specific — Filter by treatment type (Botox, Filler, etc.), 90+ days',
+                            ]}
+                            notes={[
+                                'Ghost, re-engage-ghost, never-booked, and win-back campaigns were retired 2026-07-15 after a performance readout (zero runs or <1% booking rate)',
+                                'Conversation-based segments (Never Contacted, Attempted No Reply, Quoted Not Booked) exist but are hidden from the picker — low conversion',
                             ]}
                         />
                     </Section>
@@ -600,7 +592,7 @@ export default function KnowledgeBasePage() {
                             source="Internal tracking"
                             features={[
                                 'See API call counts per platform',
-                                'Monitor quota usage (YouTube 10K/day, MindBody 5K/month, etc.)',
+                                'Monitor quota usage (YouTube 10K/day, etc.)',
                                 'Cost estimates for paid APIs',
                             ]}
                         />
@@ -608,7 +600,7 @@ export default function KnowledgeBasePage() {
                             name="Data Sync"
                             source="Settings page"
                             features={[
-                                'Trigger manual data syncs (MindBody clients, sales, appointments)',
+                                'Trigger manual data syncs (Zenoti guests, sales, appointments — MindBody is frozen history, pre-7/1 only)',
                                 'GHL contacts backfill and incremental sync',
                                 'View sync status, last run time, total records',
                                 'Resumable backfills with progress tracking (for Vercel 60s limit)',
@@ -628,7 +620,7 @@ export default function KnowledgeBasePage() {
                             </thead>
                             <tbody>
                                 {[
-                                    { source: 'MindBody', refresh: '4-hour cache', quota: '5,000 calls/month', notes: 'Postgres backfill enables unlimited lookback at zero API cost' },
+                                    { source: 'Zenoti', refresh: 'Daily cron sync (8am UTC)', quota: 'API key, standard limits', notes: 'POS of record since 7/1/2026; MindBody history frozen in Postgres (pre-7/1)' },
                                     { source: 'GoHighLevel v1', refresh: '15-min cache', quota: '200K calls/day', notes: 'Pipeline data, contacts, opportunities' },
                                     { source: 'GoHighLevel v2', refresh: '30-min cache', quota: '600 req/min', notes: 'Conversations, transcripts, DND checks' },
                                     { source: 'Meta Graph API', refresh: 'On page load (4-hr cache)', quota: 'Rate-limited per token', notes: 'Permanent page token for FB + IG organic' },
@@ -653,7 +645,7 @@ export default function KnowledgeBasePage() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                             {[
                                 'Conversation analysis is capped at 150 contacts per run — contacts beyond that get timestamp-only classification',
-                                'MindBody ReferredBy field is self-reported by clients and often inaccurate — don\'t rely on it for attribution',
+                                'POS "referred by" fields are self-reported by patients and often inaccurate — don\'t rely on them for attribution',
                                 'GHL pipeline stages are only ~80% accurate — conversation data is the source of truth for lead intent',
                                 'Instagram daily metrics can only look back 30 days from today (API limitation)',
                                 'TikTok API does not provide profile views, audience demographics, watch time, or follower growth time series',

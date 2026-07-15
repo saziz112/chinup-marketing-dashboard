@@ -101,8 +101,8 @@ export const SERVICE_KEYWORDS = [
     { keyword: 'zo skin', label: 'ZO Skin Health' },
 ];
 
-// MindBody booking links per treatment category
-// TODO: Sam to provide actual MindBody direct booking URLs
+// Booking links per treatment category
+// TODO: Sam to provide direct Zenoti booking URLs per treatment
 const BOOKING_LINKS: Record<string, string> = {
     '_default': 'https://www.chinupaesthetics.com/book',
 };

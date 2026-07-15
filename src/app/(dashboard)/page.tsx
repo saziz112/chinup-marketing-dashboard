@@ -215,12 +215,12 @@ export default function OverviewPage() {
     const generateInsights = () => {
         const insights = [];
 
-        // 1. MindBody Lead Growth
+        // 1. Patient-record lead growth (Zenoti + frozen MindBody history)
         const leadsNum = parseInt(metrics.leads.val);
         if (!isNaN(leadsNum) && leadsNum > 0) {
             insights.push(`Generated ${leadsNum} new leads in the last ${period}.`);
         } else if (metrics.leads.val !== '--') {
-            insights.push(`No new leads tracked in MindBody for the last ${period}. Check attribution logs.`);
+            insights.push(`No new leads tracked in Zenoti for the last ${period}. Check attribution logs.`);
         }
 
         // 2. Cross-platform growth check
@@ -296,7 +296,7 @@ export default function OverviewPage() {
                 <div className="metric-card">
                     <div className="label">New Leads</div>
                     <div className="value">{metrics.leads.loading ? <Skeleton className="h-9 w-16" /> : metrics.leads.val}</div>
-                    <div className="change">From MindBody</div>
+                    <div className="change">From Zenoti</div>
                 </div>
             </div>
 

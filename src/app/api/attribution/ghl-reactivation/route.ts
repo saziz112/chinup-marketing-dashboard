@@ -277,7 +277,7 @@ export async function GET(req: NextRequest) {
                 cooldownExcluded,
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
-                source: 'mindbody-appointments',
+                source: 'patient-appointments',
             });
         }
 
@@ -329,7 +329,7 @@ export async function GET(req: NextRequest) {
                 outboundExcluded,
                 holdoutControl: holdoutCount, // ~12% held back to measure booking lift
                 lastCampaign: lastRuns[segment] || null,
-                source: 'mindbody-sales',
+                source: 'patient-sales',
             });
         }
 
@@ -447,7 +447,7 @@ export async function GET(req: NextRequest) {
                 maskedPhone: maskPhone(p.phone),
                 locationKey: p.locationKey || locationParam || 'decatur' as LocationKey,
                 locationName: LOCATION_NAMES[p.locationKey || locationParam || 'decatur' as LocationKey] || 'Chin Up!',
-                stageName: `MindBody — ${p.segment}`,
+                stageName: `Patient history — ${p.segment}`,
                 monetaryValue: p.totalRevenue,
                 daysSinceOutreach: p.daysSinceLastVisit,
                 achievabilityScore: p.daysSinceLastVisit < 180 ? 55 : 30,
@@ -473,7 +473,7 @@ export async function GET(req: NextRequest) {
                 cooldownExcluded,
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
-                source: 'mindbody',
+                source: 'patient-records',
             });
         }
 
@@ -543,7 +543,7 @@ export async function GET(req: NextRequest) {
                 cooldownExcluded,
                 outboundExcluded,
                 lastCampaign: lastRuns[segment] || null,
-                source: 'mindbody',
+                source: 'patient-records',
             });
         }
 

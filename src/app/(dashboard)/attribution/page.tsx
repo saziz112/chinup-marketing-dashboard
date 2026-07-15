@@ -64,17 +64,17 @@ const CAMPAIGN_SEGMENTS: Array<{
     channel: 'sms+email' | 'email' | 'skip';
 }> = [
     // SMS-safe (warm)
-    { id: 'maintenance',       label: 'Maintenance Due',        desc: 'Due for re-treatment by cadence',        source: 'mindbody',      channel: 'sms+email' },
-    { id: 'consult-only',      label: 'Consulted, Not Treated', desc: 'Had consult, never booked',              source: 'mindbody',      channel: 'sms+email' },
-    { id: 'lapsed-vip',        label: 'Lapsed VIPs ($500+)',    desc: '120-365 days since last visit',          source: 'mindbody',      channel: 'sms+email' },
-    { id: 'lapsed-treatment',  label: 'Treatment-Specific',     desc: 'By treatment type, 90+ days',            source: 'mindbody',      channel: 'sms+email' },
+    { id: 'maintenance',       label: 'Maintenance Due',        desc: 'Due for re-treatment by cadence',        source: 'patient records',   channel: 'sms+email' },
+    { id: 'consult-only',      label: 'Consulted, Not Treated', desc: 'Had consult, never booked',              source: 'patient records',   channel: 'sms+email' },
+    { id: 'lapsed-vip',        label: 'Lapsed VIPs ($500+)',    desc: '120-365 days since last visit',          source: 'patient records',   channel: 'sms+email' },
+    { id: 'lapsed-treatment',  label: 'Treatment-Specific',     desc: 'By treatment type, 90+ days',            source: 'patient records',   channel: 'sms+email' },
     // Skipped (hidden from picker)
     // Cut 2026-07-15 (data-driven, see PLAN.md readout): ghost + re-engage-ghost +
     // never-booked (zero runs ever), lapsed-winback (0.6% 30d booking, dormant since 5/5).
     { id: 'untouched',         label: 'Never Contacted',        desc: 'Zero outreach — low conversion',         source: 'conversations', channel: 'skip' },
     { id: 'attempted-no-reply', label: 'Attempted, No Reply',   desc: 'Already ignored — diminishing returns',  source: 'conversations', channel: 'skip' },
     { id: 'quoted-followup',   label: 'Quoted, Not Booked',     desc: 'Conversation-based, narrow window',      source: 'conversations', channel: 'skip' },
-    { id: 'lapsed-long',       label: 'Long-Lapsed',            desc: '180+ days, no value filter — cold',      source: 'mindbody',      channel: 'skip' },
+    { id: 'lapsed-long',       label: 'Long-Lapsed',            desc: '180+ days, no value filter — cold',      source: 'patient records',   channel: 'skip' },
 ];
 
 const VISIBLE_SEGMENTS = CAMPAIGN_SEGMENTS.filter(s => s.channel !== 'skip');
@@ -941,7 +941,7 @@ export default function LeadsPipelinePage() {
                 <div className="section-card">
                     <h3 style={{ marginBottom: '8px' }}>SMS & Email Campaigns</h3>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '24px' }}>
-                        Target leads by conversation lifecycle stage or MindBody patient history. All campaigns apply 30-day cooldowns and DND filtering.
+                        Target leads by conversation lifecycle stage or patient history (Zenoti + MindBody). All campaigns apply 30-day cooldowns and DND filtering.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>

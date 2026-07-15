@@ -23,8 +23,8 @@ Rule: a data section is ✅ only after its numbers match Zenoti's own reports (J
 - Maintenance failure count high: 391 failed contact rows vs 773 sent — investigate (missing GHL contact/phone?).
 
 ## Phase 3 — Label & copy sweep
-12. ⬜ **Relabel MindBody → unified** — Overview "From MindBody", Ads "MB Revenue"/"MindBody verified", Attribution `source:'mindbody'` badges + stageName strings, Knowledge page copy rewrite.
-13. ⬜ **Fix client deep-links** — replace `mindbodyonline.com?clientID=` links (broken for Zenoti GUIDs) with Zenoti guest links or remove.
+12. ✅ **Relabel MindBody → unified** — Overview "From Zenoti", Ads "POS Revenue"/"POS-verified", Attribution "patient records" badges + stageName, Knowledge rewrite (platforms grid, segments list reflects 7/15 cuts, data-sources table, limitations), Settings Zenoti connection + POS sync counts, Research empty-state.
+13. ✅ **Fix client deep-links** — MB deep-link now only built for legacy numeric client IDs (roas route + google-ads.ts); Zenoti GUIDs show a "Zenoti" badge (no admin URL available — revisit if Sam wants Zenoti guest deep-links). `SaleRow.sale_id` type corrected to string.
 
 ## Phase 4 — Verification vs Zenoti (section by section)
 14. ⬜ **Overview** — new-client count + revenue vs Zenoti reports, July window.
@@ -34,7 +34,7 @@ Rule: a data section is ✅ only after its numbers match Zenoti's own reports (J
 18. ✅ **Maintenance Due holdout readout** — read 12% holdout vs treated lift (instrumented since May) before investing in #19.
 
 ## Phase 5 — Enhancements (approved)
-19. ✅ **Maintenance split by last treatment** — segment cadence + messaging by last treatment received (Botox/filler/Sculptra/laser/etc.); verify `normalizeTreatment()` handles Zenoti item names.
+19. ⬜ **Maintenance split by last treatment** — segment cadence + messaging by last treatment received (Botox/filler/Sculptra/laser/etc.); verify `normalizeTreatment()` handles Zenoti item names.
 20. ⬜ **No-show recovery campaign** — NEW (Zenoti tracks NoShow/cancellations; Mindbody couldn't): same-week rebook text via GHL.
 21. ⬜ **Campaign scoreboard** — per-campaign funnel: sent → replied → booked → showed → revenue, with holdout lift where instrumented.
 22. ⬜ **Lead-source conversion tracking (Emily/Well Labs)** — lead = prospect with no purchase; sources: Website, Paid Search, Email, Call-in, Walk-in, Referral; metrics: Booking Rate, Consult Show Rate, Lead→Sale Conversion. Flag: capture mechanics for Call-in/Walk-in need a source stamp at creation.

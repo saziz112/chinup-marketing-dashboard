@@ -404,16 +404,16 @@ export default function AdsPage() {
                                 <KpiCard
                                     label="GHL Leads (Google)"
                                     value={fmtNum(googleData.ghlLeads)}
-                                    sub={googleData.ghlLeads ? `${googleData.ghlMatchedClients ?? 0} matched to MB · click to view →` : 'no google-source opps'}
+                                    sub={googleData.ghlLeads ? `${googleData.ghlMatchedClients ?? 0} matched to POS · click to view →` : 'no google-source opps'}
                                     green
                                 />
                             </div>
                         )}
                         {isGoogle && isAdmin && googleData?.ghlTrueRoas != null && (
                             <KpiCard
-                                label="True ROAS (MB)"
+                                label="True ROAS (POS)"
                                 value={`${googleData.ghlTrueRoas.toFixed(2)}x`}
-                                sub={`${fmt$(googleData.ghlTotalRevenue ?? 0)} MindBody rev · ${googleData.ghlMatchRate ?? 0}% match`}
+                                sub={`${fmt$(googleData.ghlTotalRevenue ?? 0)} POS rev · ${googleData.ghlMatchRate ?? 0}% match`}
                                 green
                             />
                         )}
@@ -426,7 +426,7 @@ export default function AdsPage() {
                             />
                         )}
                         {isAdmin && roasData && roasData.trueRoas !== null && (
-                            <KpiCard label="True ROAS" value={`${roasData.trueRoas.toFixed(2)}x`} sub="MindBody verified" green />
+                            <KpiCard label="True ROAS" value={`${roasData.trueRoas.toFixed(2)}x`} sub="POS-verified revenue" green />
                         )}
                         {isAdmin && roasData && roasData.totalAppointmentsBooked > 0 && (
                             <KpiCard
@@ -560,7 +560,7 @@ export default function AdsPage() {
                             <div>
                                 <h2 style={{ margin: 0 }}>ROAS Reconciliation Details</h2>
                                 <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: 13 }}>
-                                    Matching Meta Leads to MindBody purchasing clients by email address.
+                                    Matching Meta Leads to purchasing patients (Zenoti + MindBody history) by email address.
                                 </p>
                             </div>
                             <button onClick={() => setShowRoasModal(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 24 }}>&times;</button>
@@ -602,9 +602,12 @@ export default function AdsPage() {
                                                     {m.mbUrl ? (
                                                         <a href={m.mbUrl} target="_blank" rel="noopener noreferrer"
                                                            style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44', textDecoration: 'none' }}
-                                                           title={`MB Client ID ${m.mbClientId}`}>MB ↗</a>
+                                                           title={`MindBody Client ID ${m.mbClientId}`}>MB ↗</a>
+                                                    ) : m.mbClientId ? (
+                                                        <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}
+                                                              title={`Zenoti Guest ID ${m.mbClientId}`}>Zenoti</span>
                                                     ) : (
-                                                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>no MB</span>
+                                                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>no POS match</span>
                                                     )}
                                                 </td>
                                             </tr>
@@ -652,7 +655,7 @@ export default function AdsPage() {
                                             <th>Source</th>
                                             <th>Location</th>
                                             <th>GHL Stage</th>
-                                            {isAdmin && <th>MB Revenue</th>}
+                                            {isAdmin && <th>POS Revenue</th>}
                                             <th>Appts (B/C)</th>
                                             <th>Validate</th>
                                         </tr>
@@ -682,18 +685,21 @@ export default function AdsPage() {
                                                     </td>
                                                 )}
                                                 <td style={{ fontSize: 12 }}>
-                                                    {l.mbClientId ? `${l.mbBooked} / ${l.mbCompleted}` : <span style={{ color: 'var(--text-muted)' }}>no MB</span>}
+                                                    {l.mbClientId ? `${l.mbBooked} / ${l.mbCompleted}` : <span style={{ color: 'var(--text-muted)' }}>no POS match</span>}
                                                 </td>
                                                 <td style={{ whiteSpace: 'nowrap' }}>
                                                     {l.ghlUrl && (
                                                         <a href={l.ghlUrl} target="_blank" rel="noopener noreferrer"
                                                            style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f644', textDecoration: 'none', marginRight: 4 }}>GHL ↗</a>
                                                     )}
-                                                    {l.mbUrl && (
+                                                    {l.mbUrl ? (
                                                         <a href={l.mbUrl} target="_blank" rel="noopener noreferrer"
                                                            style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44', textDecoration: 'none' }}
-                                                           title={`MB Client ID ${l.mbClientId}`}>MB ↗</a>
-                                                    )}
+                                                           title={`MindBody Client ID ${l.mbClientId}`}>MB ↗</a>
+                                                    ) : l.mbClientId ? (
+                                                        <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}
+                                                              title={`Zenoti Guest ID ${l.mbClientId}`}>Zenoti</span>
+                                                    ) : null}
                                                 </td>
                                             </tr>
                                             );

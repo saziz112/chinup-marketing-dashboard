@@ -23,7 +23,7 @@ import { sql } from '@/lib/db/sql';
 export const maxDuration = 60;
 
 interface SaleRow {
-    sale_id: number;
+    sale_id: string; // TEXT since the Zenoti cutover — numeric for MindBody rows, GUID for Zenoti
     sale_date: string;
     total_amount: string;
     email: string;

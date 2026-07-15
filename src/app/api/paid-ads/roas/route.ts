@@ -135,7 +135,8 @@ export async function GET(request: NextRequest) {
                     ? `https://app.gohighlevel.com/v2/location/${ghlLocationId}/contacts/detail/${ghl.contactId}`
                     : null;
                 const mbClientId = mbClient.client.Id || null;
-                const mbUrl = mbClientId && mbSiteId
+                // Deep-link only works for legacy numeric MindBody IDs; Zenoti GUIDs have no admin URL here
+                const mbUrl = mbClientId && mbSiteId && /^\d+$/.test(String(mbClientId))
                     ? `https://clients.mindbodyonline.com/Asp/adm/adm_clt_personal.asp?clientID=${mbClientId}&studioid=${mbSiteId}`
                     : null;
 
@@ -256,7 +257,7 @@ export async function GET(request: NextRequest) {
             attributionMethod = 'lead_forms_empty';
             attributionNote = 'Lead forms found but no submissions in this period. Try a wider date range.';
         } else {
-            attributionNote = `${matchedCount} of ${metaLeadsTotal} Meta leads matched to MindBody clients by email (${matchRate ?? 0}% match rate)`;
+            attributionNote = `${matchedCount} of ${metaLeadsTotal} Meta leads matched to purchasing patients by email (${matchRate ?? 0}% match rate)`;
         }
 
         return NextResponse.json({
