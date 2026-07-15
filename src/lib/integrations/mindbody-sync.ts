@@ -446,10 +446,14 @@ export async function getLapsedPatientsFromDB(
     // exclude anyone with a future-booked appointment (they're scheduled, not lapsed).
     //
     // Identity merge: MindBody allows multiple client_ids per real person (name
-    // variations, re-registrations). A person can be "lapsed" under one client_id
-    // and "active" under a duplicate. `active_contacts` gathers phones/emails for
-    // anyone with activity within the threshold, and the `NOT EXISTS` check
-    // excludes any lapsed client who shares a phone OR email with them.
+    // variations, re-registrations), and post-2026-07-01 cutover a person's Zenoti
+    // activity lives under a new GUID client_id. A person can be "lapsed" under one
+    // client_id and "active" (or freshly rebooked) under another. `active_contacts`
+    // and `future_contacts` gather phones/emails for anyone recently active OR with a
+    // future booking; the `NOT EXISTS` checks exclude any lapsed client who shares a
+    // phone OR email with them. (A client_id-only `future_booked` check missed Zenoti
+    // rebookings — e.g. a MindBody-id patient booked under their Zenoti GUID — and
+    // would text an already-scheduled patient a "we miss you" win-back.)
     const salesResult = await sql`
         WITH client_activity AS (
             SELECT client_id, sale_date AS activity_date FROM mb_sales_history
@@ -468,6 +472,16 @@ export async function getLapsedPatientsFromDB(
             FROM mb_appointments_history
             WHERE status IN ('Booked', 'Confirmed')
               AND start_date > NOW()
+        ),
+        future_contacts AS (
+            -- phones/emails of anyone with a future booking, so the peer-expanded
+            -- NOT EXISTS below also suppresses a patient booked under a different
+            -- identity (notably a Zenoti GUID after the cutover).
+            SELECT DISTINCT
+                NULLIF(LOWER(TRIM(c.email)), '') AS email,
+                NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\D', '', 'g'), 10), '') AS phone
+            FROM mb_clients_cache c
+            WHERE c.client_id IN (SELECT client_id FROM future_booked)
         ),
         active_contacts AS (
             SELECT DISTINCT
@@ -489,6 +503,16 @@ export async function getLapsedPatientsFromDB(
         LEFT JOIN revenue r ON r.client_id = a.client_id
         LEFT JOIN mb_clients_cache c ON c.client_id = a.client_id
         WHERE a.client_id NOT IN (SELECT client_id FROM future_booked)
+          AND NOT EXISTS (
+              SELECT 1 FROM future_contacts fc
+              WHERE (
+                  fc.phone IS NOT NULL
+                  AND fc.phone = NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\D', '', 'g'), 10), '')
+              ) OR (
+                  fc.email IS NOT NULL
+                  AND fc.email = NULLIF(LOWER(TRIM(c.email)), '')
+              )
+          )
           AND NOT EXISTS (
               SELECT 1 FROM active_contacts ac
               WHERE (
