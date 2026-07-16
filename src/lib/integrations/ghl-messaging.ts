@@ -640,32 +640,36 @@ export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; t
     'maintenance': {
         label: 'Maintenance Due',
         subject: 'Consider this your sign to refresh your {{lastService}} ✨',
-        // Branded HTML (navy #05173D + gold #D8B41D, serif headings). NOTE: replace
-        // BOOKING_LINK_HERE with the real online-booking URL before first send.
-        template: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FBFAF7;padding:24px 0;font-family:Assistant,Helvetica,Arial,sans-serif;">
+        // Branded HTML — cream #FBF8EF card, gold #C2A24E hairlines, charcoal #2C2A24
+        // serif body (matches the Peptide & Medical Wellness menu look).
+        template: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1EBDC;padding:32px 12px;font-family:Georgia,'Times New Roman',serif;">
 <tr><td align="center">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#FFFFFF;border-radius:8px;overflow:hidden;border:1px solid #ECE7DA;">
-<tr><td align="center" style="padding:28px 24px 4px;">
-<img src="https://chinup-marketing-dashboard.vercel.app/logo.png" alt="Chin Up! Aesthetics" width="150" style="display:block;max-width:150px;height:auto;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#FBF8EF;border:1px solid #DCCBA0;border-radius:4px;">
+<tr><td align="center" style="padding:36px 32px 8px;">
+<img src="https://chinup-marketing-dashboard.vercel.app/logo.png" alt="Chin Up! Aesthetics" width="168" style="display:block;max-width:168px;height:auto;">
 </td></tr>
-<tr><td style="padding:8px 32px 0;">
-<h1 style="font-family:Georgia,'Times New Roman',serif;color:#05173D;font-size:24px;font-weight:400;margin:16px 0 6px;text-align:center;">Consider this your sign &#10024;</h1>
-<div style="height:2px;width:48px;background:#D8B41D;margin:6px auto 20px;"></div>
+<tr><td align="center" style="padding:14px 32px 0;">
+<div style="font-family:Georgia,'Times New Roman',serif;color:#2C2A24;font-size:16px;letter-spacing:4px;text-transform:uppercase;font-weight:400;">Consider This Your Sign</div>
+<div style="height:1px;width:56px;background:#C2A24E;margin:18px auto 0;"></div>
 </td></tr>
-<tr><td style="padding:0 32px;color:#05173D;font-size:16px;line-height:1.6;">
-<p style="margin:0 0 16px;">Hi {{firstName}},</p>
-<p style="margin:0 0 16px;">Your {{lastService}} may be right at the point where a little refresher keeps everything looking natural, refreshed, and defined &mdash; if that feels right for you. &#9786;&#65039;</p>
-<p style="margin:0 0 24px;">The secret to results that always look effortless? Staying on a gentle rhythm. Consistent treatments keep you looking like <em>you</em>, just your most polished self &mdash; no guesswork, our team handles the details. Whenever you're ready, we'd love to see you back. &#128156;</p>
+<tr><td style="padding:24px 44px 0;color:#2C2A24;font-size:16px;line-height:1.75;">
+<p style="margin:0 0 18px;">Hi {{firstName}},</p>
+<p style="margin:0 0 18px;">Your {{lastService}} may be right at the point where a little refresher keeps everything looking natural, refreshed, and defined &mdash; if that feels right for you. &#9786;&#65039;</p>
+<p style="margin:0 0 26px;">The secret to results that always look effortless? Staying on a gentle rhythm. Consistent treatments keep you looking like <em>you</em>, just your most polished self &mdash; no guesswork, our team handles the details. Whenever you&rsquo;re ready, we&rsquo;d love to see you back.</p>
 </td></tr>
-<tr><td align="center" style="padding:0 32px 8px;">
-<a href="https://chinupaesthetics.com/booking-calendar/" style="display:inline-block;background:#D8B41D;color:#05173D;font-weight:700;font-size:16px;text-decoration:none;padding:14px 36px;border-radius:6px;">Book My {{lastService}}</a>
+<tr><td align="center" style="padding:0 44px 6px;">
+<a href="https://chinupaesthetics.com/booking-calendar/" style="display:inline-block;background:#D3A82C;color:#2C2A24;font-family:Georgia,'Times New Roman',serif;font-size:14px;letter-spacing:2px;text-transform:uppercase;text-decoration:none;padding:15px 40px;border-radius:3px;">Book My {{lastService}}</a>
 </td></tr>
-<tr><td style="padding:16px 32px 28px;color:#5B6472;font-size:14px;line-height:1.5;text-align:center;">
-<p style="margin:0;">Prefer to talk to a person? Call or text us at <a href="tel:{{phone}}" style="color:#05173D;font-weight:700;text-decoration:none;">{{phone}}</a>.</p>
+<tr><td align="center" style="padding:18px 44px 4px;color:#6E6656;font-size:14px;line-height:1.5;">
+Prefer a real person? Call or text us at <a href="tel:{{phone}}" style="color:#2C2A24;text-decoration:none;border-bottom:1px solid #C2A24E;">{{phone}}</a>.
 </td></tr>
-<tr><td style="padding:18px 32px;background:#05173D;font-size:12px;line-height:1.5;text-align:center;">
-<p style="margin:0 0 4px;color:#E4E4E7;">Chin Up! Aesthetics &mdash; {{locationName}}</p>
-<p style="margin:0;color:#A9B3C4;">You're receiving this as a patient of Chin Up! Aesthetics. To unsubscribe, reply DELETE.</p>
+<tr><td style="padding:24px 44px 0;"><div style="height:1px;background:#E4DAC2;width:100%;"></div></td></tr>
+<tr><td align="center" style="padding:22px 44px 6px;">
+<div style="font-family:Georgia,'Times New Roman',serif;font-style:italic;color:#2C2A24;font-size:19px;line-height:1.5;">Refreshed, defined, and effortlessly <span style="color:#B8912F;">you</span>.</div>
+</td></tr>
+<tr><td align="center" style="padding:26px 44px 34px;">
+<div style="font-family:Georgia,'Times New Roman',serif;color:#6E6656;font-size:11px;letter-spacing:3px;text-transform:uppercase;">Decatur &nbsp;&middot;&nbsp; Kennesaw &nbsp;&middot;&nbsp; Vinings</div>
+<div style="margin-top:12px;color:#9A927E;font-size:11px;line-height:1.6;">You&rsquo;re receiving this as a patient of Chin&nbsp;Up! Aesthetics &mdash; {{locationName}}.<br>To unsubscribe, reply DELETE.</div>
 </td></tr>
 </table>
 </td></tr>
@@ -674,18 +678,41 @@ export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; t
     'no-show-recovery': {
         label: 'No-Show / Cancellation Recovery',
         subject: "Let's find a new time, {{firstName}} ☺️",
-        template: `Hi {{firstName}},
-
-We noticed your recent appointment at Chin Up! {{locationName}} didn't happen — no worries at all, life gets busy!
-
-Whenever you're ready, we'd love to help you find a new time that works better for you. Booking takes just a moment: https://chinupaesthetics.com/booking-calendar/
-
-Prefer to talk to a person? Just call or text us at {{phone}}.
-
-Warmly,
-Chin Up! Aesthetics {{locationName}}
-
-To unsubscribe, reply DELETE.`,
+        // Branded HTML — cream #FBF8EF card, gold #C2A24E hairlines, charcoal #2C2A24
+        // serif body (matches the Peptide & Medical Wellness menu look). Gentle,
+        // no-pressure copy; {{firstName}}/{{locationName}}/{{phone}} render per-patient.
+        template: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1EBDC;padding:32px 12px;font-family:Georgia,'Times New Roman',serif;">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#FBF8EF;border:1px solid #DCCBA0;border-radius:4px;">
+<tr><td align="center" style="padding:36px 32px 8px;">
+<img src="https://chinup-marketing-dashboard.vercel.app/logo.png" alt="Chin Up! Aesthetics" width="168" style="display:block;max-width:168px;height:auto;">
+</td></tr>
+<tr><td align="center" style="padding:14px 32px 0;">
+<div style="font-family:Georgia,'Times New Roman',serif;color:#2C2A24;font-size:16px;letter-spacing:4px;text-transform:uppercase;font-weight:400;">Let&rsquo;s Find a New Time</div>
+<div style="height:1px;width:56px;background:#C2A24E;margin:18px auto 0;"></div>
+</td></tr>
+<tr><td style="padding:24px 44px 0;color:#2C2A24;font-size:16px;line-height:1.75;">
+<p style="margin:0 0 18px;">Hi {{firstName}},</p>
+<p style="margin:0 0 18px;">We noticed your recent appointment at Chin&nbsp;Up! {{locationName}} didn&rsquo;t happen &mdash; and that&rsquo;s completely okay. Life gets full, and no explanation is needed. &#9786;&#65039;</p>
+<p style="margin:0 0 26px;">Whenever the timing feels right for you, we&rsquo;d love to help you find a new one. It takes just a moment, and our team will handle the rest.</p>
+</td></tr>
+<tr><td align="center" style="padding:0 44px 6px;">
+<a href="https://chinupaesthetics.com/booking-calendar/" style="display:inline-block;background:#D3A82C;color:#2C2A24;font-family:Georgia,'Times New Roman',serif;font-size:14px;letter-spacing:2px;text-transform:uppercase;text-decoration:none;padding:15px 40px;border-radius:3px;">Find a New Time</a>
+</td></tr>
+<tr><td align="center" style="padding:18px 44px 4px;color:#6E6656;font-size:14px;line-height:1.5;">
+Prefer a real person? Call or text us at <a href="tel:{{phone}}" style="color:#2C2A24;text-decoration:none;border-bottom:1px solid #C2A24E;">{{phone}}</a>.
+</td></tr>
+<tr><td style="padding:24px 44px 0;"><div style="height:1px;background:#E4DAC2;width:100%;"></div></td></tr>
+<tr><td align="center" style="padding:22px 44px 6px;">
+<div style="font-family:Georgia,'Times New Roman',serif;font-style:italic;color:#2C2A24;font-size:19px;line-height:1.5;">Your glow will keep.<br>We&rsquo;ll be here whenever you&rsquo;re <span style="color:#B8912F;">ready</span>.</div>
+</td></tr>
+<tr><td align="center" style="padding:26px 44px 34px;">
+<div style="font-family:Georgia,'Times New Roman',serif;color:#6E6656;font-size:11px;letter-spacing:3px;text-transform:uppercase;">Decatur &nbsp;&middot;&nbsp; Kennesaw &nbsp;&middot;&nbsp; Vinings</div>
+<div style="margin-top:12px;color:#9A927E;font-size:11px;line-height:1.6;">You&rsquo;re receiving this as a patient of Chin&nbsp;Up! Aesthetics &mdash; {{locationName}}.<br>To unsubscribe, reply DELETE.</div>
+</td></tr>
+</table>
+</td></tr>
+</table>`,
     },
     'consult-only': {
         label: "We'd Love to See You",
