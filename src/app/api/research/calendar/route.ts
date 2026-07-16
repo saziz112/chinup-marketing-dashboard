@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@/lib/db/sql';
+import { getTreatmentTrends } from '@/lib/treatment-trends';
 import { MONTH_NAMES, SEASONAL_CONTEXT, SERVICE_KEYWORDS } from '../trends/route';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -127,17 +128,9 @@ export async function POST(req: Request) {
         const keywordArray = SERVICE_KEYWORDS.map(s => s.keyword);
 
         const [treatmentTrendsRes, contentGapsRes, formatPerfRes] = await Promise.allSettled([
-            // Treatment booking trends — this month vs last month
-            sql`
-                SELECT session_type_name AS treatment,
-                    COUNT(CASE WHEN start_date >= DATE_TRUNC('month', CURRENT_DATE) THEN 1 END)::int AS this_month,
-                    COUNT(CASE WHEN start_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month'
-                               AND start_date < DATE_TRUNC('month', CURRENT_DATE) THEN 1 END)::int AS last_month
-                FROM mb_appointments_history
-                WHERE start_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month'
-                    AND status IN ('Completed', 'Confirmed') AND session_type_name IS NOT NULL
-                GROUP BY session_type_name ORDER BY this_month DESC LIMIT 15
-            `,
+            // Treatment booking trends — trailing-30d vs prior-30d, from
+            // mb_sales_history.items_json (see lib/treatment-trends.ts).
+            getTreatmentTrends(15),
             // Content gap analysis
             sql`
                 SELECT kw AS keyword,
