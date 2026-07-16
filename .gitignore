@@ -40,3 +40,16 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env*.local
+
+# local scratch / diagnostic artifacts (never committed)
+/graphify-out/
+/Screenshots/
+/scripts/check-anthony.mjs
+/scripts/check-future-appts.mjs
+/scripts/create-conversion-action-tmp.mjs
+/scripts/list-conversion-actions-tmp.mjs
+/scripts/maint-before-after.mjs
+/scripts/verify-future-in-db.mjs
+/scripts/verify-suppression.mjs
+/scripts/zenoti-presend-maintenance-drycheck.mjs
+/scripts/zenoti-verify-treatment-mapping.mjs
