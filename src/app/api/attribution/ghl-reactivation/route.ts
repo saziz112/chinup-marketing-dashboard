@@ -826,11 +826,23 @@ export async function POST(req: NextRequest) {
                     `;
                 }
 
-                // Record the ~12% holdout control group (not messaged) for lift measurement
+                // Record the ~12% holdout control group (not messaged) for lift measurement.
+                // Log each control patient ONCE — they are a stable, deterministic group
+                // that is never messaged, so without this guard they were re-inserted on
+                // every daily cron run, inflating the holdout row count ~10x and poisoning
+                // the messaged-vs-holdout lift comparison.
                 if (segment === 'maintenance') {
                     try {
                         const due = await getMaintenanceDuePatients(locationKey);
-                        const controls = due.filter(p => p.holdout && p.ghlContactId && p.phone);
+                        const loggedRows = (await sql`
+                            SELECT DISTINCT cc.contact_id
+                            FROM campaign_contacts cc
+                            JOIN campaign_runs r ON r.run_id = cc.run_id
+                            WHERE cc.holdout = true AND r.segment = 'maintenance'
+                        `).rows as Array<{ contact_id: string }>;
+                        const alreadyLogged = new Set(loggedRows.map(row => row.contact_id));
+                        const controls = due.filter(p =>
+                            p.holdout && p.ghlContactId && p.phone && !alreadyLogged.has(p.ghlContactId));
                         for (const p of controls) {
                             await sql`
                                 INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, location_key, channel, status, holdout, treatment, cadence_days, variant_id)

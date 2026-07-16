@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -133,6 +133,9 @@ export default function LeadsPipelinePage() {
     const [campaignHistory, setCampaignHistory] = useState<Record<string, { runAt: string; totalSent: number; channel: string }>>({});
     const [treatmentFilter, setTreatmentFilter] = useState('');
     const [treatments, setTreatments] = useState<string[]>([]);
+    const [conversions, setConversions] = useState<any>(null);
+    const [conversionsLoading, setConversionsLoading] = useState(false);
+    const conversionsFetchedRef = useRef(false);
 
     // --- Fetch Functions ---
 
@@ -403,6 +406,22 @@ export default function LeadsPipelinePage() {
             fetchEngagement();
         }
     }, [session, tab, fetchEngagement, location]);
+
+    const fetchConversions = useCallback(async () => {
+        setConversionsLoading(true);
+        try {
+            const res = await fetch('/api/attribution/ghl-reactivation/conversions');
+            if (res.ok) setConversions(await res.json());
+        } catch { /* non-fatal */ }
+        setConversionsLoading(false);
+    }, []);
+
+    useEffect(() => {
+        if (session && isAdmin && tab === 'campaigns' && !conversionsFetchedRef.current) {
+            conversionsFetchedRef.current = true;
+            fetchConversions();
+        }
+    }, [session, isAdmin, tab, fetchConversions]);
 
     // --- Render ---
 
@@ -1004,6 +1023,81 @@ export default function LeadsPipelinePage() {
                             );
                         })}
                     </div>
+                </div>
+            )}
+
+            {tab === 'campaigns' && isAdmin && (
+                <div className="section-card" style={{ marginTop: '20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+                        <h3 style={{ marginBottom: '4px' }}>Campaign Results — Who Came Back</h3>
+                        {conversions && (
+                            <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                                {conversions.matchRate}% of sends matched to a patient · {conversions.totalSends?.toLocaleString()} sends tracked
+                            </span>
+                        )}
+                    </div>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', marginBottom: '16px' }}>
+                        Share of messaged patients who booked or attended an appointment within {conversions?.windowDays ?? 30} days of the send.
+                        Lift (vs a not-messaged holdout) is shown only where a valid control group exists.
+                    </p>
+
+                    {conversionsLoading && <div style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Computing conversions…</div>}
+                    {!conversionsLoading && (!conversions || !conversions.segments?.length) && (
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>No campaign sends logged yet.</div>
+                    )}
+
+                    {!conversionsLoading && conversions?.segments?.length > 0 && (
+                        <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+                                <thead>
+                                    <tr style={{ textAlign: 'left', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}>
+                                        <th style={{ padding: '8px 10px' }}>Segment</th>
+                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Sent</th>
+                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Came back</th>
+                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Rate</th>
+                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Holdout rate</th>
+                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Lift</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {conversions.segments.map((s: any) => {
+                                        const showVariants = conversions.hasVariantData && s.variants?.filter((v: any) => v.variantId !== '(untagged)').length > 0;
+                                        return (
+                                            <Fragment key={s.segment}>
+                                                <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                                                    <td style={{ padding: '8px 10px', fontWeight: 600 }}>{s.label}</td>
+                                                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{s.sent.toLocaleString()}</td>
+                                                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{s.sentConversions.toLocaleString()}</td>
+                                                    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{s.sentRate != null ? `${s.sentRate}%` : '—'}</td>
+                                                    <td style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--text-muted)' }}>
+                                                        {s.holdout > 0 ? `${s.holdoutRate}% (n=${s.holdout.toLocaleString()})` : '—'}
+                                                    </td>
+                                                    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: s.lift == null ? 'var(--text-muted)' : s.lift > 0 ? '#22c55e' : '#ef4444' }}>
+                                                        {s.lift != null ? `${s.lift > 0 ? '+' : ''}${s.lift} pts` : '—'}
+                                                    </td>
+                                                </tr>
+                                                {showVariants && s.variants.map((v: any) => (
+                                                    <tr key={`${s.segment}-${v.variantId}`} style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                        <td style={{ padding: '4px 10px 4px 24px' }}>↳ {v.variantId}</td>
+                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>{v.sent.toLocaleString()}</td>
+                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>{v.sentConversions.toLocaleString()}</td>
+                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>{v.sentRate != null ? `${v.sentRate}%` : '—'}</td>
+                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>—</td>
+                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>—</td>
+                                                    </tr>
+                                                ))}
+                                            </Fragment>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                            {!conversions.hasVariantData && (
+                                <p style={{ color: 'var(--text-muted)', fontSize: '0.6875rem', marginTop: '12px', fontStyle: 'italic' }}>
+                                    Per-template (variant) breakdown will populate once campaigns are sent with the new template picker. Historical sends predate variant tagging.
+                                </p>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 
