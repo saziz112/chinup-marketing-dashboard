@@ -47,6 +47,25 @@ function findBookingUrlForCaption(caption: string): string {
     return BOOKING_LINKS['_default'];
 }
 
+// Self-migration: the global db init never ran against the current Supabase DB,
+// so guard both read + write against a missing table (was throwing 42P01 on GET).
+let calendarTableReady = false;
+async function ensureCalendarTable() {
+    if (calendarTableReady) return;
+    await sql`
+        CREATE TABLE IF NOT EXISTS research_calendars (
+            id SERIAL PRIMARY KEY,
+            month INT NOT NULL,
+            year INT NOT NULL,
+            calendar_data JSONB NOT NULL,
+            created_by VARCHAR(255),
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_research_calendars_month ON research_calendars(year, month)`;
+    calendarTableReady = true;
+}
+
 // GET /api/research/calendar?month=4&year=2026 — Load saved calendar
 export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
@@ -61,6 +80,7 @@ export async function GET(req: NextRequest) {
     }
 
     try {
+        await ensureCalendarTable();
         const result = await sql`
             SELECT calendar_data, created_at FROM research_calendars
             WHERE month = ${month} AND year = ${year}
@@ -292,6 +312,7 @@ Format: [{"date":"${year}-${String(month).padStart(2, '0')}-01","topic":"...","p
 
         // Save to DB
         const userEmail = session.user.email;
+        await ensureCalendarTable();
         await sql`
             INSERT INTO research_calendars (month, year, calendar_data, created_by)
             VALUES (${month}, ${year}, ${JSON.stringify(days)}, ${userEmail})
