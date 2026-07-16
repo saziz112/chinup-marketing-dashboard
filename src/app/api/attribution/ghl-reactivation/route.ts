@@ -726,6 +726,7 @@ export async function POST(req: NextRequest) {
             channel = 'sms',
             segment,
             subject,
+            variantId,
         }: {
             contactIds: string[];
             message: string;
@@ -734,6 +735,7 @@ export async function POST(req: NextRequest) {
             channel?: 'sms' | 'email';
             segment?: string;
             subject?: string;
+            variantId?: string;
         } = body;
 
         if (!contactIds || contactIds.length === 0) {
@@ -809,6 +811,7 @@ export async function POST(req: NextRequest) {
             await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS holdout BOOLEAN DEFAULT false`;
             await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS treatment TEXT`;
             await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS cadence_days INTEGER`;
+            await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS variant_id TEXT`;
 
             const runId = runResult.rows[0]?.run_id;
             if (runId && result.results) {
@@ -818,8 +821,8 @@ export async function POST(req: NextRequest) {
                     const ph = contact?.phone ? hashPhone(contact.phone) : null;
                     const eh = contact?.email ? hashEmail(contact.email) : null;
                     await sql`
-                        INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, email_hash, location_key, channel, status, error_message, holdout, treatment, cadence_days)
-                        VALUES (${runId}, ${r.contactId}, ${ph}, ${eh}, ${locationKey}, ${channel}, ${r.success ? 'sent' : 'failed'}, ${r.error?.slice(0, 200) || null}, false, ${contact?.lastTreatmentType || null}, ${contact?.daysSinceOutreach ?? null})
+                        INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, email_hash, location_key, channel, status, error_message, holdout, treatment, cadence_days, variant_id)
+                        VALUES (${runId}, ${r.contactId}, ${ph}, ${eh}, ${locationKey}, ${channel}, ${r.success ? 'sent' : 'failed'}, ${r.error?.slice(0, 200) || null}, false, ${contact?.lastTreatmentType || null}, ${contact?.daysSinceOutreach ?? null}, ${variantId || null})
                     `;
                 }
 
@@ -830,8 +833,8 @@ export async function POST(req: NextRequest) {
                         const controls = due.filter(p => p.holdout && p.ghlContactId && p.phone);
                         for (const p of controls) {
                             await sql`
-                                INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, location_key, channel, status, holdout, treatment, cadence_days)
-                                VALUES (${runId}, ${p.ghlContactId!}, ${hashPhone(p.phone)}, ${locationKey}, ${channel}, 'holdout', true, ${p.treatmentDisplay}, ${p.daysSince})
+                                INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, location_key, channel, status, holdout, treatment, cadence_days, variant_id)
+                                VALUES (${runId}, ${p.ghlContactId!}, ${hashPhone(p.phone)}, ${locationKey}, ${channel}, 'holdout', true, ${p.treatmentDisplay}, ${p.daysSince}, ${variantId || null})
                             `;
                         }
                     } catch (e) {

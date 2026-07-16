@@ -53,3 +53,4 @@ next-env.d.ts
 /scripts/verify-suppression.mjs
 /scripts/zenoti-presend-maintenance-drycheck.mjs
 /scripts/zenoti-verify-treatment-mapping.mjs
+/scripts/preview_emails.mts

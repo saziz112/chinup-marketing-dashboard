@@ -224,8 +224,9 @@ export default function LeadsPipelinePage() {
             setSmsSelected(new Set((data.contacts || []).map((c: any) => c.contactId)));
             if (smsChannel === 'email') {
                 const etmpl = data.emailTemplates?.[segment];
-                if (etmpl?.template) { setSmsMessage(etmpl.template); setSmsSubject(etmpl.subject || ''); }
-                setSmsVariantId(null);
+                const dv = etmpl?.variants?.find((v: any) => v.id === etmpl.defaultVariantId) || etmpl?.variants?.[0];
+                if (dv?.template) { setSmsMessage(dv.template); setSmsSubject(dv.subject || ''); setSmsVariantId(dv.id); }
+                else setSmsVariantId(null);
             } else {
                 const tmpl = data.templates?.[segment];
                 const defaultVariant = tmpl?.variants?.find((v: any) => v.id === tmpl.defaultVariantId) || tmpl?.variants?.[0];
@@ -296,6 +297,7 @@ export default function LeadsPipelinePage() {
                             channel: smsChannel,
                             segment: smsSegment,
                             subject: smsChannel === 'email' ? smsSubject : undefined,
+                            variantId: smsVariantId || undefined,
                         }),
                     });
                     if (res.ok) {
@@ -333,7 +335,7 @@ export default function LeadsPipelinePage() {
             setSmsSending(false);
             setSmsProgress(null);
         }
-    }, [smsData, smsSelected, smsMessage, smsChannel, smsSegment, smsSubject, smsLocationFilter]);
+    }, [smsData, smsSelected, smsMessage, smsChannel, smsSegment, smsSubject, smsLocationFilter, smsVariantId]);
 
     const sendTestMessage = useCallback(async () => {
         if (!smsMessage) return;
@@ -1176,8 +1178,9 @@ export default function LeadsPipelinePage() {
                                                         // Reload template for new channel
                                                         if (ch === 'email') {
                                                             const et = smsData.emailTemplates?.[smsSegment];
-                                                            if (et?.template) { setSmsMessage(et.template); setSmsSubject(et.subject || ''); }
-                                                            setSmsVariantId(null);
+                                                            const dv = et?.variants?.find((v: any) => v.id === et.defaultVariantId) || et?.variants?.[0];
+                                                            if (dv?.template) { setSmsMessage(dv.template); setSmsSubject(dv.subject || ''); setSmsVariantId(dv.id); }
+                                                            else setSmsVariantId(null);
                                                         } else {
                                                             const t = smsData.templates?.[smsSegment];
                                                             const defaultVariant = t?.variants?.find((v: any) => v.id === t.defaultVariantId) || t?.variants?.[0];
@@ -1259,9 +1262,11 @@ export default function LeadsPipelinePage() {
                                     ))}
                                 </div>
 
-                                {/* Variant picker (SMS only) */}
-                                {smsChannel === 'sms' && (() => {
-                                    const segTemplate = smsData.templates?.[smsSegment];
+                                {/* Variant picker (SMS + Email) */}
+                                {(() => {
+                                    const segTemplate = smsChannel === 'email'
+                                        ? smsData.emailTemplates?.[smsSegment]
+                                        : smsData.templates?.[smsSegment];
                                     const variants = segTemplate?.variants || [];
                                     if (variants.length === 0) return null;
                                     const activeVariant = variants.find((v: any) => v.id === smsVariantId);
@@ -1279,6 +1284,7 @@ export default function LeadsPipelinePage() {
                                                             onClick={() => {
                                                                 setSmsVariantId(v.id);
                                                                 setSmsMessage(v.template);
+                                                                if (smsChannel === 'email' && v.subject) setSmsSubject(v.subject);
                                                             }}
                                                             style={{
                                                                 padding: '8px 14px',
