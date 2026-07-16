@@ -15,6 +15,7 @@ import {
     getLapsedPatients,
     getConsultOnlyPatients,
     getMaintenanceDuePatients,
+    getNoShowRecoveryPatients,
     buildUnifiedPhoneMap,
     getRecentOutboundContactIds,
     getV2SmsDndContactIds,
@@ -330,6 +331,51 @@ export async function GET(req: NextRequest) {
                 holdoutControl: holdoutCount, // ~12% held back to measure booking lift
                 lastCampaign: lastRuns[segment] || null,
                 source: 'patient-sales',
+            });
+        }
+
+        // ── Campaign: No-Show / Cancellation Recovery (same-week rebook nudge) ──
+        if (segment === 'no-show-recovery') {
+            const recovery = await getNoShowRecoveryPatients(locationParam || undefined, 14);
+            const sendable = recovery.filter(c => c.ghlContactId);
+            const phoneMap = await buildUnifiedPhoneMap(locationParam || undefined);
+            const noDND = sendable.filter(c => {
+                const entry = phoneMap.get(normalizePhone(c.phone));
+                return !entry?.dnd;
+            });
+            const contacts: ContactEntry[] = noDND.map(c => ({
+                contactId: c.ghlContactId!,
+                contactName: c.ghlContactName || `${c.firstName} ${c.lastName}`.trim(),
+                firstName: c.firstName,
+                phone: c.phone,
+                email: phoneMap.get(normalizePhone(c.phone))?.contactEmail || '',
+                maskedPhone: maskPhone(c.phone),
+                locationKey: c.locationKey || locationParam || 'decatur' as LocationKey,
+                locationName: LOCATION_NAMES[c.locationKey || locationParam || 'decatur' as LocationKey] || 'Chin Up!',
+                stageName: `${c.missedStatus === 'Cancelled' ? 'Cancelled' : 'No-show'} ${c.daysSince}d ago${c.serviceName ? ` — ${c.serviceName}` : ''}`,
+                monetaryValue: c.totalRevenue || 350,
+                daysSinceOutreach: c.daysSince,
+                achievabilityScore: 80, // already booked once — high intent
+                riskLevel: 'going-cold' as const,
+                tags: phoneMap.get(normalizePhone(c.phone))?.tags || [],
+            }));
+
+            const { filtered: afterCooldown, cooldownExcluded } = applyCooldown(contacts, recentHashes);
+            const { filtered: afterOutbound, outboundExcluded } = applyOutboundCooldown(afterCooldown, recentOutboundIds);
+            const { filtered, v2DndFiltered } = await applyV2SmsDnd(afterOutbound);
+
+            return NextResponse.json({
+                contacts: filtered,
+                totalEligible: filtered.length,
+                segment,
+                forecast: buildForecast(filtered, 0.20),
+                templates: SMS_TEMPLATES,
+                emailTemplates: EMAIL_TEMPLATES,
+                dndFiltered: (sendable.length - noDND.length) + v2DndFiltered,
+                cooldownExcluded,
+                outboundExcluded,
+                lastCampaign: lastRuns[segment] || null,
+                source: 'patient-appointments',
             });
         }
 

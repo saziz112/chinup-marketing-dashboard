@@ -65,6 +65,7 @@ const CAMPAIGN_SEGMENTS: Array<{
 }> = [
     // SMS-safe (warm)
     { id: 'maintenance',       label: 'Maintenance Due',        desc: 'Due for re-treatment by cadence',        source: 'patient records',   channel: 'sms+email' },
+    { id: 'no-show-recovery',  label: 'No-Show / Cancellation', desc: 'Missed or cancelled in last 14d, not rebooked', source: 'patient records', channel: 'sms+email' },
     { id: 'consult-only',      label: 'Consulted, Not Treated', desc: 'Had consult, never booked',              source: 'patient records',   channel: 'sms+email' },
     { id: 'lapsed-vip',        label: 'Lapsed VIPs ($500+)',    desc: '120-365 days since last visit',          source: 'patient records',   channel: 'sms+email' },
     { id: 'lapsed-treatment',  label: 'Treatment-Specific',     desc: 'By treatment type, 90+ days',            source: 'patient records',   channel: 'sms+email' },

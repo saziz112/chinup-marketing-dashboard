@@ -447,6 +447,34 @@ export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: st
             },
         ],
     },
+    'no-show-recovery': {
+        label: 'No-Show / Cancellation Recovery',
+        // Gentle same-week rebook nudge for patients who missed OR cancelled a recent
+        // appointment and haven't rebooked. Tone stays warm and judgment-free (a cancel
+        // is often intentional — sick, rescheduling), leaving the decision to them.
+        // ☺️ kept per Sam's brand voice (forces UCS-2 → ~4 SMS segments each).
+        defaultVariantId: 'find-a-time',
+        variants: [
+            {
+                id: 'find-a-time',
+                label: 'Find a new time',
+                strategy: 'Warm, no-judgment: acknowledges the visit did not happen and offers to find a new time on their terms.',
+                template: "Hi {{firstName}}! We noticed your recent visit to Chin Up! {{locationName}} didn't happen — no worries at all ☺️ Whenever you're ready, we'd love to help you find a new time. Book anytime: https://chinupaesthetics.com/booking-calendar/ or just call/text {{phone}}.\n\nReply DELETE to opt out.",
+            },
+            {
+                id: 'easy-rebook',
+                label: 'Easy rebook',
+                strategy: 'Low-friction: emphasizes how quick it is to grab a new slot, reduces the effort barrier to rebooking.',
+                template: "Hi {{firstName}}, it's Chin Up! {{locationName}} ☺️ Life happens — if your recent appointment slipped by, grabbing a new time is easy whenever it works for you: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}. We'd love to see you!\n\nReply DELETE to opt out.",
+            },
+            {
+                id: 'care-first',
+                label: 'Care-first',
+                strategy: 'Leads with genuine care ("hope all is well"), zero pressure — best for cancellations that may have been health-related.',
+                template: "Hi {{firstName}}, we hope everything's okay! We saw your recent visit to Chin Up! {{locationName}} didn't work out — whenever you're ready, we're here ☺️ Rebook anytime: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
+            },
+        ],
+    },
     'consult-only': {
         label: "We'd Love to See You",
         defaultVariantId: 'financing',
@@ -642,6 +670,22 @@ export const EMAIL_TEMPLATES: Record<string, { label: string; subject: string; t
 </table>
 </td></tr>
 </table>`,
+    },
+    'no-show-recovery': {
+        label: 'No-Show / Cancellation Recovery',
+        subject: "Let's find a new time, {{firstName}} ☺️",
+        template: `Hi {{firstName}},
+
+We noticed your recent appointment at Chin Up! {{locationName}} didn't happen — no worries at all, life gets busy!
+
+Whenever you're ready, we'd love to help you find a new time that works better for you. Booking takes just a moment: https://chinupaesthetics.com/booking-calendar/
+
+Prefer to talk to a person? Just call or text us at {{phone}}.
+
+Warmly,
+Chin Up! Aesthetics {{locationName}}
+
+To unsubscribe, reply DELETE.`,
     },
     'consult-only': {
         label: "We'd Love to See You",

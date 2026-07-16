@@ -2273,6 +2273,178 @@ export async function getMaintenanceDuePatients(
     return result;
 }
 
+/* ── No-Show Recovery ────────────────────────────────────── */
+
+export interface NoShowRecoveryPatient {
+    mbClientId: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    missedDate: string;       // date of the most-recent missed/cancelled appt in the window
+    missedStatus: 'NoShow' | 'Cancelled';
+    daysSince: number;        // days since that appointment
+    serviceName: string | null; // best-effort from session_type_name (often null)
+    totalRevenue: number;
+    ghlContactId?: string;
+    ghlContactName?: string;
+    locationKey?: LocationKey;
+}
+
+const noShowCache = new Map<string, CacheEntry<NoShowRecoveryPatient[]>>();
+
+/**
+ * Patients who missed OR cancelled a recent appointment and haven't rebooked or
+ * been seen since — the "same-week rebook" recovery list. NoShow/cancellation status
+ * only became available after the 2026-07-01 Zenoti cutover (MindBody dropped
+ * cancelled slots). In practice Zenoti staff rarely use the NoShow status (~1/wk) and
+ * mark missed visits as Cancelled, so both are included (Sam's call 2026-07-15); the
+ * status is carried through so the message can soften tone for cancellations.
+ * `windowDays` bounds recency so the nudge stays timely (default 14).
+ *
+ * Suppression mirrors the maintenance segment's cross-source identity merge:
+ *   - already rebooked  → future Booked/Confirmed appt under any phone/email peer
+ *   - already seen since → any completed visit / sale after the missed date
+ * Both matter post-cutover because a rebooking lives under the Zenoti GUID while the
+ * missed appt sits under the MindBody numeric id (or a duplicate registration).
+ */
+export async function getNoShowRecoveryPatients(
+    locationFilter?: LocationKey,
+    windowDays: number = 14,
+): Promise<NoShowRecoveryPatient[]> {
+    const cacheKey = `noshow_${locationFilter || 'all'}_${windowDays}`;
+    const cached = noShowCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < LAPSED_CACHE_TTL) return cached.data;
+
+    const now = Date.now();
+
+    // Most-recent missed/cancelled appt per client within the window.
+    const nsRows = await sql`
+        SELECT DISTINCT ON (client_id)
+            client_id,
+            to_char(start_date, 'YYYY-MM-DD') AS missed_date,
+            status,
+            session_type_name AS service_name
+        FROM mb_appointments_history
+        WHERE status IN ('NoShow', 'Cancelled')
+          AND start_date >= NOW() - make_interval(days => ${windowDays})
+          AND start_date < NOW()
+        ORDER BY client_id, start_date DESC
+    `;
+    const missed = new Map<string, { missedDate: string; status: 'NoShow' | 'Cancelled'; serviceName: string | null }>();
+    for (const r of nsRows.rows) missed.set(r.client_id, { missedDate: r.missed_date, status: r.status as 'NoShow' | 'Cancelled', serviceName: r.service_name || null });
+    if (missed.size === 0) {
+        noShowCache.set(cacheKey, { data: [], timestamp: now });
+        return [];
+    }
+
+    const candidateIds = [...missed.keys()];
+
+    // Already rebooked — future Booked/Confirmed appt across the phone/email identity
+    // group (peer-expanded; a Zenoti-GUID rebooking won't match the MindBody id).
+    const futureBooked = new Set<string>();
+    const fbRows = await sql`
+        WITH cand AS (
+            SELECT client_id,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(LOWER(TRIM(email)),'') AS email
+            FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
+        ),
+        peers AS (
+            SELECT DISTINCT cand.client_id AS req_id, c.client_id AS peer_id
+            FROM cand JOIN mb_clients_cache c
+              ON (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') = cand.phone)
+              OR (cand.email IS NOT NULL AND NULLIF(LOWER(TRIM(c.email)),'') = cand.email)
+        )
+        SELECT DISTINCT p.req_id AS client_id
+        FROM peers p
+        JOIN mb_appointments_history a ON a.client_id = p.peer_id
+        WHERE a.status IN ('Booked', 'Confirmed') AND a.start_date > NOW()
+    `;
+    for (const r of fbRows.rows) futureBooked.add(r.client_id);
+
+    // Already seen since the no-show — any completed visit / sale under a matched
+    // identity dated after the missed appointment means they came in; don't nudge.
+    const mergedLast = new Map<string, string>();
+    const mlRows = await sql`
+        WITH cand AS (
+            SELECT client_id,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(LOWER(TRIM(email)),'') AS email
+            FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
+        ),
+        activity AS (
+            SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(LOWER(TRIM(c.email)),'') AS email,
+                   a.activity_date
+            FROM (
+                SELECT client_id, sale_date AS activity_date FROM mb_sales_history
+                UNION ALL
+                SELECT client_id, start_date AS activity_date FROM mb_appointments_history
+                WHERE status IN ('Completed', 'Arrived')
+            ) a
+            JOIN mb_clients_cache c ON c.client_id = a.client_id
+        )
+        SELECT cand.client_id, to_char(MAX(act.activity_date), 'YYYY-MM-DD') AS merged_last
+        FROM cand
+        JOIN activity act
+          ON (act.phone IS NOT NULL AND act.phone = cand.phone)
+          OR (act.email IS NOT NULL AND act.email = cand.email)
+        GROUP BY cand.client_id
+    `;
+    for (const r of mlRows.rows) mergedLast.set(r.client_id, r.merged_last);
+
+    const revMap = new Map<string, number>();
+    const revRows = await sql`
+        SELECT client_id, SUM(total_amount) AS rev FROM mb_sales_history
+        WHERE client_id = ANY(${candidateIds}) GROUP BY client_id
+    `;
+    for (const r of revRows.rows) revMap.set(r.client_id, Number(r.rev || 0));
+
+    const detail = new Map<string, { firstName: string; lastName: string; phone: string }>();
+    const detailRows = await sql`
+        SELECT client_id, first_name, last_name, phone FROM mb_clients_cache
+        WHERE client_id = ANY(${candidateIds})
+    `;
+    for (const r of detailRows.rows) detail.set(r.client_id, { firstName: r.first_name || '', lastName: r.last_name || '', phone: r.phone || '' });
+
+    const phoneMap = await buildUnifiedPhoneMap(locationFilter).catch(() => new Map<string, PhoneMapEntry>());
+
+    const result: NoShowRecoveryPatient[] = [];
+    const seenPhones = new Set<string>();
+    for (const [clientId, { missedDate, status, serviceName }] of missed) {
+        if (futureBooked.has(clientId)) continue;               // already coming back
+        const merged = mergedLast.get(clientId);
+        if (merged && merged > missedDate) continue;            // seen since the missed appt
+        const d = detail.get(clientId);
+        const phone = d?.phone || '';
+        const normalized = normalizePhone(phone);
+        if (normalized.length < 10) continue;
+        if (seenPhones.has(normalized)) continue;
+        seenPhones.add(normalized);
+        const match = phoneMap.get(normalized);
+        if (locationFilter && (!match || match.locationKey !== locationFilter)) continue;
+        result.push({
+            mbClientId: clientId,
+            firstName: d?.firstName || '',
+            lastName: d?.lastName || '',
+            phone,
+            missedDate,
+            missedStatus: status,
+            daysSince: Math.floor((now - new Date(missedDate).getTime()) / 86400000),
+            serviceName,
+            totalRevenue: revMap.get(clientId) || 0,
+            ghlContactId: match?.contactId,
+            ghlContactName: match?.contactName,
+            locationKey: match?.locationKey,
+        });
+    }
+    result.sort((a, b) => a.daysSince - b.daysSince); // freshest no-shows first
+
+    noShowCache.set(cacheKey, { data: result, timestamp: now });
+    console.log(`[ghl-conversations] Found ${result.length} no-show recovery patients (${result.filter(c => c.ghlContactId).length} matched to GHL)`);
+    return result;
+}
+
 /* ── 7-Day Outbound Message Cooldown ─────────────────────── */
 
 /**
