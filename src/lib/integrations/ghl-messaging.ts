@@ -452,26 +452,30 @@ export const SMS_TEMPLATES: Record<string, { label: string; defaultVariantId: st
         // Gentle same-week rebook nudge for patients who missed OR cancelled a recent
         // appointment and haven't rebooked. Tone stays warm and judgment-free (a cancel
         // is often intentional — sick, rescheduling), leaving the decision to them.
-        // ☺️ kept per Sam's brand voice (forces UCS-2 → ~4 SMS segments each).
+        // Two deliberate departures from the other segments (Sam's call 2026-08-09):
+        //   - no ☺️ here — the emoji forces UCS-2 (4–5 segments/msg); GSM-7 halves it
+        //   - never say the visit "didn't happen"/"didn't work out" — 96% of this
+        //     segment is Cancelled, i.e. patients who told us, so naming it reads as
+        //     surveillance. The copy skips straight to the invitation instead.
         defaultVariantId: 'find-a-time',
         variants: [
             {
                 id: 'find-a-time',
                 label: 'Find a new time',
-                strategy: 'Warm, no-judgment: acknowledges the visit did not happen and offers to find a new time on their terms.',
-                template: "Hi {{firstName}}! We noticed your recent visit to Chin Up! {{locationName}} didn't happen, no worries at all ☺️ Whenever you're ready, we'd love to help you find a new time. Book anytime: https://chinupaesthetics.com/booking-calendar/ or just call/text {{phone}}.\n\nReply DELETE to opt out.",
+                strategy: 'Warm, no-judgment: "sorry we missed you" without naming the cancellation, then offers a new time on their terms.',
+                template: "Hi {{firstName}}! Sorry we missed you at Chin Up! {{locationName}}. Whenever you're ready, we'd love to help you find a new time. Book anytime: https://chinupaesthetics.com/booking-calendar/ or just call/text {{phone}}.\n\nReply DELETE to opt out.",
             },
             {
                 id: 'easy-rebook',
                 label: 'Easy rebook',
                 strategy: 'Low-friction: emphasizes how quick it is to grab a new slot, reduces the effort barrier to rebooking.',
-                template: "Hi {{firstName}}, it's Chin Up! {{locationName}} ☺️ Life happens. If your recent appointment slipped by, grabbing a new time is easy whenever it works for you: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}. We'd love to see you!\n\nReply DELETE to opt out.",
+                template: "Hi {{firstName}}, it's Chin Up! {{locationName}}. Life happens! Whenever it works for you, grabbing a new time is quick and easy: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}. We'd love to see you!\n\nReply DELETE to opt out.",
             },
             {
                 id: 'care-first',
                 label: 'Care-first',
                 strategy: 'Leads with genuine care ("hope all is well"), zero pressure — best for cancellations that may have been health-related.',
-                template: "Hi {{firstName}}, we hope everything's okay! We saw your recent visit to Chin Up! {{locationName}} didn't work out. Whenever you're ready, we're here ☺️ Rebook anytime: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
+                template: "Hi {{firstName}}, we hope you're doing well! Whenever you're ready to get back on the calendar at Chin Up! {{locationName}}, we're here, no rush at all. Rebook anytime: https://chinupaesthetics.com/booking-calendar/ or call/text {{phone}}.\n\nReply DELETE to opt out.",
             },
         ],
     },
@@ -724,19 +728,19 @@ export const EMAIL_TEMPLATES: Record<string, { label: string; defaultVariantId: 
             ev({ id: 'find-a-time', label: 'Find a new time', strategy: 'Warm, no-judgment: acknowledges the visit did not happen and offers to find a new time on their terms.',
                 subject: "Let's find a new time, {{firstName}} ☺️",
                 header: 'Let&rsquo;s Find A New Time',
-                body: P('We noticed your recent appointment at Chin&nbsp;Up! {{locationName}} didn&rsquo;t happen, and that&rsquo;s completely okay. Life gets full, and no explanation is needed. &#9786;&#65039;') + P('Whenever the timing feels right for you, we&rsquo;d love to help you find a new one. It takes just a moment, and our team will handle the rest.', true),
+                body: P('We&rsquo;re sorry we missed you at Chin&nbsp;Up! {{locationName}}. Life gets full, and no explanation is needed. &#9786;&#65039;') + P('Whenever the timing feels right for you, we&rsquo;d love to help you find a new time. It takes just a moment, and our team will handle the rest.', true),
                 ctaLabel: 'Find A New Time',
                 closing: `Your glow will keep.<br>We&rsquo;ll be here whenever you&rsquo;re ${GOLD('ready')}.` }),
             ev({ id: 'easy-rebook', label: 'Easy rebook', strategy: 'Low-friction: emphasizes how quick it is to grab a new slot, reduces the effort barrier.',
                 subject: 'Rebooking is easy, {{firstName}} ☺️',
                 header: 'Rebooking Is Easy',
-                body: P('Life happens. If your recent visit to Chin&nbsp;Up! {{locationName}} slipped by, no worries at all. &#9786;&#65039;') + P('Grabbing a new time is quick and easy whenever it works for you. One tap and you&rsquo;re set.', true),
+                body: P('Life happens, and we&rsquo;d love to see you back at Chin&nbsp;Up! {{locationName}} whenever it works for you. &#9786;&#65039;') + P('Grabbing a new time is quick and easy. One tap and you&rsquo;re set.', true),
                 ctaLabel: 'Grab A New Time',
                 closing: `Your spot is just a tap ${GOLD('away')}.` }),
             ev({ id: 'care-first', label: 'Care-first', strategy: 'Leads with genuine care ("hope all is well"), zero pressure — best when a cancellation may have been health-related.',
                 subject: 'We hope you’re well, {{firstName}} ☺️',
                 header: 'We Hope You&rsquo;re Well',
-                body: P('We hope everything&rsquo;s okay! We saw your recent visit to Chin&nbsp;Up! {{locationName}} didn&rsquo;t work out.') + P('Whenever you&rsquo;re ready, we&rsquo;re here. No pressure at all. We&rsquo;d simply love to see you again. &#9786;&#65039;', true),
+                body: P('We hope you&rsquo;re doing well! Whenever you&rsquo;re ready to get back on the calendar at Chin&nbsp;Up! {{locationName}}, we&rsquo;re here.') + P('No pressure at all. We&rsquo;d simply love to see you again. &#9786;&#65039;', true),
                 ctaLabel: 'Rebook When Ready',
                 closing: `We&rsquo;re here whenever you&rsquo;re ${GOLD('ready')}.` }),
         ],

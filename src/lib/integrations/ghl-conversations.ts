@@ -2299,7 +2299,9 @@ const noShowCache = new Map<string, CacheEntry<NoShowRecoveryPatient[]>>();
  * cancelled slots). In practice Zenoti staff rarely use the NoShow status (~1/wk) and
  * mark missed visits as Cancelled, so both are included (Sam's call 2026-07-15); the
  * status is carried through so the message can soften tone for cancellations.
- * `windowDays` bounds recency so the nudge stays timely (default 14).
+ * `windowDays` bounds recency so the nudge stays timely (default 14); `minAgeDays`
+ * holds the nudge back for a few days (default 3) so a patient who deliberately
+ * cancelled isn't texted the next morning — that reads as surveillance, not care.
  *
  * Suppression mirrors the maintenance segment's cross-source identity merge:
  *   - already rebooked  → future Booked/Confirmed appt under any phone/email peer
@@ -2310,8 +2312,9 @@ const noShowCache = new Map<string, CacheEntry<NoShowRecoveryPatient[]>>();
 export async function getNoShowRecoveryPatients(
     locationFilter?: LocationKey,
     windowDays: number = 14,
+    minAgeDays: number = 3,
 ): Promise<NoShowRecoveryPatient[]> {
-    const cacheKey = `noshow_${locationFilter || 'all'}_${windowDays}`;
+    const cacheKey = `noshow_${locationFilter || 'all'}_${windowDays}_${minAgeDays}`;
     const cached = noShowCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < LAPSED_CACHE_TTL) return cached.data;
 
@@ -2327,7 +2330,7 @@ export async function getNoShowRecoveryPatients(
         FROM mb_appointments_history
         WHERE status IN ('NoShow', 'Cancelled')
           AND start_date >= NOW() - make_interval(days => ${windowDays})
-          AND start_date < NOW()
+          AND start_date < NOW() - make_interval(days => ${minAgeDays})
         ORDER BY client_id, start_date DESC
     `;
     const missed = new Map<string, { missedDate: string; status: 'NoShow' | 'Cancelled'; serviceName: string | null }>();
