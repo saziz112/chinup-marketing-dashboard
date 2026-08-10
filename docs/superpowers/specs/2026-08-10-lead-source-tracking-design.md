@@ -98,6 +98,61 @@ Website leads convert at ~4× paid social's rate and are worth ~5.6× per lead. 
 holds on the uncontrolled 90-day view too (27% vs 8%), so it is not a maturation
 artifact.
 
+## Accuracy ceiling — read before quoting any number above
+
+**Match rate caps everything downstream.** Of 3,386 GHL leads in the last 90 days,
+848 match a patient record by phone and 670 by email — roughly 30% overall. Most of
+that gap is real (most leads never become patients), but **"never converted" cannot
+be separated from "match failed"**: a mistyped phone or a different email makes a
+converted patient look like a dud. No sampling has been done to quantify the false-
+negative rate.
+
+Consequence: **show rates and revenue are floors, not measurements.** Match failure
+is approximately uniform across sources — paid-social leads have no reason to
+mistype phone numbers more often than website leads — so it depresses every source
+similarly and leaves the *ranking* intact. Treat relative comparisons (Website ≈5.6×
+paid social per lead) as sound; treat absolute levels ($275/lead) as lower bounds.
+
+**The baseline table groups by GHL's `source` string, not `attributionSource`.**
+This spec requires the latter. That mismatch is why `(blank)` holds 376 leads: those
+contacts carry no `source` value but many do carry full native attribution.
+Implementing per spec will shrink `(blank)` and move leads into named channels, so
+the table above **understates named sources and overstates `(blank)`.** Re-baseline
+after implementation.
+
+## Coverage against Emily's taxonomy
+
+Delivered: Website, Paid Search (n=18, below reporting threshold), Paid Social (her
+list omits it; it is the largest source by volume), Call-in (partial — first-time
+callers only, live 2026-08-09).
+
+**Not delivered: Email, Walk-in, Referral.** Email has no capture mechanic at all.
+Walk-in and referral are structurally invisible to GHL because those people never
+submit a form.
+
+Her three metrics: **Booking Rate** is computable. **Lead-to-Sale** is computable.
+**Consult Show Rate is only partially available** — `session_type_name` is populated
+on 100% of Zenoti appointments (2,009) and 0% of MindBody's (19,772), so consults
+are separable from treatments only from July 2026 forward. Earlier periods support
+"showed", not "showed for a consult".
+
+## Unused asset: patient-declared source
+
+`mb_clients_cache.referred_by` is populated for **5,342 of 7,674 patients** and is
+self-reported at intake rather than inferred:
+
+```
+Google 2,482 · Facebook 779 · Website 513 · Another Client 277
+Instagram 230 · Botox Ad 70 · Groupon 57 · ClassPass 46
+```
+
+This is a second, independent source system. It partially fills the Referral gap
+("Another Client", 277) and reaches the walk-in population GHL cannot see. It also
+serves as a cross-check on channel mix: if patients self-report Google far more than
+Facebook while spend says otherwise, that divergence is itself a finding. Not yet
+joined into the view — worth doing before concluding any channel is
+under-performing.
+
 ## Honesty requirements in the UI
 
 - **Revenue is associated, not caused.** No holdout exists, so this ranks sources; it
@@ -111,8 +166,10 @@ artifact.
 ## Explicitly not building
 
 - Lead-stage tracking from the Leads Pipeline (stale by 97 days; see above).
-- Walk-in and referral capture — no mechanic exists anywhere. These need front-desk
-  stamping at Zenoti check-in, a training change, not a config change.
+- Walk-in and referral *capture* — no mechanic exists in GHL. Prospective capture
+  needs front-desk stamping at Zenoti check-in: a training change, not a config
+  change. (Retrospectively, `referred_by` covers part of this — see above.)
+- Email as a lead source — no capture mechanic exists.
 - Incrementality / lift. Needs a holdout design, out of scope here.
 
 ## Open questions
@@ -123,3 +180,10 @@ artifact.
 2. Should spend be persisted daily into `ad_metrics_daily` (currently 0 rows) rather
    than fetched live? Live calls make historical cohorts unreproducible once
    attribution windows shift.
+3. What is the true false-negative match rate? Hand-check ~50 unmatched leads
+   against Zenoti by name to find out. Until then every conversion figure is a floor
+   of unknown tightness — this is the single largest source of uncertainty in the
+   whole design.
+4. Does patient-declared `referred_by` agree with observed channel mix? Disagreement
+   would mean either attribution or self-report is systematically wrong, and which
+   one matters before spend decisions are made on this data.
