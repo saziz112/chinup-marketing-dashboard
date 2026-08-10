@@ -100,18 +100,24 @@ artifact.
 
 ## Accuracy ceiling — read before quoting any number above
 
-**Match rate caps everything downstream.** Of 3,386 GHL leads in the last 90 days,
-848 match a patient record by phone and 670 by email — roughly 30% overall. Most of
-that gap is real (most leads never become patients), but **"never converted" cannot
-be separated from "match failed"**: a mistyped phone or a different email makes a
-converted patient look like a dud. No sampling has been done to quantify the false-
-negative rate.
+**Match rate is ~30%, and it has been verified as real.** Of 3,386 GHL leads in the
+last 90 days, 848 match a patient record by phone and 670 by email. The obvious
+worry is that "never converted" is indistinguishable from "match failed."
 
-Consequence: **show rates and revenue are floors, not measurements.** Match failure
-is approximately uniform across sources — paid-social leads have no reason to
-mistype phone numbers more often than website leads — so it depresses every source
-similarly and leaves the *ranking* intact. Treat relative comparisons (Website ≈5.6×
-paid social per lead) as sound; treat absolute levels ($275/lead) as lower bounds.
+**Measured 2026-08-10:** 60 unmatched leads (aged 30–90 days, named) were fuzzy-
+matched against `mb_clients_cache` on surname + first-name prefix and on last-7
+phone digits. Four candidates surfaced; on inspection two were different people
+(*tammy johnson* vs *Tamika Johnson*, *erin taylor* vs *Erica Taylor*). **True
+false-negative rate ≈ 2/60 (3%); ≤ 7% even counting every candidate as a miss.**
+
+Consequence: the strict phone-and-email join is sound, and ~70% of leads genuinely
+never become patients — ordinary for paid lead-gen. Conversion figures are
+understated by a few percent, **not by a factor**, so absolute levels ($275/lead,
+7% show rate, $263 per showed patient) can be quoted, not merely ranked.
+
+Residual caveats: at n=60 the true rate could be as high as ~10%; and leads carrying
+neither phone nor email can never match at all (one sampled lead, Karen Romero, had
+no phone stored). Re-run the check if the join logic changes.
 
 **The baseline table groups by GHL's `source` string, not `attributionSource`.**
 This spec requires the latter. That mismatch is why `(blank)` holds 376 leads: those
@@ -180,10 +186,8 @@ under-performing.
 2. Should spend be persisted daily into `ad_metrics_daily` (currently 0 rows) rather
    than fetched live? Live calls make historical cohorts unreproducible once
    attribution windows shift.
-3. What is the true false-negative match rate? Hand-check ~50 unmatched leads
-   against Zenoti by name to find out. Until then every conversion figure is a floor
-   of unknown tightness — this is the single largest source of uncertainty in the
-   whole design.
+3. ~~True false-negative match rate?~~ **Resolved 2026-08-10: ≈3%** (see Accuracy
+   ceiling). No longer a material uncertainty.
 4. Does patient-declared `referred_by` agree with observed channel mix? Disagreement
    would mean either attribution or self-report is systematically wrong, and which
    one matters before spend decisions are made on this data.
