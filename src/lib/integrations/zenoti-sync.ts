@@ -6,8 +6,8 @@
  * with `source='zenoti'`, so every existing read — `getLapsedPatientsFromDB`,
  * the maintenance engine, revenue reads — picks up Zenoti data with no query
  * changes. Emits the identical row shapes MindBody does (notably the
- * `items_json` `{Description, IsService, TotalAmount}` array that drives
- * `normalizeTreatment`).
+ * `items_json` `{Description, IsService, TotalAmount, Quantity}` array that
+ * drives `normalizeTreatment`).
  *
  * Cutover seam (locked 2026-07-06): MindBody is authoritative ≤ 2026-06-30,
  * Zenoti owns 2026-07-01 →. Backfill therefore starts at the cutover date; the
@@ -117,6 +117,11 @@ async function upsertZenotiSales(rows: ZenotiSalesRow[]): Promise<number> {
             Description: row.item_name || '',
             IsService: row.item_type === 'Service',
             TotalAmount: row.collected || 0,
+            // MindBody rows carry Quantity; omitting it here made every unit-based
+            // read (injectable burn rate, inventory reorder) silently return null
+            // for Zenoti-era sales instead of erroring. Zenoti's `qty` is the
+            // per-line unit count ("Dysport - Per Unit" → 54).
+            Quantity: row.qty ?? 1,
         }];
 
         await sql`
