@@ -142,22 +142,61 @@ on 100% of Zenoti appointments (2,009) and 0% of MindBody's (19,772), so consult
 are separable from treatments only from July 2026 forward. Earlier periods support
 "showed", not "showed for a consult".
 
-## Unused asset: patient-declared source
+## Patient-declared source — a second system, currently dead
 
-`mb_clients_cache.referred_by` is populated for **5,342 of 7,674 patients** and is
-self-reported at intake rather than inferred:
+`mb_clients_cache.referred_by` is self-reported at intake rather than inferred, so
+it reaches the walk-in and referral population GHL structurally cannot see. It is
+the only cross-check available on channel mix.
+
+**It stopped working in April 2026.** Fill rate by acquisition month:
 
 ```
-Google 2,482 · Facebook 779 · Website 513 · Another Client 277
-Instagram 230 · Botox Ad 70 · Groupon 57 · ClassPass 46
+2025-06 … 2026-03   74–97%   healthy
+2026-04             22%      collapse begins
+2026-05 onward       0%      dead
+2026-07 (Zenoti)     0%      migration did not restore it
 ```
 
-This is a second, independent source system. It partially fills the Referral gap
-("Another Client", 277) and reaches the walk-in population GHL cannot see. It also
-serves as a cross-check on channel mix: if patients self-report Google far more than
-Facebook while spend says otherwise, that divergence is itself a finding. Not yet
-joined into the view — worth doing before concluding any channel is
-under-performing.
+The break predates the Zenoti migration (July) by two months, so the migration is
+not the cause — it locked in a failure that began at the front desk in April.
+
+**Two independent breaks; fixing either alone changes nothing.**
+
+1. **Collection.** 0 of 39 sampled Zenoti guests carry any referral data. The
+   `referral` field exists on the Zenoti guest object; nothing populates it. Check
+   first whether the referral prompt was ever configured in Zenoti's guest-creation
+   flow — if not, this is a settings fix, not a training problem.
+2. **Transport.** `src/lib/integrations/zenoti-sync.ts:189` writes `referred_by`
+   as a hardcoded `''` on every guest insert. Even with collection restored, nothing
+   would reach the database.
+
+### Use the healthy window only
+
+Any analysis of this column must be restricted to **2025-06-01 → 2026-04-01**.
+Spanning the dead period silently mixes real zeros with missing data — a 12-month
+read put `(blank)` at 57% and Facebook at 7%; the healthy window puts `(blank)` at
+15% and Facebook at 18%.
+
+Paying new patients acquired in the healthy window (n=878):
+
+| Source | Patients | Share | Revenue | Rev/patient |
+|---|---|---|---|---|
+| Google | 426 | 49% | $671,025 | $1,575 |
+| Facebook | 155 | 18% | $195,827 | $1,263 |
+| (blank) | 133 | 15% | $195,514 | $1,470 |
+| Website | 113 | 13% | $177,550 | $1,571 |
+| Another Client | 24 | 3% | $27,570 | $1,149 |
+| Instagram | 18 | 2% | $41,965 | $2,331 |
+
+These are **lifetime** revenue figures and are not comparable to the 30-day
+windows in the baseline table above.
+
+**Google at 49% of new paying patients, against 18 paid-search leads in 90 days,**
+strongly suggests patients saying "Google" mean organic search / Maps / GBP, not
+Google Ads. Self-report is last-touch memory, so paid social is likely undercounted
+here — but not by the margin the raw numbers imply. Treat this as the strongest
+available signal that organic discovery is underweighted relative to paid social,
+and as a reason not to cut paid social on show rate alone.
 
 ## Honesty requirements in the UI
 
@@ -188,6 +227,13 @@ under-performing.
    attribution windows shift.
 3. ~~True false-negative match rate?~~ **Resolved 2026-08-10: ≈3%** (see Accuracy
    ceiling). No longer a material uncertainty.
-4. Does patient-declared `referred_by` agree with observed channel mix? Disagreement
-   would mean either attribution or self-report is systematically wrong, and which
-   one matters before spend decisions are made on this data.
+4. ~~Does patient-declared `referred_by` agree with observed channel mix?~~
+   **Partially answered 2026-08-10:** it disagrees materially — Google 49% of paying
+   patients vs 18 paid-search leads; Facebook 18% of paying patients vs the largest
+   lead source by volume. Most likely explanation is that "Google" means organic
+   discovery and that self-report is last-touch. Cannot be settled further until
+   collection is restored.
+5. What changed at the front desk in April 2026? The answer determines whether
+   restoring capture is a Zenoti settings change or a training change. Until it is
+   restored, no channel-mix question can be answered for any period after
+   2026-03-31 — including the periods current spend decisions are being made on.
