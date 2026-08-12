@@ -60,9 +60,29 @@ interface RawLeadRow {
   source: string | null;
   attribution_source: AttributionSource | null;
   attribution_synced_at: Date | null;
+  /** jsonb, but the sync writes it double-encoded on some rows — see tagList. */
+  tags: unknown;
   had_prior_purchase: boolean;
   showed: boolean;
   revenue: string | null;
+}
+
+/**
+ * `ghl_contacts_map.tags` is jsonb, but the sync writes it with
+ * JSON.stringify() on some rows, so it lands as a jsonb *string* holding an
+ * array rather than a jsonb array. Read both shapes rather than repairing in
+ * SQL — a read path should not depend on which write produced the row.
+ */
+function tagList(raw: unknown): string[] {
+  let v = raw;
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 }
 
 export interface LeadSourceParams {
@@ -97,6 +117,7 @@ export async function getLeadSourceReport(
              source,
              attribution_source,
              attribution_synced_at,
+             tags,
              created_at
         FROM ghl_contacts_map
        WHERE created_at <  now() - (${minAge} || ' days')::interval
@@ -148,6 +169,7 @@ export async function getLeadSourceReport(
            m.source,
            m.attribution_source,
            m.attribution_synced_at,
+           m.tags,
            -- Rule 3: a lead is someone with no purchase BEFORE the lead date.
            COALESCE((
              SELECT true FROM mb_sales_history s
@@ -180,7 +202,7 @@ export async function getLeadSourceReport(
   for (const r of raw) {
     if (!r.attribution_synced_at) unbackfilled++;
 
-    const channel = resolveChannel(r.source, r.attribution_source);
+    const channel = resolveChannel(r.source, r.attribution_source, tagList(r.tags));
     let row = byChannel.get(channel);
     if (!row) {
       row = {

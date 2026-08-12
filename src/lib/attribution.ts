@@ -80,6 +80,26 @@ function firstPartySourceChannel(source: string): Channel | null {
   return null;
 }
 
+/**
+ * Tags the call-handling automation writes on an inbound phone lead. Measured
+ * 2026-08-12: 934 of the 999 contacts that resolved to `Other` carry one, and
+ * they behave like phone leads on every independent signal — 93% created
+ * 9am-7pm, weekday volume ~190/day against Sat 36 / Sun 10, phone on 99% but
+ * email on only 10%, and some still named by their own phone number.
+ *
+ * `spam likely` is deliberately EXCLUDED. Those are calls too, but counting
+ * them would inflate the channel with junk we would never work.
+ *
+ * This only recovers history. Sam's `Attribution - Stamp Call-in Source`
+ * workflow sets `source` directly, but fires for first-time callers only.
+ */
+const CALL_HANDLING_TAGS = [/couldn'?t find caller name/i, /name via lookup/i];
+
+function hasCallHandlingTag(tags: readonly string[] | null | undefined): boolean {
+  if (!tags) return false;
+  return tags.some((t) => CALL_HANDLING_TAGS.some((re) => re.test(t)));
+}
+
 /** True when attribution shows this lead came from a paid ad unit. */
 function isPaidAd(a: AttributionSource): boolean {
   const medium = (a.medium || '').toLowerCase();
@@ -98,11 +118,13 @@ function isPaidAd(a: AttributionSource): boolean {
  *   1. paid ad signal in attribution        -> Paid Social / Paid Search
  *   2. meaningful first-party `source`      -> that label
  *   3. real web channel in attribution      -> that channel
- *   4. otherwise                            -> Other / Unattributed
+ *   4. call-handling tags                   -> Call-In
+ *   5. otherwise                            -> Other / Unattributed
  */
 export function resolveChannel(
   source: string | null | undefined,
   attribution: AttributionSource | null | undefined,
+  tags?: readonly string[] | null,
 ): Channel {
   const a = attribution || {};
   const sessionSource = a.sessionSource || '';
@@ -120,9 +142,14 @@ export function resolveChannel(
   const mapped = SESSION_SOURCE_TO_CHANNEL[sessionSource];
   if (mapped) return mapped;
 
-  // 4. Nothing usable. Distinguish "attribution exists but is empty" (Other)
-  //    from "no attribution at all" (Unattributed) so the gap stays visible.
+  // 4. No web channel, but the call desk touched it — that's the phone.
+  //    Deliberately last: a lead that already resolved above kept its channel
+  //    even if someone later phoned it, so this never steals from a real one.
   if (NON_CHANNEL_SESSION_SOURCES.has(sessionSource)) return 'Unattributed';
+  if (sessionSource && hasCallHandlingTag(tags)) return 'Call-In';
+
+  // 5. Nothing usable. Distinguish "attribution exists but is empty" (Other)
+  //    from "no attribution at all" (Unattributed) so the gap stays visible.
   if (sessionSource) return 'Other';
   return 'Unattributed';
 }
