@@ -15,7 +15,9 @@ interface Row {
     revenue?: number;
     revenueToDate?: number;
     revPerLead?: number | null;
+    contactable: number;
     suppressed: boolean;
+    unmeasurable: boolean;
 }
 
 interface Report {
@@ -277,9 +279,11 @@ export default function LeadSourcesPage() {
                                                 {r.purchaseRate === null ? (
                                                     <span
                                                         style={{ opacity: 0.5 }}
-                                                        title={`n=${r.newLeads} — below the n=30 reporting threshold`}
+                                                        title={r.unmeasurable
+                                                            ? `Only ${r.contactable} of ${r.newLeads} leads arrived with a phone or email, so a purchase by the rest could never be seen. The rate here would be a floor near zero no matter how the channel performed — it is not evidence the channel is failing.`
+                                                            : `n=${r.newLeads} — below the n=30 reporting threshold`}
                                                     >
-                                                        n too small
+                                                        {r.unmeasurable ? 'not measurable' : 'n too small'}
                                                     </span>
                                                 ) : `${(r.purchaseRate * 100).toFixed(0)}%`}
                                             </td>
@@ -351,6 +355,14 @@ export default function LeadSourcesPage() {
                                 {mode !== 'rolling'
                                     ? 'A lead counts in the period it was submitted, and its spending follows it there even if the sale happened later.'
                                     : 'Newer leads are excluded because they have not had time to convert and would drag their source down unfairly. These bounds are measured from today, so totals shift slightly between visits — pick a month if you need a figure that stays put.'}
+                            </li>
+                            <li>
+                                <strong>Some channels cannot be measured at all.</strong> A lead that arrives
+                                with neither a phone number nor an email can never be matched to a patient, so
+                                it can never be seen buying. Where most of a channel&rsquo;s leads look like that
+                                &mdash; organic social, mainly &mdash; the row says <em>not measurable</em>
+                                rather than showing a rate near zero. That is a gap in what reaches us, not a
+                                verdict on the channel, and it is not a reason to cut it.
                             </li>
                             <li>
                                 <strong>Rows under 30 leads show no rate.</strong> The counts are too small to

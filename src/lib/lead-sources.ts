@@ -50,8 +50,19 @@ export interface LeadSourceRow {
    */
   revenueToDate: number;
   revPerLead: number | null;
+  /** New leads that arrived with a phone or an email — the only ones whose
+   * conversion could ever be observed. */
+  contactable: number;
   /** True when the row is below the reporting threshold. */
   suppressed: boolean;
+  /**
+   * True when too few of the channel's leads are contactable to support a
+   * rate. 90% of "Social Media" leads arrive with neither phone nor email, so
+   * the channel cannot register a purchase however well it performs, and its
+   * near-zero rate is a property of the data, not the channel. Showing 0% here
+   * invites cutting a channel for being invisible rather than for failing.
+   */
+  unmeasurable: boolean;
 }
 
 export interface LeadSourceReport {
@@ -103,6 +114,7 @@ interface RawLeadRow {
   purchased: boolean;
   revenue: string | null;
   revenue_to_date: string | null;
+  contactable: boolean;
 }
 
 /**
@@ -183,11 +195,20 @@ export async function getLeadSourceReport(
        ORDER BY COALESCE(NULLIF(phone_normalized, ''), NULLIF(email, ''), contact_id),
                 created_at ASC
     ),
-    matched AS (
-      -- Rule 2: at most ONE client per contact, or revenue fans out.
-      SELECT DISTINCT ON (d.contact_id)
-             d.*,
-             c.client_id
+    links AS (
+      -- Rule 2: a lead resolves to a PERSON, who may hold several client
+      -- records. The Zenoti migration re-created 537 existing patients under
+      -- new ids (73% of July's 734 "new" clients share a phone with a pre-July
+      -- record), and a later purchase can land on either one. Binding each lead
+      -- to a single id therefore HID purchases: 156 seen vs 192 real over
+      -- 15 Jun - 1 Aug, a 19% undercount concentrated in the period people
+      -- actually look at. So collect the id set here and aggregate over it
+      -- below -- in scalar subqueries, which cannot fan out the way the join
+      -- that once reported $284k against a true $172k did.
+      SELECT d.contact_id,
+             c.client_id,
+             (d.phone_normalized IS NOT NULL AND d.phone_normalized <> ''
+              AND right(regexp_replace(c.phone, '\\D', '', 'g'), 10) = right(d.phone_normalized, 10)) AS by_phone
         FROM deduped d
         -- The match expressions below must stay byte-identical to the
         -- functional indexes idx_mb_clients_phone_last10 and
@@ -207,7 +228,7 @@ export async function getLeadSourceReport(
         -- Do NOT reintroduce a length(...) guard here: it is redundant
         -- (right('1',10) cannot equal a 10-digit string) and it prevents the
         -- index from being used.
-        LEFT JOIN mb_clients_cache c
+        JOIN mb_clients_cache c
           ON (
                d.phone_normalized IS NOT NULL AND d.phone_normalized <> ''
                AND right(regexp_replace(c.phone, '\\D', '', 'g'), 10) = right(d.phone_normalized, 10)
@@ -216,11 +237,23 @@ export async function getLeadSourceReport(
                d.email IS NOT NULL AND d.email <> ''
                AND lower(c.email) = lower(d.email)
              )
-       ORDER BY d.contact_id,
-                -- prefer a phone match over an email match, then oldest record
-                (d.phone_normalized IS NOT NULL
-                 AND right(regexp_replace(c.phone, '\\D', '', 'g'), 10) = right(d.phone_normalized, 10)) DESC,
-                c.creation_date ASC NULLS LAST
+    ),
+    ids AS (
+      -- A phone match wins outright when there is one. An email match alone can
+      -- be a shared household address, and merging on it would fuse two people
+      -- into one patient -- the same preference the old ORDER BY encoded.
+      SELECT contact_id,
+             COALESCE(
+               array_agg(DISTINCT client_id) FILTER (WHERE by_phone),
+               array_agg(DISTINCT client_id)
+             ) AS client_ids
+        FROM links
+       GROUP BY contact_id
+    ),
+    matched AS (
+      SELECT d.*, i.client_ids
+        FROM deduped d
+        LEFT JOIN ids i ON i.contact_id = d.contact_id
     )
     SELECT m.contact_id,
            m.source,
@@ -231,7 +264,7 @@ export async function getLeadSourceReport(
            -- Rule 3: a lead is someone with no purchase BEFORE the lead date.
            COALESCE((
              SELECT true FROM mb_sales_history s
-              WHERE s.client_id = m.client_id
+              WHERE s.client_id = ANY(m.client_ids)
                 AND s.sale_date < m.created_at::date
               LIMIT 1
            ), false) AS had_prior_purchase,
@@ -240,14 +273,14 @@ export async function getLeadSourceReport(
            -- below, so the count and the dollars can never disagree.
            COALESCE((
              SELECT true FROM mb_sales_history s
-              WHERE s.client_id = m.client_id
+              WHERE s.client_id = ANY(m.client_ids)
                 AND s.sale_date >= m.created_at::date
                 AND s.sale_date <  (m.created_at + (${maturation} || ' days')::interval)::date
               LIMIT 1
            ), false) AS purchased,
            (
              SELECT COALESCE(SUM(s.total_amount), 0) FROM mb_sales_history s
-              WHERE s.client_id = m.client_id
+              WHERE s.client_id = ANY(m.client_ids)
                 AND s.sale_date >= m.created_at::date
                 AND s.sale_date <  (m.created_at + (${maturation} || ' days')::interval)::date
            ) AS revenue,
@@ -255,9 +288,19 @@ export async function getLeadSourceReport(
            -- comparable between cohorts, so the UI must label it as such.
            (
              SELECT COALESCE(SUM(s.total_amount), 0) FROM mb_sales_history s
-              WHERE s.client_id = m.client_id
+              WHERE s.client_id = ANY(m.client_ids)
                 AND s.sale_date >= m.created_at::date
-           ) AS revenue_to_date
+           ) AS revenue_to_date,
+           -- Did this lead arrive with any way to recognise them later? A lead
+           -- with neither phone nor email can never be matched to a patient, so
+           -- it can never register a purchase however well the channel worked.
+           --
+           -- Deliberately NOT "did they match a patient record": that is
+           -- circular for phone channels, where someone enters the patient
+           -- database only by booking. Call-In matched 28 of 197 and 26 of
+           -- those 28 bought -- which measures the database, not the channel.
+           ((m.phone_normalized IS NOT NULL AND m.phone_normalized <> '')
+            OR (m.email IS NOT NULL AND m.email <> '')) AS contactable
       FROM matched m
   `;
   const raw = result.rows;
@@ -281,7 +324,9 @@ export async function getLeadSourceReport(
         revenue: 0,
         revenueToDate: 0,
         revPerLead: null,
+        contactable: 0,
         suppressed: false,
+        unmeasurable: false,
       };
       byChannel.set(channel, row);
     }
@@ -293,6 +338,7 @@ export async function getLeadSourceReport(
       continue;
     }
     row.newLeads++;
+    if (r.contactable) row.contactable++;
     if (r.purchased) row.purchased++;
     row.revenue += Number(r.revenue || 0);
     row.revenueToDate += Number(r.revenue_to_date || 0);
@@ -301,11 +347,16 @@ export async function getLeadSourceReport(
   const rows = [...byChannel.values()].map((row) => {
     // Honesty requirement: suppress rates on rows too small to support them.
     const suppressed = row.newLeads < MIN_REPORTABLE_N;
+    // A rate rests on the leads we could ever follow, not on the leads that
+    // arrived. Below the same threshold on THAT count, the rate is noise.
+    const unmeasurable = !suppressed && row.contactable < MIN_REPORTABLE_N;
+    const hide = suppressed || unmeasurable;
     return {
       ...row,
       suppressed,
-      purchaseRate: suppressed ? null : row.purchased / row.newLeads,
-      revPerLead: suppressed ? null : row.revenue / row.newLeads,
+      unmeasurable,
+      purchaseRate: hide ? null : row.purchased / row.newLeads,
+      revPerLead: hide ? null : row.revenue / row.newLeads,
     };
   });
 
