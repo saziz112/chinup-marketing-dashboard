@@ -32,12 +32,27 @@ Capture had to be trustworthy before measurement meant anything.
   calls** — a known contact who phones in is not tagged, so the metric must be
   labelled "new call-in leads", never "calls".
 - **Phone merge tag repaired** in the Botox workflows (Decatur, Smyrna).
-- **Open defect, not blocking:** the `All Locations - Filler $100 OFF Form`
-  (created 13 Jul) was never field-mapped in the Decatur sub-account. Decatur
-  receives 0 of that form's leads while Kennesaw and Smyrna receive 9 each; Decatur
-  leads both April forms (106 Botox, 58 Microneedling), so the sub-account is
-  healthy and one form was missed. Four weeks of Decatur's share of that offer are
-  lost. Three identified leads need working by hand.
+- **Open defect, cause unknown, not blocking:** the `All Locations - Filler $100 OFF
+  Form` (created 13 Jul) has delivered leads only since **5 Aug** — seven in total,
+  all present in Kennesaw and Smyrna, **none in Decatur**. Kennesaw and Smyrna each
+  correctly claim their own two and ignore the rest; Decatur's three (Tonya Martin,
+  Regina Mccoy, Grady Bland) exist in neither of Decatur's own records and sit
+  untagged and unassigned in the other two sub-accounts.
+
+  Ruled out in Decatur (verified live 11 Aug): field mapping is complete and enabled
+  for this form; the Facebook Page connection works (40 Botox + 13 Microneedling
+  leads since 13 Jul); the `Preferred Location` field is identical across all three
+  sub-accounts (`Decatur` / `Kennesaw` / `Smyrna/Vinings`); the workflow is published
+  with the right form and filter. **An earlier version of this spec claimed the form
+  was never mapped in Decatur and that four weeks were lost — both were wrong.**
+
+  Leading untested hypothesis: the mapping was confirmed but never committed with the
+  outer dialog's Save. Test is the next Decatur-preferring lead (~1/day). If it still
+  fails, look at Page-level lead access per sub-account.
+
+  **Detection gap worth generalising:** nothing in GHL reports that a form is live in
+  two sub-accounts and silent in a third. Only a per-form, per-location arrival count
+  surfaces it — a view the product does not offer and this dashboard should.
 
 ## Scope
 
@@ -120,11 +135,13 @@ neither phone nor email can never match at all (one sampled lead, Karen Romero, 
 no phone stored). Re-run the check if the join logic changes.
 
 **The baseline table groups by GHL's `source` string, not `attributionSource`.**
-This spec requires the latter. That mismatch is why `(blank)` holds 376 leads: those
-contacts carry no `source` value but many do carry full native attribution.
-Implementing per spec will shrink `(blank)` and move leads into named channels, so
-the table above **understates named sources and overstates `(blank)`.** Re-baseline
-after implementation.
+That mismatch is why `(blank)` holds 376 leads: those contacts carry no `source`
+value but many do carry full native attribution.
+
+> **Superseded 2026-08-12.** An earlier revision of this spec required grouping by
+> `attributionSource` *instead of* `source`. That instruction was wrong and would
+> have destroyed the Website channel. See "Implementation, 2026-08-12" below for
+> the measured correction and the new baseline.
 
 ## Coverage against Emily's taxonomy
 
@@ -237,3 +254,99 @@ and as a reason not to cut paid social on show rate alone.
    restoring capture is a Zenoti settings change or a training change. Until it is
    restored, no channel-mix question can be answered for any period after
    2026-03-31 — including the periods current spend decisions are being made on.
+
+## Implementation, 2026-08-12
+
+### Correction: neither field is correct alone
+
+The earlier rule ("group by `attributionSource`, not `source`") was tested against
+live data and **fails for the highest-value channel**. Measured n=60 per bucket:
+
+| GHL `source` | What native attribution reports |
+|---|---|
+| `Website` | **53/60 → `CRM Workflows` / medium `Manual`** · 4 Paid Social · 2 Other · 1 Organic |
+| `Facebook` | 58/60 → `Paid Social` / facebook + form · 1 CRM Workflows · 1 Social media |
+| `chat widget` | 28 Organic Search · 18 Direct · 10 Social media · 3 Paid Search · 1 Referral |
+
+Native attribution is *worse* for Website (it reports a non-channel), *far better*
+for chat widget (it resolves one flat label into five real channels), and
+equivalent for Facebook. So the resolver is a precedence hybrid, implemented in
+`src/lib/attribution.ts`:
+
+1. Paid-ad signal in attribution (`formName` + facebook/instagram medium, or a real
+   `utmSource`) → `Paid Social` / `Paid Search`
+2. Meaningful first-party `source` (`Website`, `Call-In`, `Google Ads – *`,
+   consult/landing-page forms) → trust it
+3. Real web channel in attribution (`Organic Search`, `Direct traffic`,
+   `Social media`, `Referral`) → use it — this is what rescues chat widget
+4. Otherwise → `Other` (attribution present but empty) or `Unattributed`
+
+`chat widget` and `Facebook` are deliberately excluded from rule 2's trust list.
+
+### `Other` is a genuine dead end
+
+62 of 69 sampled `Other` rows are literally `{"sessionSource":"Other","medium":"other"}`
+— no utmSource, referrer, form, or ad. There is nothing to recover; it is not a
+parsing gap. It must stay visible as its own bucket rather than being folded away.
+
+### Data pipeline
+
+The contacts sync runs on the **v1 JWT API, which never returns `attributionSource`**.
+Added `ghl_contacts_map.attribution_source JSONB` + `attribution_synced_at`, populated
+by `scripts/backfill_attribution.mjs` via the v2 single-contact GET (no bulk endpoint
+exists; one request per contact, ~11 min for 5,012 contacts over 120 days).
+Coverage: **4,864 of 5,012 (97%)**, 11 failures.
+
+Raw blobs are stored and the channel is resolved at read time, so changing the
+resolver never requires re-running the backfill.
+
+**Trap, hit and fixed:** `sql.json(attr)` *double-encoded* the blob — 4,228 rows
+stored `jsonb_typeof = 'string'`, making `->>'sessionSource'` NULL and inflating
+`Unattributed` to 914. This is the same class of bug as `items_json` and
+`ghl_contacts_map.tags`, but note the fix is the **opposite** of what the tags note
+says: pass the object directly, do not wrap in `sql.json()`. The backfill now
+self-checks for the regression.
+
+### Re-baseline (leads 30-90 days old, 30 days to convert)
+
+| Source | New leads | Showed | Show rate | Revenue | Rev/lead |
+|---|---|---|---|---|---|
+| Paid Social | 507 | 42 | 8% | $27,732 | $55 |
+| Other | 323 | 38 | 12% | $34,151 | $106 |
+| Social Media | 142 | 1 | 1% | $670 | $5 |
+| Website | 141 | 50 | **35%** | $55,465 | **$393** |
+| Unattributed | 51 | 19 | 37% | $29,877 | $586 |
+| Organic Search | 24 | 3 | n<30 | $1,294 | — |
+| Paid Search | 19 | 4 | n<30 | $1,109 | — |
+| Direct | 9 | 0 | n<30 | $0 | — |
+| **Total** | **1,216** | **157** | **13%** | **$150,297** | |
+
+Reconciliation against the 2026-08-10 baseline: Paid Social 507 vs 483 and Paid
+Search 19 vs 18 both hold. **`(blank)` 376 → `Unattributed` 51, an 86% reduction** —
+the goal of the exercise. Website fell 181 → 141 because rule 1 correctly reclaims
+the ~4% of "Website" contacts that were really paid-social leads; its show rate rose
+28% → 35% and rev/lead $275 → $393, strengthening the original conclusion that
+Website is the most valuable channel by a wide margin.
+
+**New and worth investigating: `Social Media` — 142 leads, 1 show, $670.** Almost
+certainly Instagram DM traffic. If real, it is the worst-converting source measured
+and consumes staff time.
+
+### Shipped
+
+- `src/lib/attribution.ts` — channel resolver
+- `src/lib/lead-sources.ts` — funnel query enforcing all five rules
+- `src/app/api/lead-sources/route.ts` — admins see revenue, others volumes only
+- `src/app/(dashboard)/lead-sources/page.tsx` — own page, nav item "Lead Sources"
+- `scripts/backfill_attribution.mjs` — resumable backfill
+- `scripts/debug/verify_lead_sources.mjs` — re-baseline harness (duplicates the SQL;
+  delete once the page is trusted)
+
+### Still open
+
+- Sync change: new contacts get no attribution until the backfill is re-run. The v1
+  sync cannot supply it, so either a v2 path or a nightly incremental backfill is
+  needed.
+- Spend / CPL / cost-per-showed columns are **not** wired up yet — `ad_metrics_daily`
+  is still 0 rows and spend is fetched live.
+- `referred_by` panel not built.

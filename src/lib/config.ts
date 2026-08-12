@@ -71,6 +71,7 @@ export const NAV_ITEMS: NavItem[] = [
     { id: 'organic', label: 'Organic', href: '/organic', icon: 'trending-up', group: 'Analytics' },
     { id: 'ads', label: 'Paid Ads', href: '/ads', icon: 'dollar-sign', group: 'Analytics' },
     { id: 'attribution', label: 'Leads & Pipeline', href: '/attribution', icon: 'git-branch', group: 'Analytics' },
+    { id: 'lead-sources', label: 'Lead Sources', href: '/lead-sources', icon: 'pie-chart', group: 'Analytics' },
     { id: 'research', label: 'Research', href: '/research', icon: 'search', group: 'Content' },
     { id: 'settings', label: 'Settings', href: '/settings', icon: 'settings', adminOnly: true },
 ];
