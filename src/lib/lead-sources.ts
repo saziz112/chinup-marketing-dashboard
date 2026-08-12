@@ -84,7 +84,10 @@ export async function getLeadSourceReport(
   const maturation = params.maturationDays ?? 30;
   const location = params.location ?? null;
 
-  const raw = (await sql`
+  // The shim returns { rows, rowCount, command }, not an array — read .rows,
+  // as every other call site does. Casting the wrapper straight to an array
+  // type compiles but throws "not iterable" at runtime on the loop below.
+  const result = await sql<RawLeadRow>`
     WITH deduped AS (
       -- Rule 1: one row per PERSON, not per sub-account record.
       SELECT DISTINCT ON (COALESCE(NULLIF(phone_normalized, ''), NULLIF(email, ''), contact_id))
@@ -108,10 +111,27 @@ export async function getLeadSourceReport(
              d.*,
              c.client_id
         FROM deduped d
+        -- The match expressions below must stay byte-identical to the
+        -- functional indexes idx_mb_clients_phone_last10 and
+        -- idx_mb_clients_email_lower, or Postgres sequentially scans
+        -- mb_clients_cache per lead: 14.6s vs 149ms (measured 2026-08-12).
+        --
+        -- Byte-identical includes the REGEX ESCAPE. In a JS/TS template
+        -- literal '\D' cooks to 'D' (unknown escapes drop the backslash), so
+        -- a .mjs helper that writes '\D' silently builds an index on
+        -- regexp_replace(phone,'D',...) -- stripping the letter D, not
+        -- non-digits. That index can never match this query, and it also
+        -- makes ad-hoc timing scripts look 60x faster than reality. Write
+        -- '\\D' in JS/TS. This file is correct; verify with:
+        --   SELECT indexdef FROM pg_indexes
+        --    WHERE indexname = 'idx_mb_clients_phone_last10';
+        --
+        -- Do NOT reintroduce a length(...) guard here: it is redundant
+        -- (right('1',10) cannot equal a 10-digit string) and it prevents the
+        -- index from being used.
         LEFT JOIN mb_clients_cache c
           ON (
                d.phone_normalized IS NOT NULL AND d.phone_normalized <> ''
-               AND length(regexp_replace(c.phone, '\\D', '', 'g')) >= 10
                AND right(regexp_replace(c.phone, '\\D', '', 'g'), 10) = right(d.phone_normalized, 10)
              )
           OR (
@@ -121,7 +141,6 @@ export async function getLeadSourceReport(
        ORDER BY d.contact_id,
                 -- prefer a phone match over an email match, then oldest record
                 (d.phone_normalized IS NOT NULL
-                 AND length(regexp_replace(c.phone, '\\D', '', 'g')) >= 10
                  AND right(regexp_replace(c.phone, '\\D', '', 'g'), 10) = right(d.phone_normalized, 10)) DESC,
                 c.creation_date ASC NULLS LAST
     )
@@ -152,7 +171,8 @@ export async function getLeadSourceReport(
                 AND s.sale_date <  (m.created_at + (${maturation} || ' days')::interval)::date
            ) AS revenue
       FROM matched m
-  `) as unknown as RawLeadRow[];
+  `;
+  const raw = result.rows;
 
   const byChannel = new Map<Channel, LeadSourceRow>();
   let unbackfilled = 0;

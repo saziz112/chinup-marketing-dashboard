@@ -36,6 +36,18 @@ await sql`ALTER TABLE ghl_contacts_map ADD COLUMN IF NOT EXISTS attribution_sync
 await sql`CREATE INDEX IF NOT EXISTS idx_ghl_contacts_attr_synced
           ON ghl_contacts_map(attribution_synced_at)`;
 
+// Functional indexes for the lead-source join. These must match the
+// expressions in src/lib/lead-sources.ts byte-for-byte; without them the
+// join sequentially scans mb_clients_cache once per lead (19s -> 0.6s).
+await sql`CREATE INDEX IF NOT EXISTS idx_mb_clients_phone_last10
+          ON mb_clients_cache ((right(regexp_replace(phone,'\\D','','g'),10)))`;
+await sql`CREATE INDEX IF NOT EXISTS idx_mb_clients_email_lower
+          ON mb_clients_cache ((lower(email)))`;
+await sql`CREATE INDEX IF NOT EXISTS idx_mb_sales_client_date
+          ON mb_sales_history (client_id, sale_date)`;
+await sql`CREATE INDEX IF NOT EXISTS idx_mb_appts_client_start
+          ON mb_appointments_history (client_id, start_date)`;
+
 const pending = await sql`
   SELECT contact_id, location_key
     FROM ghl_contacts_map
