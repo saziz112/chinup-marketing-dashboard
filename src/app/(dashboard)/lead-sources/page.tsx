@@ -34,6 +34,7 @@ interface Report {
         location: string | null;
         matured: boolean;
         maturesOn: string | null;
+        maturedShare: number;
     };
     unbackfilled: number;
     generatedAt: string;
@@ -65,9 +66,11 @@ export default function LeadSourcesPage() {
 
     const months = useMemo(recentMonths, []);
     const [location, setLocation] = useState<LocationFilter>('all');
-    const [mode, setMode] = useState<'rolling' | 'month'>('rolling');
+    const [mode, setMode] = useState<'rolling' | 'month' | 'range'>('rolling');
     const [cohort, setCohort] = useState<string>('30-90');
     const [month, setMonth] = useState<string>(months[1].id); // default to last full month
+    const [from, setFrom] = useState<string>('');
+    const [to, setTo] = useState<string>('');
     const [data, setData] = useState<Report | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -76,7 +79,11 @@ export default function LeadSourcesPage() {
         setLoading(true);
         setError(null);
         const params = new URLSearchParams({ maturation: '30' });
-        if (mode === 'month') {
+        if (mode === 'range') {
+            if (!from || !to) { setLoading(false); return; }
+            params.set('from', from);
+            params.set('to', to);
+        } else if (mode === 'month') {
             params.set('month', month);
         } else {
             const c = COHORTS.find(x => x.id === cohort) ?? COHORTS[0];
@@ -93,20 +100,26 @@ export default function LeadSourcesPage() {
         } finally {
             setLoading(false);
         }
-    }, [location, cohort, mode, month]);
+    }, [location, cohort, mode, month, from, to]);
 
     useEffect(() => { load(); }, [load]);
 
     const activeCohort = COHORTS.find(x => x.id === cohort) ?? COHORTS[0];
     const activeMonth = months.find(m => m.id === month);
-    const cohortLabel = mode === 'month'
-        ? `leads submitted in ${activeMonth?.label ?? month}`
-        : `leads ${activeCohort.label} old`;
+    const cohortLabel = mode === 'range'
+        ? `leads submitted ${from} to ${to}`
+        : mode === 'month'
+            ? `leads submitted in ${activeMonth?.label ?? month}`
+            : `leads ${activeCohort.label} old`;
 
     const totalPurchaseRate = data?.totals.newLeads
         ? (data.totals.purchased / data.totals.newLeads) * 100
         : null;
-    const immature = data ? !data.window.matured : false;
+    // Maturity is a matter of degree, not a flag: a month whose leads are 96%
+    // matured is worth reading, one at 40% is not. Suppress the banner entirely
+    // once effectively everything has had its full window.
+    const maturedPct = data ? Math.round(data.window.maturedShare * 100) : 100;
+    const immature = data ? !data.window.matured && maturedPct < 100 : false;
 
     return (
         <div>
@@ -156,6 +169,22 @@ export default function LeadSourcesPage() {
                         <option key={m.id} value={m.id}>{m.label}</option>
                     ))}
                 </select>
+                <span style={{ fontSize: '13px', opacity: 0.7, marginLeft: '12px' }}>Or exact dates:</span>
+                <input
+                    type="date"
+                    className={`period-btn ${mode === 'range' ? 'active' : ''}`}
+                    value={from}
+                    max={to || undefined}
+                    onChange={e => { setFrom(e.target.value); if (e.target.value && to) setMode('range'); }}
+                />
+                <span style={{ fontSize: '13px', opacity: 0.7 }}>to</span>
+                <input
+                    type="date"
+                    className={`period-btn ${mode === 'range' ? 'active' : ''}`}
+                    value={to}
+                    min={from || undefined}
+                    onChange={e => { setTo(e.target.value); if (from && e.target.value) setMode('range'); }}
+                />
             </div>
 
             {loading && <div className="section-card"><div className="empty-state">Loading…</div></div>}
@@ -165,13 +194,17 @@ export default function LeadSourcesPage() {
                 <>
                     {immature && (
                         <div className="section-card" style={{ borderLeft: '3px solid var(--warning, #d6a44a)' }}>
-                            <strong>Still maturing — do not compare this to a finished period.</strong>
+                            <strong>
+                                {maturedPct}% of these leads have had their full{' '}
+                                {data.window.maturationDays} days to buy
+                                {maturedPct >= 75 ? ' — read it, but the last few points will still move.' : ' — treat it as provisional.'}
+                            </strong>
                             <p style={{ margin: '4px 0 0', fontSize: '14px', opacity: 0.85 }}>
-                                Some of these leads have not yet had the full {data.window.maturationDays} days
-                                to buy, so every rate below is still climbing. It settles on{' '}
-                                {data.window.maturesOn}. Median time from lead to first purchase is 4 days and
-                                92% of buyers buy within 30, so most of the movement happens early — but a
-                                part-grown period put next to a finished one will read as a collapse.
+                                The rest were submitted too recently, so the rates below can only go up. This
+                                period is final on {data.window.maturesOn}. Median time from lead to first
+                                purchase is 4 days and 92% of buyers buy within 30, so most of the movement
+                                has already happened{maturedPct < 50 ? ' for the older half' : ''} — but put
+                                against a finished period, a part-grown one still reads low.
                             </p>
                         </div>
                     )}
@@ -315,8 +348,8 @@ export default function LeadSourcesPage() {
                             </li>
                             <li>
                                 <strong>Cohort is {cohortLabel}.</strong>{' '}
-                                {mode === 'month'
-                                    ? 'A lead counts in the month it was submitted, and its spending follows it there even if the sale happened later.'
+                                {mode !== 'rolling'
+                                    ? 'A lead counts in the period it was submitted, and its spending follows it there even if the sale happened later.'
                                     : 'Newer leads are excluded because they have not had time to convert and would drag their source down unfairly. These bounds are measured from today, so totals shift slightly between visits — pick a month if you need a figure that stays put.'}
                             </li>
                             <li>

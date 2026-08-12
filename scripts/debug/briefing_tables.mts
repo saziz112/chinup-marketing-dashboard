@@ -24,7 +24,7 @@ async function main() {
 
   const r = await sql<{
     source: string | null; attribution_source: Record<string, unknown> | null;
-    tags: unknown; client_id: string | null; showed: boolean; revenue: string;
+    tags: unknown; client_id: string | null; purchased: boolean; revenue: string;
   }>`
     WITH deduped AS (
       SELECT DISTINCT ON (COALESCE(NULLIF(phone_normalized,''), NULLIF(email,''), contact_id))
@@ -47,9 +47,9 @@ async function main() {
                 c.creation_date ASC NULLS LAST
     )
     SELECT m.source, m.attribution_source, m.tags, m.client_id,
-      COALESCE((SELECT true FROM mb_appointments_history a WHERE a.client_id=m.client_id
-                 AND a.status IN ('Completed','Arrived') AND a.start_date >= m.created_at
-                 AND a.start_date < m.created_at + interval '30 days' LIMIT 1),false) AS showed,
+      COALESCE((SELECT true FROM mb_sales_history s WHERE s.client_id=m.client_id
+                 AND s.sale_date >= m.created_at::date
+                 AND s.sale_date < (m.created_at + interval '30 days')::date LIMIT 1),false) AS purchased,
       (SELECT COALESCE(SUM(s.total_amount),0) FROM mb_sales_history s WHERE s.client_id=m.client_id
          AND s.sale_date >= m.created_at::date
          AND s.sale_date < (m.created_at + interval '30 days')::date) AS revenue
@@ -61,7 +61,7 @@ async function main() {
     if (!m.has(ch)) m.set(ch, { all: 0, matched: 0, showed: 0, rev: 0 });
     const a = m.get(ch)!;
     a.all++;
-    if (x.client_id) { a.matched++; if (x.showed) a.showed++; a.rev += Number(x.revenue || 0); }
+    if (x.client_id) { a.matched++; if (x.purchased) a.showed++; a.rev += Number(x.revenue || 0); }
   }
   console.log('\n=== TABLE 2: matched-only ===');
   for (const [k, v] of [...m.entries()].sort((a, b) => b[1].matched - a[1].matched)) {

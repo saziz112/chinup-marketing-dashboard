@@ -4,10 +4,13 @@
  *
  * Query params:
  *   - location:      'decatur' | 'kennesaw' | 'smyrna' (optional, default all)
+ *   - from, to:      'YYYY-MM-DD' — an explicit lead-submission range, `to`
+ *                    inclusive. Both required together. Wins over month.
  *   - month:         'YYYY-MM' — leads submitted in that calendar month.
- *                    Takes precedence over minAge/maxAge, and is the form to
- *                    prefer for any figure someone will quote: the age bounds
- *                    are measured from now(), so they slide between requests.
+ *                    Either of these beats minAge/maxAge, and one of them is
+ *                    what to use for any figure someone will quote: the age
+ *                    bounds are measured from now(), so they slide between
+ *                    requests and the same question gets a different answer.
  *   - minAge:        lower bound on lead age in days (default 30)
  *   - maxAge:        upper bound on lead age in days (default 90)
  *   - maturation:    days each lead gets to convert (default 30)
@@ -46,11 +49,36 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: 'maxAge must exceed minAge' }, { status: 400 });
     }
 
-    // month=YYYY-MM -> [first of month, first of next month)
+    // Explicit range wins: from/to are YYYY-MM-DD, `to` INCLUSIVE for the
+    // caller (a picker showing "1 Jul - 15 Jul" must include the 15th), so it
+    // is advanced by a day before reaching the exclusive bound underneath.
     let from: string | null = null;
     let to: string | null = null;
+    const rawFrom = p.get('from');
+    const rawTo = p.get('to');
+    const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+    if (rawFrom || rawTo) {
+        if (!rawFrom || !rawTo || !ISO_DATE.test(rawFrom) || !ISO_DATE.test(rawTo)) {
+            return NextResponse.json(
+                { error: 'from and to must both be supplied as YYYY-MM-DD' },
+                { status: 400 },
+            );
+        }
+        if (rawTo < rawFrom) {
+            return NextResponse.json({ error: 'to must not precede from' }, { status: 400 });
+        }
+        const end = new Date(`${rawTo}T00:00:00Z`);
+        if (Number.isNaN(end.getTime())) {
+            return NextResponse.json({ error: 'to is not a real date' }, { status: 400 });
+        }
+        end.setUTCDate(end.getUTCDate() + 1);
+        from = rawFrom;
+        to = end.toISOString().slice(0, 10);
+    }
+
+    // month=YYYY-MM -> [first of month, first of next month)
     const month = p.get('month');
-    if (month) {
+    if (!from && month) {
         if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
             return NextResponse.json({ error: 'month must be YYYY-MM' }, { status: 400 });
         }

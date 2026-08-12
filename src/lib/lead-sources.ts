@@ -77,6 +77,14 @@ export interface LeadSourceReport {
     matured: boolean;
     /** ISO date the cohort finishes maturing, or null once it already has. */
     maturesOn: string | null;
+    /**
+     * Share of leads (0-1) that have already had the full maturation window.
+     * Maturity is a matter of degree, not a flag: on 12 Aug a July cohort is
+     * ~half grown, because only leads up to 13 July have had 30 days. Callers
+     * should show this rather than a bare warning, which reads as "ignore
+     * this data" when most of it is in fact final.
+     */
+    maturedShare: number;
   };
   /** Contacts in window with no attribution row yet — backfill coverage gap. */
   unbackfilled: number;
@@ -90,6 +98,7 @@ interface RawLeadRow {
   attribution_synced_at: Date | null;
   /** jsonb, but the sync writes it double-encoded on some rows — see tagList. */
   tags: unknown;
+  created_at: Date;
   had_prior_purchase: boolean;
   purchased: boolean;
   revenue: string | null;
@@ -218,6 +227,7 @@ export async function getLeadSourceReport(
            m.attribution_source,
            m.attribution_synced_at,
            m.tags,
+           m.created_at,
            -- Rule 3: a lead is someone with no purchase BEFORE the lead date.
            COALESCE((
              SELECT true FROM mb_sales_history s
@@ -301,13 +311,18 @@ export async function getLeadSourceReport(
 
   rows.sort((a, b) => b.newLeads - a.newLeads);
 
-  // The newest lead in the cohort sets maturity: until it has had the full
-  // maturation window, every rate on the page is still climbing.
+  // The newest lead in the cohort sets the date everything is final; the
+  // share below says how much of the cohort is already there.
   const cohortEndDate = fixed
     ? new Date(`${fixed.to}T00:00:00Z`)
     : new Date(Date.now() - minAge * 86400000);
   const maturesOn = new Date(cohortEndDate.getTime() + maturation * 86400000);
   const matured = Date.now() >= maturesOn.getTime();
+
+  const maturedBy = Date.now() - maturation * 86400000;
+  const maturedShare = raw.length
+    ? raw.filter((r) => new Date(r.created_at).getTime() <= maturedBy).length / raw.length
+    : 1;
 
   return {
     rows,
@@ -325,6 +340,7 @@ export async function getLeadSourceReport(
       location,
       matured,
       maturesOn: matured ? null : maturesOn.toISOString().slice(0, 10),
+      maturedShare,
     },
     unbackfilled,
     generatedAt: new Date().toISOString(),
