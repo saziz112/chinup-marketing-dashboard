@@ -1,7 +1,7 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { formatNumber, formatCurrency } from '@/lib/format';
 import { LOCATION_OPTIONS, type LocationFilter } from '@/lib/constants';
 
@@ -10,17 +10,31 @@ interface Row {
     leads: number;
     newLeads: number;
     existingPatients: number;
-    showed: number;
-    showRate: number | null;
+    purchased: number;
+    purchaseRate: number | null;
     revenue?: number;
+    revenueToDate?: number;
     revPerLead?: number | null;
     suppressed: boolean;
 }
 
 interface Report {
     rows: Row[];
-    totals: { leads: number; newLeads: number; showed: number; revenue?: number };
-    window: { cohortStart: string; cohortEnd: string; maturationDays: number; location: string | null };
+    totals: {
+        leads: number;
+        newLeads: number;
+        purchased: number;
+        revenue?: number;
+        revenueToDate?: number;
+    };
+    window: {
+        cohortStart: string;
+        cohortEnd: string;
+        maturationDays: number;
+        location: string | null;
+        matured: boolean;
+        maturesOn: string | null;
+    };
     unbackfilled: number;
     generatedAt: string;
 }
@@ -31,12 +45,29 @@ const COHORTS = [
     { id: '7-60', label: '7-60 days', minAge: 7, maxAge: 60 },
 ] as const;
 
+/** Last 13 calendar months, newest first, as { id: 'YYYY-MM', label: 'Aug 2026' }. */
+function recentMonths(): { id: string; label: string }[] {
+    const out: { id: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = 0; i < 13; i++) {
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+        out.push({
+            id: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`,
+            label: d.toLocaleString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' }),
+        });
+    }
+    return out;
+}
+
 export default function LeadSourcesPage() {
     const { data: session } = useSession();
     const isAdmin = (session?.user as Record<string, unknown> | undefined)?.isAdmin === true;
 
+    const months = useMemo(recentMonths, []);
     const [location, setLocation] = useState<LocationFilter>('all');
+    const [mode, setMode] = useState<'rolling' | 'month'>('rolling');
     const [cohort, setCohort] = useState<string>('30-90');
+    const [month, setMonth] = useState<string>(months[1].id); // default to last full month
     const [data, setData] = useState<Report | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -44,12 +75,14 @@ export default function LeadSourcesPage() {
     const load = useCallback(async () => {
         setLoading(true);
         setError(null);
-        const c = COHORTS.find(x => x.id === cohort) ?? COHORTS[0];
-        const params = new URLSearchParams({
-            minAge: String(c.minAge),
-            maxAge: String(c.maxAge),
-            maturation: '30',
-        });
+        const params = new URLSearchParams({ maturation: '30' });
+        if (mode === 'month') {
+            params.set('month', month);
+        } else {
+            const c = COHORTS.find(x => x.id === cohort) ?? COHORTS[0];
+            params.set('minAge', String(c.minAge));
+            params.set('maxAge', String(c.maxAge));
+        }
         if (location !== 'all') params.set('location', location);
         try {
             const res = await fetch(`/api/lead-sources?${params}`);
@@ -60,14 +93,20 @@ export default function LeadSourcesPage() {
         } finally {
             setLoading(false);
         }
-    }, [location, cohort]);
+    }, [location, cohort, mode, month]);
 
     useEffect(() => { load(); }, [load]);
 
     const activeCohort = COHORTS.find(x => x.id === cohort) ?? COHORTS[0];
-    const totalShowRate = data?.totals.newLeads
-        ? (data.totals.showed / data.totals.newLeads) * 100
+    const activeMonth = months.find(m => m.id === month);
+    const cohortLabel = mode === 'month'
+        ? `leads submitted in ${activeMonth?.label ?? month}`
+        : `leads ${activeCohort.label} old`;
+
+    const totalPurchaseRate = data?.totals.newLeads
+        ? (data.totals.purchased / data.totals.newLeads) * 100
         : null;
+    const immature = data ? !data.window.matured : false;
 
     return (
         <div>
@@ -91,17 +130,32 @@ export default function LeadSourcesPage() {
                 </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                <span style={{ alignSelf: 'center', fontSize: '13px', opacity: 0.7 }}>Lead age:</span>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', opacity: 0.7 }}>Lead age:</span>
                 {COHORTS.map(opt => (
                     <button
                         key={opt.id}
-                        className={`period-btn ${cohort === opt.id ? 'active' : ''}`}
-                        onClick={() => setCohort(opt.id)}
+                        className={`period-btn ${mode === 'rolling' && cohort === opt.id ? 'active' : ''}`}
+                        onClick={() => { setMode('rolling'); setCohort(opt.id); }}
                     >
                         {opt.label}
                     </button>
                 ))}
+                <span style={{ fontSize: '13px', opacity: 0.7, marginLeft: '12px' }}>Or by month:</span>
+                <select
+                    className={`period-btn ${mode === 'month' ? 'active' : ''}`}
+                    value={mode === 'month' ? month : ''}
+                    onChange={e => {
+                        if (!e.target.value) return;
+                        setMonth(e.target.value);
+                        setMode('month');
+                    }}
+                >
+                    <option value="">Select a month…</option>
+                    {months.map(m => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                </select>
             </div>
 
             {loading && <div className="section-card"><div className="empty-state">Loading…</div></div>}
@@ -109,23 +163,42 @@ export default function LeadSourcesPage() {
 
             {data && !loading && (
                 <>
+                    {immature && (
+                        <div className="section-card" style={{ borderLeft: '3px solid var(--warning, #d6a44a)' }}>
+                            <strong>Still maturing — do not compare this to a finished period.</strong>
+                            <p style={{ margin: '4px 0 0', fontSize: '14px', opacity: 0.85 }}>
+                                Some of these leads have not yet had the full {data.window.maturationDays} days
+                                to buy, so every rate below is still climbing. It settles on{' '}
+                                {data.window.maturesOn}. Median time from lead to first purchase is 4 days and
+                                92% of buyers buy within 30, so most of the movement happens early — but a
+                                part-grown period put next to a finished one will read as a collapse.
+                            </p>
+                        </div>
+                    )}
+
                     <div className="metrics-grid">
                         <div className="metric-card">
                             <div className="label">New leads</div>
                             <div className="value">{formatNumber(data.totals.newLeads)}</div>
                         </div>
                         <div className="metric-card">
-                            <div className="label">Showed</div>
-                            <div className="value">{formatNumber(data.totals.showed)}</div>
+                            <div className="label">Purchased</div>
+                            <div className="value">{formatNumber(data.totals.purchased)}</div>
                         </div>
                         <div className="metric-card">
-                            <div className="label">Show rate</div>
-                            <div className="value">{totalShowRate === null ? '—' : `${totalShowRate.toFixed(0)}%`}</div>
+                            <div className="label">Purchase rate</div>
+                            <div className="value">{totalPurchaseRate === null ? '—' : `${totalPurchaseRate.toFixed(0)}%`}</div>
                         </div>
                         {isAdmin && (
                             <div className="metric-card">
                                 <div className="label">Revenue in {data.window.maturationDays}d</div>
                                 <div className="value">{formatCurrency(data.totals.revenue ?? 0)}</div>
+                            </div>
+                        )}
+                        {isAdmin && (
+                            <div className="metric-card">
+                                <div className="label">Revenue to date</div>
+                                <div className="value">{formatCurrency(data.totals.revenueToDate ?? 0)}</div>
                             </div>
                         )}
                     </div>
@@ -145,9 +218,18 @@ export default function LeadSourcesPage() {
                                     <tr>
                                         <th>Source</th>
                                         <th style={{ textAlign: 'right' }}>New leads</th>
-                                        <th style={{ textAlign: 'right' }}>Showed</th>
-                                        <th style={{ textAlign: 'right' }}>Show rate</th>
-                                        {isAdmin && <th style={{ textAlign: 'right' }}>Revenue</th>}
+                                        <th style={{ textAlign: 'right' }}>Purchased</th>
+                                        <th style={{ textAlign: 'right' }}>Purchase rate</th>
+                                        {isAdmin && (
+                                            <th style={{ textAlign: 'right' }} title={`Spend within ${data.window.maturationDays} days of the lead. Comparable between periods.`}>
+                                                Revenue in {data.window.maturationDays}d
+                                            </th>
+                                        )}
+                                        {isAdmin && (
+                                            <th style={{ textAlign: 'right' }} title="Everything these leads have spent since. Truer, but older periods have had longer to accrue — do not compare across periods.">
+                                                Revenue to date
+                                            </th>
+                                        )}
                                         {isAdmin && <th style={{ textAlign: 'right' }}>Rev / lead</th>}
                                         <th style={{ textAlign: 'right' }}>Existing patients</th>
                                     </tr>
@@ -157,19 +239,22 @@ export default function LeadSourcesPage() {
                                         <tr key={r.channel}>
                                             <td>{r.channel}</td>
                                             <td style={{ textAlign: 'right' }}>{formatNumber(r.newLeads)}</td>
-                                            <td style={{ textAlign: 'right' }}>{formatNumber(r.showed)}</td>
+                                            <td style={{ textAlign: 'right' }}>{formatNumber(r.purchased)}</td>
                                             <td style={{ textAlign: 'right' }}>
-                                                {r.showRate === null ? (
+                                                {r.purchaseRate === null ? (
                                                     <span
                                                         style={{ opacity: 0.5 }}
                                                         title={`n=${r.newLeads} — below the n=30 reporting threshold`}
                                                     >
                                                         n too small
                                                     </span>
-                                                ) : `${(r.showRate * 100).toFixed(0)}%`}
+                                                ) : `${(r.purchaseRate * 100).toFixed(0)}%`}
                                             </td>
                                             {isAdmin && (
                                                 <td style={{ textAlign: 'right' }}>{formatCurrency(r.revenue ?? 0)}</td>
+                                            )}
+                                            {isAdmin && (
+                                                <td style={{ textAlign: 'right' }}>{formatCurrency(r.revenueToDate ?? 0)}</td>
                                             )}
                                             {isAdmin && (
                                                 <td style={{ textAlign: 'right' }}>
@@ -188,13 +273,18 @@ export default function LeadSourcesPage() {
                                     <tr>
                                         <td><strong>Total</strong></td>
                                         <td style={{ textAlign: 'right' }}><strong>{formatNumber(data.totals.newLeads)}</strong></td>
-                                        <td style={{ textAlign: 'right' }}><strong>{formatNumber(data.totals.showed)}</strong></td>
+                                        <td style={{ textAlign: 'right' }}><strong>{formatNumber(data.totals.purchased)}</strong></td>
                                         <td style={{ textAlign: 'right' }}>
-                                            <strong>{totalShowRate === null ? '—' : `${totalShowRate.toFixed(0)}%`}</strong>
+                                            <strong>{totalPurchaseRate === null ? '—' : `${totalPurchaseRate.toFixed(0)}%`}</strong>
                                         </td>
                                         {isAdmin && (
                                             <td style={{ textAlign: 'right' }}>
                                                 <strong>{formatCurrency(data.totals.revenue ?? 0)}</strong>
+                                            </td>
+                                        )}
+                                        {isAdmin && (
+                                            <td style={{ textAlign: 'right' }}>
+                                                <strong>{formatCurrency(data.totals.revenueToDate ?? 0)}</strong>
                                             </td>
                                         )}
                                         {isAdmin && <td />}
@@ -209,20 +299,34 @@ export default function LeadSourcesPage() {
                         <div className="chart-header"><h2>How to read this</h2></div>
                         <ul style={{ lineHeight: 1.7, paddingLeft: '20px', fontSize: '14px' }}>
                             <li>
+                                <strong>A conversion is a purchase, not an appointment.</strong> Anything the lead
+                                bought counts, including retail. It comes from the same records as the revenue, so
+                                the count and the dollars always agree.
+                            </li>
+                            <li>
+                                <strong>Two revenue columns, and they answer different questions.</strong>{' '}
+                                <em>Revenue in {data.window.maturationDays}d</em> gives every lead the same clock, so
+                                periods can be compared. <em>Revenue to date</em> is the true total but keeps growing,
+                                so an older period will always look better. Compare on the first; bank the second.
+                            </li>
+                            <li>
                                 <strong>Revenue is associated, not caused.</strong> No holdout exists, so this ranks
                                 sources — it does not prove one caused the return.
                             </li>
                             <li>
-                                <strong>Every lead gets {data.window.maturationDays} days to convert.</strong> That
-                                keeps sources comparable, but for a med spa it understates lifetime value.
-                            </li>
-                            <li>
-                                <strong>Cohort is leads {activeCohort.label} old.</strong> Newer leads are excluded
-                                because they have not had time to convert and would drag their source down unfairly.
+                                <strong>Cohort is {cohortLabel}.</strong>{' '}
+                                {mode === 'month'
+                                    ? 'A lead counts in the month it was submitted, and its spending follows it there even if the sale happened later.'
+                                    : 'Newer leads are excluded because they have not had time to convert and would drag their source down unfairly. These bounds are measured from today, so totals shift slightly between visits — pick a month if you need a figure that stays put.'}
                             </li>
                             <li>
                                 <strong>Rows under 30 leads show no rate.</strong> The counts are too small to
                                 support a percentage.
+                            </li>
+                            <li>
+                                <strong>Only about 20% of leads can be matched to a patient record at all.</strong>{' '}
+                                Matching needs a phone or email that appears in both systems, and an unmatchable
+                                lead looks the same as one who never booked. Every rate here is a floor.
                             </li>
                             <li>
                                 <strong>Call-In counts first-time callers only.</strong> A known patient who phones

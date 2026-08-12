@@ -29,8 +29,8 @@ async function main() {
       channel: x.channel,
       leads: x.leads,
       newLeads: x.newLeads,
-      showed: x.showed,
-      showRate: x.showRate === null ? 'n/a' : (x.showRate * 100).toFixed(0) + '%',
+      purchased: x.purchased,
+      purchaseRate: x.purchaseRate === null ? 'n/a' : (x.purchaseRate * 100).toFixed(0) + '%',
       revPerLead: x.revPerLead === null ? 'n/a' : '$' + Math.round(x.revPerLead),
     })),
   );

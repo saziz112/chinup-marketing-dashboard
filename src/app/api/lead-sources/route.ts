@@ -1,9 +1,13 @@
 /**
  * /api/lead-sources
- * GET: Lead-source funnel — leads / new leads / showed / revenue by channel.
+ * GET: Lead-source funnel — leads / new leads / purchased / revenue by channel.
  *
  * Query params:
  *   - location:      'decatur' | 'kennesaw' | 'smyrna' (optional, default all)
+ *   - month:         'YYYY-MM' — leads submitted in that calendar month.
+ *                    Takes precedence over minAge/maxAge, and is the form to
+ *                    prefer for any figure someone will quote: the age bounds
+ *                    are measured from now(), so they slide between requests.
  *   - minAge:        lower bound on lead age in days (default 30)
  *   - maxAge:        upper bound on lead age in days (default 90)
  *   - maturation:    days each lead gets to convert (default 30)
@@ -42,10 +46,26 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: 'maxAge must exceed minAge' }, { status: 400 });
     }
 
+    // month=YYYY-MM -> [first of month, first of next month)
+    let from: string | null = null;
+    let to: string | null = null;
+    const month = p.get('month');
+    if (month) {
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+            return NextResponse.json({ error: 'month must be YYYY-MM' }, { status: 400 });
+        }
+        const [y, m] = month.split('-').map(Number);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        from = `${y}-${pad(m)}-01`;
+        to = m === 12 ? `${y + 1}-01-01` : `${y}-${pad(m + 1)}-01`;
+    }
+
     try {
         const data = await getLeadSourceReport({
             minAgeDays,
             maxAgeDays,
+            from,
+            to,
             maturationDays: num('maturation', 30),
             location,
         });
@@ -55,8 +75,10 @@ export async function GET(req: NextRequest) {
         if (!isAdmin) {
             return NextResponse.json({
                 ...data,
-                rows: data.rows.map(({ revenue: _r, revPerLead: _rp, ...rest }) => rest),
-                totals: { ...data.totals, revenue: undefined },
+                rows: data.rows.map(
+                    ({ revenue: _r, revenueToDate: _rtd, revPerLead: _rp, ...rest }) => rest,
+                ),
+                totals: { ...data.totals, revenue: undefined, revenueToDate: undefined },
             });
         }
 

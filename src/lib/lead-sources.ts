@@ -27,10 +27,28 @@ export interface LeadSourceRow {
   leads: number;
   newLeads: number;
   existingPatients: number;
-  showed: number;
+  /**
+   * Leads who bought anything within `maturationDays` of submitting.
+   *
+   * This replaced an appointment-based "showed" count on 2026-08-12. Measured
+   * over 400 days: 95 leads purchased with no appointment ever recorded, while
+   * only 6 showed without buying. The appointment table also carries no
+   * cancellation statuses. More importantly, revenue below is summed from
+   * mb_sales_history, so counting conversions from appointments meant the
+   * numerator and the dollars came from different tables and a channel could
+   * report revenue with zero conversions.
+   */
+  purchased: number;
   /** null when newLeads < MIN_REPORTABLE_N — too small to quote a rate. */
-  showRate: number | null;
+  purchaseRate: number | null;
+  /** Spend inside the maturation window. Comparable across cohorts. */
   revenue: number;
+  /**
+   * Everything the cohort has spent since submitting, uncapped. Truer, but NOT
+   * comparable between cohorts: an older cohort has had longer to accrue. A
+   * 30-day window captures 69% of lifetime revenue (measured 2026-08-12).
+   */
+  revenueToDate: number;
   revPerLead: number | null;
   /** True when the row is below the reporting threshold. */
   suppressed: boolean;
@@ -41,14 +59,24 @@ export interface LeadSourceReport {
   totals: {
     leads: number;
     newLeads: number;
-    showed: number;
+    purchased: number;
     revenue: number;
+    revenueToDate: number;
   };
   window: {
     cohortStart: string;
     cohortEnd: string;
     maturationDays: number;
     location: string | null;
+    /**
+     * False while the newest lead in the cohort is younger than
+     * maturationDays. An immature cohort understates every rate on the page —
+     * the leads simply have not had time to buy yet — so the UI must say so
+     * rather than let it be read as poor performance.
+     */
+    matured: boolean;
+    /** ISO date the cohort finishes maturing, or null once it already has. */
+    maturesOn: string | null;
   };
   /** Contacts in window with no attribution row yet — backfill coverage gap. */
   unbackfilled: number;
@@ -63,8 +91,9 @@ interface RawLeadRow {
   /** jsonb, but the sync writes it double-encoded on some rows — see tagList. */
   tags: unknown;
   had_prior_purchase: boolean;
-  showed: boolean;
+  purchased: boolean;
   revenue: string | null;
+  revenue_to_date: string | null;
 }
 
 /**
@@ -86,10 +115,18 @@ function tagList(raw: unknown): string[] {
 }
 
 export interface LeadSourceParams {
-  /** Lower bound on lead age, in days. Spec default 30. */
+  /** Lower bound on lead age, in days. Spec default 30. Ignored if from/to set. */
   minAgeDays?: number;
-  /** Upper bound on lead age, in days. Spec default 90. */
+  /** Upper bound on lead age, in days. Spec default 90. Ignored if from/to set. */
   maxAgeDays?: number;
+  /**
+   * Fixed cohort bounds as YYYY-MM-DD, `to` exclusive. Prefer these over the
+   * age params for anything anyone will quote: the age bounds are measured
+   * from now(), so the cohort slides between page loads and totals move for
+   * reasons unrelated to performance. Fixed dates reproduce.
+   */
+  from?: string | null;
+  to?: string | null;
   /** Days each lead is given to convert. Spec default 30. */
   maturationDays?: number;
   /** 'decatur' | 'kennesaw' | 'smyrna', or null for all (deduped). */
@@ -103,6 +140,11 @@ export async function getLeadSourceReport(
   const maxAge = params.maxAgeDays ?? 90;
   const maturation = params.maturationDays ?? 30;
   const location = params.location ?? null;
+
+  // Fixed dates win when both are supplied; the age bounds stay for the
+  // existing rolling views. Passing only one is a caller bug, not a half
+  // range, so treat it as neither.
+  const fixed = params.from && params.to ? { from: params.from, to: params.to } : null;
 
   // The shim returns { rows, rowCount, command }, not an array — read .rows,
   // as every other call site does. Casting the wrapper straight to an array
@@ -120,8 +162,14 @@ export async function getLeadSourceReport(
              tags,
              created_at
         FROM ghl_contacts_map
-       WHERE created_at <  now() - (${minAge} || ' days')::interval
-         AND created_at >= now() - (${maxAge} || ' days')::interval
+       WHERE (
+               CASE WHEN ${fixed ? fixed.from : null}::date IS NOT NULL
+                    THEN created_at >= ${fixed ? fixed.from : null}::date
+                     AND created_at <  ${fixed ? fixed.to : null}::date
+                    ELSE created_at <  now() - (${minAge} || ' days')::interval
+                     AND created_at >= now() - (${maxAge} || ' days')::interval
+               END
+             )
          AND (${location}::text IS NULL OR location_key = ${location})
        ORDER BY COALESCE(NULLIF(phone_normalized, ''), NULLIF(email, ''), contact_id),
                 created_at ASC
@@ -178,20 +226,28 @@ export async function getLeadSourceReport(
               LIMIT 1
            ), false) AS had_prior_purchase,
            -- Rule 4: identical maturation window for every lead.
+           -- Conversion is a PURCHASE, from the same table as the revenue
+           -- below, so the count and the dollars can never disagree.
            COALESCE((
-             SELECT true FROM mb_appointments_history a
-              WHERE a.client_id = m.client_id
-                AND a.status IN ('Completed', 'Arrived')
-                AND a.start_date >= m.created_at
-                AND a.start_date <  m.created_at + (${maturation} || ' days')::interval
+             SELECT true FROM mb_sales_history s
+              WHERE s.client_id = m.client_id
+                AND s.sale_date >= m.created_at::date
+                AND s.sale_date <  (m.created_at + (${maturation} || ' days')::interval)::date
               LIMIT 1
-           ), false) AS showed,
+           ), false) AS purchased,
            (
              SELECT COALESCE(SUM(s.total_amount), 0) FROM mb_sales_history s
               WHERE s.client_id = m.client_id
                 AND s.sale_date >= m.created_at::date
                 AND s.sale_date <  (m.created_at + (${maturation} || ' days')::interval)::date
-           ) AS revenue
+           ) AS revenue,
+           -- Uncapped: everything this lead has spent since submitting. Not
+           -- comparable between cohorts, so the UI must label it as such.
+           (
+             SELECT COALESCE(SUM(s.total_amount), 0) FROM mb_sales_history s
+              WHERE s.client_id = m.client_id
+                AND s.sale_date >= m.created_at::date
+           ) AS revenue_to_date
       FROM matched m
   `;
   const raw = result.rows;
@@ -210,9 +266,10 @@ export async function getLeadSourceReport(
         leads: 0,
         newLeads: 0,
         existingPatients: 0,
-        showed: 0,
-        showRate: null,
+        purchased: 0,
+        purchaseRate: null,
         revenue: 0,
+        revenueToDate: 0,
         revPerLead: null,
         suppressed: false,
       };
@@ -226,8 +283,9 @@ export async function getLeadSourceReport(
       continue;
     }
     row.newLeads++;
-    if (r.showed) row.showed++;
+    if (r.purchased) row.purchased++;
     row.revenue += Number(r.revenue || 0);
+    row.revenueToDate += Number(r.revenue_to_date || 0);
   }
 
   const rows = [...byChannel.values()].map((row) => {
@@ -236,26 +294,37 @@ export async function getLeadSourceReport(
     return {
       ...row,
       suppressed,
-      showRate: suppressed ? null : row.showed / row.newLeads,
+      purchaseRate: suppressed ? null : row.purchased / row.newLeads,
       revPerLead: suppressed ? null : row.revenue / row.newLeads,
     };
   });
 
   rows.sort((a, b) => b.newLeads - a.newLeads);
 
+  // The newest lead in the cohort sets maturity: until it has had the full
+  // maturation window, every rate on the page is still climbing.
+  const cohortEndDate = fixed
+    ? new Date(`${fixed.to}T00:00:00Z`)
+    : new Date(Date.now() - minAge * 86400000);
+  const maturesOn = new Date(cohortEndDate.getTime() + maturation * 86400000);
+  const matured = Date.now() >= maturesOn.getTime();
+
   return {
     rows,
     totals: {
       leads: rows.reduce((n, r) => n + r.leads, 0),
       newLeads: rows.reduce((n, r) => n + r.newLeads, 0),
-      showed: rows.reduce((n, r) => n + r.showed, 0),
+      purchased: rows.reduce((n, r) => n + r.purchased, 0),
       revenue: rows.reduce((n, r) => n + r.revenue, 0),
+      revenueToDate: rows.reduce((n, r) => n + r.revenueToDate, 0),
     },
     window: {
-      cohortStart: `${maxAge} days ago`,
-      cohortEnd: `${minAge} days ago`,
+      cohortStart: fixed ? fixed.from : `${maxAge} days ago`,
+      cohortEnd: fixed ? fixed.to : `${minAge} days ago`,
       maturationDays: maturation,
       location,
+      matured,
+      maturesOn: matured ? null : maturesOn.toISOString().slice(0, 10),
     },
     unbackfilled,
     generatedAt: new Date().toISOString(),

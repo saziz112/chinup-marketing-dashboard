@@ -13,13 +13,13 @@ async function main() {
   const rep = await getLeadSourceReport({ minAgeDays: 30, maxAgeDays: 180, maturationDays: 30, location: null });
   console.log('=== TABLE 1: new leads ===');
   for (const x of rep.rows) {
-    console.log([x.channel, x.newLeads, x.showed,
-      x.showRate === null ? '—' : Math.round(x.showRate * 100) + '%',
+    console.log([x.channel, x.newLeads, x.purchased,
+      x.purchaseRate === null ? '—' : Math.round(x.purchaseRate * 100) + '%',
       '$' + Math.round(x.revenue).toLocaleString(),
       x.revPerLead === null ? '—' : '$' + Math.round(x.revPerLead)].join(' | '));
   }
   const t = rep.totals;
-  console.log(['TOTAL', t.newLeads, t.showed, Math.round(t.showed / t.newLeads * 100) + '%',
+  console.log(['TOTAL', t.newLeads, t.purchased, Math.round(t.purchased / t.newLeads * 100) + '%',
     '$' + Math.round(t.revenue).toLocaleString(), '$' + Math.round(t.revenue / t.newLeads)].join(' | '));
 
   const r = await sql<{
