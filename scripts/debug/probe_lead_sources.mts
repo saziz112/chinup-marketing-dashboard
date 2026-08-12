@@ -11,10 +11,14 @@ async function main() {
   await sql`SELECT 1`;
   console.log('cold_connect_ms', Date.now() - c0);
 
+  // Optional: node ... probe_lead_sources.mts <minAge> <maxAge>
+  const minAgeDays = Number(process.argv[2]) || 30;
+  const maxAgeDays = Number(process.argv[3]) || 90;
+
   const t = Date.now();
   const r = await getLeadSourceReport({
-    minAgeDays: 30,
-    maxAgeDays: 90,
+    minAgeDays,
+    maxAgeDays,
     maturationDays: 30,
     location: null,
   });
