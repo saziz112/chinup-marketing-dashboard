@@ -9,7 +9,8 @@
  */
 
 import { sql } from '@/lib/db/sql';
-import { normalizePhone } from './mindbody';
+import { normalizePhone, type Client, type StaffAppointment } from './mindbody';
+import { MINDBODY_SESSION_TYPE_NAMES } from './mindbody-session-types';
 
 // ---------------------------------------------------------------------------
 // Types — match the shapes that route handlers expect
@@ -393,4 +394,72 @@ export async function getClientMatchMapsFromDB(
     }
 
     return { emailMap, phoneMap, nameMap };
+}
+
+// ---------------------------------------------------------------------------
+// B6: getAppointmentsFromDB + getClientsFromDB — replace getAppointments() and
+//     getClients() in ghl-conversations.getConsultOnlyPatients. Shaped like the
+//     MindBody API types so callers don't change. Covers MindBody history AND
+//     Zenoti-era rows, which the API never could.
+// ---------------------------------------------------------------------------
+
+export async function getAppointmentsFromDB(
+    startDate: string,
+    endDate: string,
+): Promise<StaffAppointment[]> {
+    const start = startDate.split('T')[0];
+    const end = endDate.split('T')[0];
+
+    const result = await sql`
+        SELECT appointment_id, client_id, status, location_id,
+               COALESCE(session_type_id, 0) AS session_type_id, session_type_name,
+               -- Both syncs store clinic-local wall time labelled UTC, so format in UTC.
+               to_char(start_date AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') AS start_local
+        FROM mb_appointments_history
+        WHERE start_date::date BETWEEN ${start} AND ${end}
+    `;
+
+    return result.rows.map(row => {
+        const name = row.session_type_name || MINDBODY_SESSION_TYPE_NAMES[row.session_type_id] || '';
+        return {
+            Id: Number(row.appointment_id) || 0,
+            StaffId: 0,
+            Staff: { Id: 0, FirstName: '', LastName: '', DisplayName: '' },
+            StartDateTime: row.start_local,
+            EndDateTime: row.start_local,
+            Duration: 0,
+            Status: row.status || '',
+            LocationId: row.location_id || 0,
+            SessionTypeId: row.session_type_id,
+            SessionType: { Id: row.session_type_id, Name: name },
+            FirstAppointment: false,
+            ClientId: row.client_id,
+        };
+    });
+}
+
+export async function getClientsFromDB(clientIds: string[]): Promise<Client[]> {
+    if (clientIds.length === 0) return [];
+    const result = await sql`
+        SELECT client_id, first_name, last_name, email, phone
+        FROM mb_clients_cache
+        WHERE client_id = ANY(${clientIds})
+    `;
+    return result.rows.map(row => ({
+        Id: row.client_id,
+        FirstName: row.first_name || '',
+        LastName: row.last_name || '',
+        Email: row.email || '',
+        MobilePhone: row.phone || '',
+    }));
+}
+
+/** ClientDB → the MindBody API Client shape that ghl-conversations' match maps use. */
+export function toApiClient(c: ClientDB): Client {
+    return { Id: c.Id, FirstName: c.FirstName, LastName: c.LastName, Email: c.Email, MobilePhone: c.phone };
+}
+
+/** sale_date comes back from postgres as a Date; callers compare YYYY-MM-DD strings. */
+export function saleDateString(d: string | Date): string {
+    return d instanceof Date ? d.toISOString().split('T')[0] : String(d).split('T')[0];
 }

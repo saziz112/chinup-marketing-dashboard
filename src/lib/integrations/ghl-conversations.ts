@@ -13,7 +13,8 @@ import { trackCall } from '@/lib/api-usage-tracker';
 import {
     LocationKey, GHLOpportunity, getLocations, getStaleLeads, getFullPipelineData,
 } from '@/lib/integrations/gohighlevel';
-import { getClientMatchMaps, normalizePhone, type Client, getPurchasingClients, getAppointments, getClients, type StaffAppointment } from '@/lib/integrations/mindbody';
+import { normalizePhone, type Client, getPurchasingClients, type StaffAppointment } from '@/lib/integrations/mindbody';
+import { getClientMatchMapsFromDB, getPurchasingClientsFromDB, getAppointmentsFromDB, getClientsFromDB, toApiClient, saleDateString } from '@/lib/integrations/mindbody-db';
 import { checkDNDSimple } from '@/lib/dnd-check';
 import { pgCacheGet, pgCacheSet } from '@/lib/pg-cache';
 import { sql } from '@/lib/db/sql';
@@ -699,15 +700,18 @@ export async function getConversationsIntelligence(
         getFullPipelineData({ locationFilter: options?.locationFilter }),
     ]);
 
-    // Fetch MindBody data (non-blocking — if it fails, we just skip the cross-reference)
+    // Fetch patient data from Postgres (MindBody history + Zenoti sync).
+    // Non-blocking — if it fails, we just skip the cross-reference.
     try {
         const [matchMaps, mbData] = await Promise.all([
-            getClientMatchMaps(mbStartDate, mbEndDate),
-            getPurchasingClients(mbStartDate, mbEndDate),
+            getClientMatchMapsFromDB(mbStartDate, mbEndDate),
+            getPurchasingClientsFromDB(mbStartDate, mbEndDate),
         ]);
-        mbEmailMap = matchMaps.emailMap;
-        mbPhoneMap = matchMaps.phoneMap;
-        mbNameMap = matchMaps.nameMap;
+        const toApiMap = (m: typeof matchMaps.emailMap) =>
+            new Map([...m].map(([k, v]) => [k, { client: toApiClient(v.client), revenue: v.revenue }]));
+        mbEmailMap = toApiMap(matchMaps.emailMap);
+        mbPhoneMap = toApiMap(matchMaps.phoneMap);
+        mbNameMap = toApiMap(matchMaps.nameMap);
         // Build last activity date per client (used by findMindbodyMatch → isActive).
         // "Last activity" = MAX(last sale, last completed appointment). This captures
         // package redemptions, complimentary visits, and cross-location visits that
@@ -715,7 +719,7 @@ export async function getConversationsIntelligence(
         mbSalesByClient = new Map();
         for (const sale of mbData.sales) {
             const existing = mbSalesByClient.get(sale.ClientId);
-            const saleDate = sale.SaleDate || sale.SaleDateTime;
+            const saleDate = saleDateString(sale.saleDate);
             if (!existing || saleDate > existing) {
                 mbSalesByClient.set(sale.ClientId, saleDate);
             }
@@ -1875,8 +1879,8 @@ export async function getConsultOnlyPatients(
 
     // Fetch appointments (past + future), sales, and phone map in parallel
     const [appointments, purchasingData, phoneMap] = await Promise.all([
-        getAppointments(startDate, apptEndDate),
-        getPurchasingClients(startDate, endDate),
+        getAppointmentsFromDB(startDate, apptEndDate),
+        getPurchasingClientsFromDB(startDate, endDate),
         buildUnifiedPhoneMap(locationFilter).catch(() => new Map<string, PhoneMapEntry>()),
     ]);
 
@@ -1901,7 +1905,7 @@ export async function getConsultOnlyPatients(
 
     for (const sale of purchasingData.sales) {
         if (!sale.ClientId) continue;
-        const saleDate = (sale.SaleDate || sale.SaleDateTime || '').split('T')[0];
+        const saleDate = saleDateString(sale.saleDate);
         if (!saleDate) continue;
         const key = `${sale.ClientId}_${saleDate}`;
         const bucket = itemsByClientDate.get(key) || [];
@@ -1944,7 +1948,7 @@ export async function getConsultOnlyPatients(
 
     // Build client map for phone lookup
     const clientMap = new Map<string, Client>();
-    for (const c of purchasingData.clients) clientMap.set(c.Id, c);
+    for (const c of purchasingData.clients) clientMap.set(c.Id, toApiClient(c));
 
     // Collect client IDs we need to fetch (not in purchasing clients)
     const needsFetch: string[] = [];
@@ -1954,7 +1958,7 @@ export async function getConsultOnlyPatients(
 
     if (needsFetch.length > 0) {
         try {
-            const fetched = await getClients(needsFetch);
+            const fetched = await getClientsFromDB(needsFetch);
             for (const c of fetched) clientMap.set(c.Id, c);
         } catch {
             // Some clients will be missing phone
