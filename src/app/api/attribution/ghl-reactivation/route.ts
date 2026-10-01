@@ -26,6 +26,7 @@ import {
 } from '@/lib/integrations/ghl-messaging';
 import { hashPhone, hashEmail } from '@/lib/dnd-check';
 import { normalizePhone } from '@/lib/integrations/mindbody';
+import { getOutreachListHashes } from '@/lib/outreach-list';
 
 export const maxDuration = 300; // 5 min — cold-start fetches MindBody + GHL for all 3 locations
 
@@ -230,11 +231,19 @@ export async function GET(req: NextRequest) {
 
     try {
         // Fetch cooldown hashes, last campaign runs, and outbound cooldown in parallel
-        const [recentHashes, lastRuns, recentOutboundIds] = await Promise.all([
+        const [campaignHashes, lastRuns, recentOutboundIds, outreachHashes] = await Promise.all([
             getRecentlyContactedHashes(),
             getLastCampaignRuns(),
             getRecentOutboundContactIds(14),
+            // Patients on the bonus dashboard's call list belong to it; they
+            // count as cooled down here. If the list cannot be read the page
+            // still loads, and the send below refuses instead.
+            getOutreachListHashes().catch(e => {
+                console.warn('[ghl-reactivation] outreach list unavailable:', e);
+                return new Set<string>();
+            }),
         ]);
+        const recentHashes = new Set([...campaignHashes, ...outreachHashes]);
 
         // ── Campaign 2: Consulted, Not Treated ──
         if (segment === 'consult-only') {
@@ -760,7 +769,32 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Maximum 200 contacts per SMS campaign' }, { status: 400 });
         }
 
-        const selectedContacts = contactsData.filter(c => effectiveContactIds.includes(c.contactId));
+        // Never text someone on the bonus dashboard's call list (Sam,
+        // 2026-10-01). Checked again here because the list moves daily and the
+        // page may have been loaded hours ago. No list, no send.
+        let outreachHashes: Set<string>;
+        try {
+            outreachHashes = await getOutreachListHashes();
+        } catch (e) {
+            console.error('[ghl-reactivation] outreach list check failed:', e);
+            return NextResponse.json({
+                error: "Couldn't check the lapsed-patient call list, so nothing was sent. Try again in a minute.",
+                sent: 0, failed: 0, skipped: 0, results: [],
+            }, { status: 503 });
+        }
+        const chosen = contactsData.filter(c => effectiveContactIds.includes(c.contactId));
+        const onCallList = (c: { phone: string }) => !!c.phone && outreachHashes.has(hashPhone(c.phone));
+        const selectedContacts = chosen.filter(c => !onCallList(c));
+        const callListSkipped = chosen.length - selectedContacts.length;
+        if (callListSkipped) {
+            console.log(`[ghl-reactivation] skipping ${callListSkipped} on the outreach call list`);
+        }
+        if (chosen.length > 0 && selectedContacts.length === 0) {
+            return NextResponse.json({
+                error: `All ${chosen.length} selected patients are on the lapsed-patient call list, so nothing was sent.`,
+                sent: 0, failed: 0, skipped: callListSkipped, results: [],
+            }, { status: 400 });
+        }
 
         console.log(`[ghl-reactivation] POST: channel=${channel}, location=${locationKey}, segment=${segment}, contactIds=${effectiveContactIds.length}, matched=${selectedContacts.length}`);
 
@@ -864,7 +898,9 @@ export async function POST(req: NextRequest) {
             channel,
             emailCapped,
             emailCapRemaining: emailCapped ? contactIds.length - MAX_EMAIL_PER_RUN : 0,
-            message: `Campaign complete: ${result.sent} sent, ${result.failed} failed, ${result.skipped} skipped`,
+            callListSkipped,
+            message: `Campaign complete: ${result.sent} sent, ${result.failed} failed, ${result.skipped} skipped`
+                + (callListSkipped ? `, ${callListSkipped} left out (on the lapsed-patient call list)` : ''),
             sentBy: session.user.email,
             sentAt: new Date().toISOString(),
         });
