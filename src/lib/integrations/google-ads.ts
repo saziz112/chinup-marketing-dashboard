@@ -284,7 +284,6 @@ export interface GhlGoogleLead {
     mbRevenue: number;
     mbBooked: number;
     mbCompleted: number;
-    mbUrl: string | null;
 }
 
 // Cache google-sourced lead counts for 30 min (matches strategy/pipeline cache cadence)
@@ -342,7 +341,6 @@ export async function getGhlGoogleLeads(since: string, until: string): Promise<{
                                 mbRevenue: 0,
                                 mbBooked: 0,
                                 mbCompleted: 0,
-                                mbUrl: null,
                             });
                         }
                     }
@@ -391,7 +389,6 @@ export async function enrichGhlLeadsWithMindBody(
 }> {
     const mbStart = `${since}T00:00:00`;
     const mbEnd = `${until}T23:59:59`;
-    const mbSiteId = process.env.MINDBODY_SITE_ID || '';
 
     // 1. Pull MindBody email→client map (with revenue summed for the window)
     const emailMap = await getClientEmailMapFromDB(mbStart, mbEnd).catch(() => new Map());
@@ -406,10 +403,6 @@ export async function enrichGhlLeadsWithMindBody(
             const clientId = String(mb.client.Id);
             lead.mbClientId = clientId;
             lead.mbRevenue = mb.revenue;
-            // Deep-link only works for legacy numeric MindBody IDs; Zenoti GUIDs have no admin URL here
-            lead.mbUrl = mbSiteId && /^\d+$/.test(clientId)
-                ? `https://clients.mindbodyonline.com/Asp/adm/adm_clt_personal.asp?clientID=${clientId}&studioid=${mbSiteId}`
-                : null;
             matchedClientIds.push(clientId);
         }
     }

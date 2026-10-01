@@ -249,7 +249,7 @@ export default function SettingsPage() {
                 }
 
                 // Detect stalled loops — backfills tolerate more empty chunks (early date ranges)
-                const isBackfill = action.startsWith('backfill') || action.startsWith('rebackfill');
+                const isBackfill = action.startsWith('backfill');
                 const zeroLimit = isBackfill ? MAX_ZERO_PROGRESS_BACKFILL : MAX_ZERO_PROGRESS_SYNC;
                 if (data.continue && (data.total === 0 || data.total === undefined)) {
                     consecutiveZero++;
@@ -716,8 +716,6 @@ export default function SettingsPage() {
                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px', fontWeight: 600, textTransform: 'uppercase' }}>Backfill (One-Time)</div>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
                                     {[
-                                        { action: 'backfill-mindbody', label: 'Backfill MindBody (All)', est: '~500 API calls' },
-                                        { action: 'rebackfill-columns', label: 'Rebackfill MB Columns', est: '~833 API calls' },
                                         { action: 'backfill-ghl', label: 'Backfill GHL Contacts', est: '~320 API calls' },
                                         { action: 'backfill-social', label: 'Backfill Social Posts (IG)', est: '~50 API calls' },
                                         { action: 'backfill-search-console', label: 'Backfill Search Console', est: '6 API calls' },

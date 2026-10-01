@@ -65,7 +65,6 @@ export interface RoasData {
         leadCost: number;
         isSplit?: boolean;
         ghlUrl?: string | null;
-        mbUrl?: string | null;
         ghlContactId?: string | null;
         mbClientId?: string | null;
     }[];

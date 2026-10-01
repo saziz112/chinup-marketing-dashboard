@@ -13,7 +13,7 @@ import { trackCall } from '@/lib/api-usage-tracker';
 import {
     LocationKey, GHLOpportunity, getLocations, getStaleLeads, getFullPipelineData,
 } from '@/lib/integrations/gohighlevel';
-import { normalizePhone, type Client, getPurchasingClients, type StaffAppointment } from '@/lib/integrations/mindbody';
+import { normalizePhone, type Client, type StaffAppointment } from '@/lib/integrations/mindbody';
 import { getClientMatchMapsFromDB, getPurchasingClientsFromDB, getAppointmentsFromDB, getClientsFromDB, toApiClient, saleDateString } from '@/lib/integrations/mindbody-db';
 import { checkDNDSimple } from '@/lib/dnd-check';
 import { pgCacheGet, pgCacheSet } from '@/lib/pg-cache';
@@ -1473,9 +1473,8 @@ const lapsedCache = new Map<string, CacheEntry<LapsedPatient[]>>();
 const LAPSED_CACHE_TTL = 15 * 60 * 1000; // 15 min — short so cron-invalidated pgCache is consulted quickly
 
 /**
- * Find MindBody purchasing clients who haven't visited recently.
+ * Find patients (MindBody history + Zenoti) who haven't visited recently.
  * Cross-references with GHL contacts to enable SMS re-activation.
- * Uses existing MindBody cache (4-hour TTL) so costs 0 extra API calls most of the time.
  */
 export async function getLapsedPatients(
     minDaysSinceVisit: number = 60,
@@ -1551,88 +1550,12 @@ export async function getLapsedPatients(
             return locationFiltered;
         }
     } catch (err) {
-        console.warn('[ghl-conversations] Postgres lapsed patients fallback to API:', err);
+        console.error('[ghl-conversations] Postgres lapsed patients query failed:', err);
+        throw err;
     }
 
-    // Fallback: Look back 18 months for purchasing clients (original API approach)
-    const startDate = new Date(Date.now() - 548 * 86400000).toISOString().split('T')[0];
-    const endDate = new Date().toISOString().split('T')[0];
-
-    const { clients, sales } = await getPurchasingClients(startDate, endDate);
-
-    // Build revenue + last sale date per client
-    const clientStats = new Map<string, { revenue: number; lastSaleDate: string }>();
-    for (const sale of sales) {
-        const existing = clientStats.get(sale.ClientId);
-        const total = sale.PurchasedItems?.reduce((s, i) => s + (i.TotalAmount || 0), 0) || 0;
-        const saleDate = sale.SaleDate || sale.SaleDateTime;
-        if (existing) {
-            existing.revenue += total;
-            if (saleDate > existing.lastSaleDate) existing.lastSaleDate = saleDate;
-        } else {
-            clientStats.set(sale.ClientId, { revenue: total, lastSaleDate: saleDate });
-        }
-    }
-
-    const now = Date.now();
-    const lapsed: LapsedPatient[] = [];
-
-    for (const client of clients) {
-        const stats = clientStats.get(client.Id);
-        if (!stats) continue;
-
-        const daysSince = Math.floor((now - new Date(stats.lastSaleDate).getTime()) / 86400000);
-        if (daysSince < minDaysSinceVisit) continue;
-
-        // Must have a phone number
-        const phone = client.MobilePhone || client.HomePhone || '';
-        if (!phone) continue;
-
-        let segment: LapsedPatient['segment'];
-        if (daysSince < 90) segment = 'recent-lapse';
-        else if (daysSince < 180) segment = 'lapsed';
-        else segment = 'long-lapsed';
-
-        lapsed.push({
-            mbClientId: client.Id,
-            firstName: client.FirstName || '',
-            lastName: client.LastName || '',
-            email: client.Email || '',
-            phone,
-            totalRevenue: stats.revenue,
-            lastSaleDate: stats.lastSaleDate,
-            daysSinceLastVisit: daysSince,
-            segment,
-        });
-    }
-
-    // Cross-reference with GHL contacts via unified phone map (all locations for dedup)
-    try {
-        const phoneMap = await buildUnifiedPhoneMap(locationFilter);
-        for (const patient of lapsed) {
-            if (patient.ghlContactId) continue;
-            const normalized = normalizePhone(patient.phone);
-            if (normalized.length < 10) continue;
-            const match = phoneMap.get(normalized);
-            if (match) {
-                patient.ghlContactId = match.contactId;
-                patient.ghlContactName = match.contactName;
-                patient.locationKey = match.locationKey;
-            }
-        }
-    } catch (err) {
-        console.warn('[ghl-conversations] GHL contact cross-reference for lapsed patients failed:', err);
-    }
-
-    // Sort by revenue (highest value first)
-    lapsed.sort((a, b) => b.totalRevenue - a.totalRevenue);
-
-    // Save to both caches — short TTL so MindBody visits reflect quickly in campaigns
-    lapsedCache.set(cacheKey, { data: lapsed, timestamp: now });
-    await pgCacheSet(cacheKey, lapsed, { ttlHours: 2 }).catch(() => {});
-    console.log(`[ghl-conversations] Found ${lapsed.length} lapsed patients (${lapsed.filter(l => l.ghlContactId).length} matched to GHL)`);
-
-    return lapsed;
+    // History tables are empty — nothing to report.
+    return [];
 }
 
 // --- Phone Map Utility (shared by lapsed, cancelled, consult-only) ---

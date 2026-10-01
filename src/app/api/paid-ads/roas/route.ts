@@ -104,7 +104,6 @@ export async function GET(request: NextRequest) {
         }
         const locationIdByKey = new Map<string, string>();
         for (const loc of getLocations()) locationIdByKey.set(loc.key, loc.locationId);
-        const mbSiteId = process.env.MINDBODY_SITE_ID || '';
 
         // First, count how many leads each email has to handle revenue splitting
         const emailLeadCounts = new Map<string, number>();
@@ -115,7 +114,7 @@ export async function GET(request: NextRequest) {
         }
 
         // --- Email matching ---
-        const matchedClientsDetails: { email: string; clientName: string; revenue: number; campaignId: string; campaignName: string; leadCost: number; isSplit: boolean; ghlUrl: string | null; mbUrl: string | null; ghlContactId: string | null; mbClientId: string | null }[] = [];
+        const matchedClientsDetails: { email: string; clientName: string; revenue: number; campaignId: string; campaignName: string; leadCost: number; isSplit: boolean; ghlUrl: string | null; ghlContactId: string | null; mbClientId: string | null }[] = [];
         const unmatchedLeads: { email: string; campaignId: string }[] = [];
 
         for (const lead of leadData.leads) {
@@ -135,10 +134,6 @@ export async function GET(request: NextRequest) {
                     ? `https://app.gohighlevel.com/v2/location/${ghlLocationId}/contacts/detail/${ghl.contactId}`
                     : null;
                 const mbClientId = mbClient.client.Id || null;
-                // Deep-link only works for legacy numeric MindBody IDs; Zenoti GUIDs have no admin URL here
-                const mbUrl = mbClientId && mbSiteId && /^\d+$/.test(String(mbClientId))
-                    ? `https://clients.mindbodyonline.com/Asp/adm/adm_clt_personal.asp?clientID=${mbClientId}&studioid=${mbSiteId}`
-                    : null;
 
                 matchedClientsDetails.push({
                     email,
@@ -149,7 +144,6 @@ export async function GET(request: NextRequest) {
                     leadCost: campaignCostMap.get(lead.campaignId) || 0,
                     isSplit: numLeads > 1,
                     ghlUrl,
-                    mbUrl,
                     ghlContactId: ghl?.contactId || null,
                     mbClientId: mbClientId ? String(mbClientId) : null,
                 });

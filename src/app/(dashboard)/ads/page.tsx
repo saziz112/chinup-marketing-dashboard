@@ -58,7 +58,6 @@ interface GhlLeadDetail {
     mbRevenue: number;
     mbBooked: number;
     mbCompleted: number;
-    mbUrl: string | null;
 }
 
 interface AdsData {
@@ -599,13 +598,9 @@ export default function AdsPage() {
                                                     ) : (
                                                         <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 4 }} title="No GHL contact found for this email — run incremental sync">no GHL</span>
                                                     )}
-                                                    {m.mbUrl ? (
-                                                        <a href={m.mbUrl} target="_blank" rel="noopener noreferrer"
-                                                           style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44', textDecoration: 'none' }}
-                                                           title={`MindBody Client ID ${m.mbClientId}`}>MB ↗</a>
-                                                    ) : m.mbClientId ? (
+                                                    {m.mbClientId ? (
                                                         <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}
-                                                              title={`Zenoti Guest ID ${m.mbClientId}`}>Zenoti</span>
+                                                              title={`POS client ID ${m.mbClientId}`}>{/^\d+$/.test(m.mbClientId) ? 'MindBody' : 'Zenoti'}</span>
                                                     ) : (
                                                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>no POS match</span>
                                                     )}
@@ -692,13 +687,9 @@ export default function AdsPage() {
                                                         <a href={l.ghlUrl} target="_blank" rel="noopener noreferrer"
                                                            style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#3b82f622', color: '#60a5fa', border: '1px solid #3b82f644', textDecoration: 'none', marginRight: 4 }}>GHL ↗</a>
                                                     )}
-                                                    {l.mbUrl ? (
-                                                        <a href={l.mbUrl} target="_blank" rel="noopener noreferrer"
-                                                           style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44', textDecoration: 'none' }}
-                                                           title={`MindBody Client ID ${l.mbClientId}`}>MB ↗</a>
-                                                    ) : l.mbClientId ? (
+                                                    {l.mbClientId ? (
                                                         <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}
-                                                              title={`Zenoti Guest ID ${l.mbClientId}`}>Zenoti</span>
+                                                              title={`POS client ID ${l.mbClientId}`}>{/^\d+$/.test(l.mbClientId) ? 'MindBody' : 'Zenoti'}</span>
                                                     ) : null}
                                                 </td>
                                             </tr>
