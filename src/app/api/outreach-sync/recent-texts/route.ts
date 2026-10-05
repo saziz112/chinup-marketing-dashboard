@@ -15,7 +15,19 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const days = Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get('days')) || 30));
+    const detail = req.nextUrl.searchParams.get('detail') === '1';
     try {
+        if (detail) {
+            const rows = await sql`
+                SELECT cc.phone_hash, r.segment, MAX(cc.sent_at) AS sent_at
+                FROM campaign_contacts cc JOIN campaign_runs r ON r.run_id = cc.run_id
+                WHERE cc.sent_at > NOW() - make_interval(days => ${days}::int)
+                  AND cc.status = 'sent' AND cc.phone_hash IS NOT NULL
+                GROUP BY cc.phone_hash, r.segment
+            `;
+            const texts = rows.rows.map(r => ({ hash: r.phone_hash, segment: r.segment, sentAt: new Date(r.sent_at).toISOString() }));
+            return NextResponse.json({ days, hashes: [...new Set(texts.map(t => t.hash))], texts });
+        }
         const result = await sql`
             SELECT DISTINCT phone_hash FROM campaign_contacts
             WHERE sent_at > NOW() - make_interval(days => ${days}::int)

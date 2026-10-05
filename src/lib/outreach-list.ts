@@ -31,6 +31,21 @@ export async function getOutreachListHashes(): Promise<Set<string>> {
     return cache.hashes;
 }
 
+/** Phones the bonus dashboard texted recently (its policy). Never cached: checked at send time. */
+export async function getBonusBlockedHashes(): Promise<Set<string>> {
+    const secret = process.env.OUTREACH_SYNC_SECRET;
+    if (!secret) throw new Error('OUTREACH_SYNC_SECRET is not set');
+    const res = await fetch(`${OUTREACH_URL}/api/outreach/sync/recent-contacts`, {
+        headers: { authorization: `Bearer ${secret}` },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`bonus recent-contacts returned ${res.status}`);
+    const body = await res.json() as { hashes?: string[] };
+    if (!Array.isArray(body.hashes)) throw new Error('bonus recent-contacts returned no hashes');
+    return new Set(body.hashes);
+}
+
 export function syncAuthorized(req: Request): boolean {
     const secret = process.env.OUTREACH_SYNC_SECRET;
     return !!secret && req.headers.get('authorization') === `Bearer ${secret}`;
