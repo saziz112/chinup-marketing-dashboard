@@ -7,8 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { isCronAuthorized } from '@/lib/cron-auth';
 import { incrementalSocialSync } from '@/lib/integrations/social-posts-sync';
 import { incrementalSearchConsoleSync } from '@/lib/integrations/search-console-sync';
 import { incrementalGhlSync } from '@/lib/integrations/ghl-contacts-sync';
@@ -18,20 +17,8 @@ export const maxDuration = 300; // Zenoti incremental sync now pulls a 120-day f
 
 export async function GET(req: NextRequest) {
     // Verify cron secret (Vercel sets this header for cron jobs)
-    const authHeader = req.headers.get('authorization');
-    const cronSecret = process.env.CRON_SECRET;
-
-    if (cronSecret) {
-        if (authHeader !== `Bearer ${cronSecret}`) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-    } else {
-        // No cron secret: require admin session as fallback
-        const session = await getServerSession(authOptions);
-        const user = session?.user as Record<string, unknown> | undefined;
-        if (!user || user.isAdmin !== true) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
+    if (!isCronAuthorized(req.headers.get('authorization'))) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     try {

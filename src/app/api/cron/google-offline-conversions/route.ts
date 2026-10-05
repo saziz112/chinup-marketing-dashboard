@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { isCronAuthorized } from '@/lib/cron-auth';
 import { sql } from '@/lib/db/sql';
 
 export const maxDuration = 60;
@@ -94,13 +95,7 @@ async function uploadConversions(
 
 export async function GET(req: NextRequest) {
     // Auth: either cron-secret header or admin session
-    const authHeader = req.headers.get('authorization');
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-        if (authHeader !== `Bearer ${cronSecret}`) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-    } else {
+    if (!isCronAuthorized(req.headers.get('authorization'))) {
         const session = await getServerSession(authOptions);
         const user = session?.user as Record<string, unknown> | undefined;
         if (!user || user.isAdmin !== true) {

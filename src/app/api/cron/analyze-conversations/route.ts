@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { isCronAuthorized } from '@/lib/cron-auth';
 import { getConversationsIntelligence } from '@/lib/integrations/ghl-conversations';
 import { pgCacheSet } from '@/lib/pg-cache';
 
@@ -19,10 +20,7 @@ export const maxDuration = 300; // 5 minutes
 
 export async function GET(req: NextRequest) {
     // Verify caller: cron secret OR admin session
-    const cronSecret = req.headers.get('authorization')?.replace('Bearer ', '');
-    const isVercelCron = cronSecret === process.env.CRON_SECRET;
-
-    if (!isVercelCron) {
+    if (!isCronAuthorized(req.headers.get('authorization'))) {
         const session = await getServerSession(authOptions);
         const user = session?.user as Record<string, unknown> | undefined;
         if (!user?.isAdmin) {
