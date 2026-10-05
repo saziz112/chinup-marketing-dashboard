@@ -821,7 +821,7 @@ export async function POST(req: NextRequest) {
             }
 
             const { send, skipped } = filterCampaignRecipients(loaded, { onCallList, bonusBlocked, recentlyCampaigned }, hashPhone);
-            guardSkipped = { call_list: 0, bonus_recent: 0, campaign_cooldown: 0, no_phone: 0, lookup_failed: lookupFailed };
+            guardSkipped = { call_list: 0, bonus_recent: 0, campaign_cooldown: 0, no_phone: 0, duplicate_phone: 0, lookup_failed: lookupFailed };
             for (const s of skipped) guardSkipped[s.reason]++;
             if (send.length === 0) {
                 return NextResponse.json({

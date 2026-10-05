@@ -23,4 +23,18 @@ describe('filterCampaignRecipients', () => {
             { contactId: 'd', reason: 'no_phone' },
         ]);
     });
+
+    it('one phone on two contacts texts once: later contacts are duplicate_phone', () => {
+        const none = { onCallList: new Set<string>(), bonusBlocked: new Set<string>(), recentlyCampaigned: new Set<string>() };
+        const out = filterCampaignRecipients(
+            [c('a', '(678) 555-0001'), c('b', '678-555-0001'), c('x', '6785550009'), c('d', '+1 678 555 0001')],
+            none,
+            id,
+        );
+        expect(out.send.map(x => x.contactId)).toEqual(['a', 'x']);
+        expect(out.skipped).toEqual([
+            { contactId: 'b', reason: 'duplicate_phone' },
+            { contactId: 'd', reason: 'duplicate_phone' },
+        ]);
+    });
 });
