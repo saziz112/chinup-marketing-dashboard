@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@/lib/db/sql';
-import { type LocationKey, isGHLConfigured, getLocations } from '@/lib/integrations/gohighlevel';
+import { type LocationKey, isGHLConfigured, getLocations, getContact } from '@/lib/integrations/gohighlevel';
 import {
     getConversationsIntelligence,
     getLapsedPatients,
@@ -22,11 +22,12 @@ import {
 } from '@/lib/integrations/ghl-conversations';
 import {
     sendBulkSMS, sendBulkEmail, SMS_TEMPLATES, EMAIL_TEMPLATES,
-    sendSMS, sendEmail, renderTemplate,
+    sendSMS, sendEmail, renderTemplate, isDNDContact,
 } from '@/lib/integrations/ghl-messaging';
 import { hashPhone, hashEmail } from '@/lib/dnd-check';
 import { normalizePhone } from '@/lib/integrations/mindbody';
-import { getOutreachListHashes } from '@/lib/outreach-list';
+import { getOutreachListHashes, getBonusBlockedHashes } from '@/lib/outreach-list';
+import { filterCampaignRecipients, type SkipReason } from '@/lib/campaign-guard';
 
 export const maxDuration = 300; // 5 min — cold-start fetches MindBody + GHL for all 3 locations
 
@@ -769,44 +770,145 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Maximum 200 contacts per SMS campaign' }, { status: 400 });
         }
 
-        // Never text someone on the bonus dashboard's call list (Sam,
-        // 2026-10-01). Checked again here because the list moves daily and the
-        // page may have been loaded hours ago. No list, no send.
-        let outreachHashes: Set<string>;
-        try {
-            outreachHashes = await getOutreachListHashes();
-        } catch (e) {
-            console.error('[ghl-reactivation] outreach list check failed:', e);
-            return NextResponse.json({
-                error: "Couldn't check the lapsed-patient call list, so nothing was sent. Try again in a minute.",
-                sent: 0, failed: 0, skipped: 0, results: [],
-            }, { status: 503 });
-        }
-        const chosen = contactsData.filter(c => effectiveContactIds.includes(c.contactId));
-        const onCallList = (c: { phone: string }) => !!c.phone && outreachHashes.has(hashPhone(c.phone));
-        const selectedContacts = chosen.filter(c => !onCallList(c));
-        const callListSkipped = chosen.length - selectedContacts.length;
-        if (callListSkipped) {
-            console.log(`[ghl-reactivation] skipping ${callListSkipped} on the outreach call list`);
-        }
-        if (chosen.length > 0 && selectedContacts.length === 0) {
-            return NextResponse.json({
-                error: `All ${chosen.length} selected patients are on the lapsed-patient call list, so nothing was sent.`,
-                sent: 0, failed: 0, skipped: callListSkipped, results: [],
-            }, { status: 400 });
+        // ── SMS: re-check on the server, then record each text as it goes ──
+        // The page's contact list is never trusted. Phones, tags and DND come
+        // from GHL now, and the guard runs at send time.
+        let smsResult: Awaited<ReturnType<typeof sendBulkSMS>> | null = null;
+        let smsRunId: string | null = null;
+        let guardSkipped: Record<SkipReason, number> | null = null;
+        if (channel === 'sms') {
+            const location = getLocations().find(l => l.key === locationKey);
+            if (!location) {
+                return NextResponse.json({ error: 'Location not configured', sent: 0, failed: 0, skipped: 0, results: [] }, { status: 400 });
+            }
+            const clientById = new Map((contactsData || []).map(c => [c.contactId, c]));
+            const ids = [...new Set(effectiveContactIds)];
+            const loaded: { contactId: string; contactName: string; firstName: string; phone: string; tags: string[]; dnd: boolean; lastTreatmentType?: string; daysSinceOutreach?: number }[] = [];
+            for (let i = 0; i < ids.length; i += 5) {
+                const batch = await Promise.all(ids.slice(i, i + 5).map(id => getContact(location, id)));
+                batch.forEach((g, j) => {
+                    if (!g) return; // GHL can't find it: never send
+                    const id = ids[i + j];
+                    const client = clientById.get(id);
+                    const dnd = g.dnd === true || g.dndSettings?.SMS?.status === 'active' || isDNDContact(g.tags, g.phone);
+                    loaded.push({
+                        contactId: id,
+                        contactName: `${g.firstName} ${g.lastName}`.trim() || client?.contactName || id,
+                        firstName: g.firstName,
+                        phone: g.phone,
+                        tags: g.tags,
+                        dnd,
+                        lastTreatmentType: client?.lastTreatmentType,
+                        daysSinceOutreach: client?.daysSinceOutreach,
+                    });
+                });
+            }
+
+            let onCallList: Set<string>, bonusBlocked: Set<string>, recentlyCampaigned: Set<string>;
+            try {
+                [onCallList, bonusBlocked] = await Promise.all([getOutreachListHashes(), getBonusBlockedHashes()]);
+                const cooldown = await sql`
+                    SELECT DISTINCT phone_hash FROM campaign_contacts
+                    WHERE status = 'sent' AND phone_hash IS NOT NULL AND sent_at > NOW() - INTERVAL '30 days'
+                `;
+                recentlyCampaigned = new Set(cooldown.rows.map(r => r.phone_hash as string));
+            } catch (e) {
+                console.error('[ghl-reactivation] recipient check failed:', e);
+                return NextResponse.json({
+                    error: "Couldn't check who we've texted recently, so nothing was sent.",
+                    sent: 0, failed: 0, skipped: 0, results: [],
+                }, { status: 503 });
+            }
+
+            const { send, skipped } = filterCampaignRecipients(loaded, { onCallList, bonusBlocked, recentlyCampaigned }, hashPhone);
+            guardSkipped = { call_list: 0, bonus_recent: 0, campaign_cooldown: 0, no_phone: 0 };
+            for (const s of skipped) guardSkipped[s.reason]++;
+            if (send.length === 0) {
+                return NextResponse.json({
+                    error: 'Nobody was left to text after the recent-contact checks, so nothing was sent.',
+                    guardSkipped, callListSkipped: guardSkipped.call_list,
+                    sent: 0, failed: 0, skipped: skipped.length, results: [],
+                }, { status: 400 });
+            }
+
+            // Run row first, so every text can be recorded the moment it goes out.
+            const segmentLabel = segment ? (SMS_TEMPLATES[segment]?.label || segment) : 'unknown';
+            try {
+                const run = await sql`
+                    INSERT INTO campaign_runs (segment, segment_label, channel, location_key, total_targeted, total_sent, total_failed, total_skipped, message_template_key, run_by)
+                    VALUES (${segment || 'unknown'}, ${segmentLabel}, ${channel}, ${locationKey}, ${send.length}, 0, 0, 0, ${segment || 'custom'}, ${session.user.email})
+                    RETURNING run_id
+                `;
+                smsRunId = run.rows[0]?.run_id ?? null;
+            } catch (e) {
+                console.error('[ghl-reactivation] campaign run insert failed:', e);
+            }
+            if (!smsRunId) {
+                return NextResponse.json({ error: "Couldn't start the campaign record, so nothing was sent.", sent: 0, failed: 0, skipped: 0, results: [] }, { status: 500 });
+            }
+            const runId = smsRunId;
+            const byId = new Map(send.map(c => [c.contactId, c]));
+
+            smsResult = await sendBulkSMS(
+                locationKey,
+                send.map(c => ({ ...c, lastService: c.lastTreatmentType })),
+                message,
+                LOCATION_NAMES[locationKey] || 'Chin Up!',
+                async (r) => {
+                    const c = byId.get(r.contactId);
+                    await sql`
+                        INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, email_hash, location_key, channel, status, error_message, holdout, treatment, cadence_days, variant_id)
+                        VALUES (${runId}, ${r.contactId}, ${c?.phone ? hashPhone(c.phone) : null}, ${null}, ${locationKey}, ${channel}, ${r.success ? 'sent' : 'failed'}, ${r.error?.slice(0, 200) || null}, false, ${c?.lastTreatmentType || null}, ${c?.daysSinceOutreach ?? null}, ${variantId || null})
+                    `;
+                },
+            );
         }
 
-        console.log(`[ghl-reactivation] POST: channel=${channel}, location=${locationKey}, segment=${segment}, contactIds=${effectiveContactIds.length}, matched=${selectedContacts.length}`);
+        let callListSkipped = 0;
+        let selectedContacts: typeof contactsData = [];
+        if (channel === 'email') {
+            // Never text someone on the bonus dashboard's call list (Sam,
+            // 2026-10-01). Checked again here because the list moves daily and the
+            // page may have been loaded hours ago. No list, no send.
+            let outreachHashes: Set<string>;
+            try {
+                outreachHashes = await getOutreachListHashes();
+            } catch (e) {
+                console.error('[ghl-reactivation] outreach list check failed:', e);
+                return NextResponse.json({
+                    error: "Couldn't check the lapsed-patient call list, so nothing was sent. Try again in a minute.",
+                    sent: 0, failed: 0, skipped: 0, results: [],
+                }, { status: 503 });
+            }
+            const chosen = contactsData.filter(c => effectiveContactIds.includes(c.contactId));
+            const onCallList = (c: { phone: string }) => !!c.phone && outreachHashes.has(hashPhone(c.phone));
+            selectedContacts = chosen.filter(c => !onCallList(c));
+            callListSkipped = chosen.length - selectedContacts.length;
+            if (callListSkipped) {
+                console.log(`[ghl-reactivation] skipping ${callListSkipped} on the outreach call list`);
+            }
+            if (chosen.length > 0 && selectedContacts.length === 0) {
+                return NextResponse.json({
+                    error: `All ${chosen.length} selected patients are on the lapsed-patient call list, so nothing was sent.`,
+                    sent: 0, failed: 0, skipped: callListSkipped, results: [],
+                }, { status: 400 });
+            }
 
-        if (selectedContacts.length === 0) {
-            return NextResponse.json({
-                error: `No contacts matched. Sent ${effectiveContactIds.length} IDs but none found in contacts payload.`,
-                sent: 0, failed: 0, skipped: 0, results: [],
-            }, { status: 400 });
+            console.log(`[ghl-reactivation] POST: channel=${channel}, location=${locationKey}, segment=${segment}, contactIds=${effectiveContactIds.length}, matched=${selectedContacts.length}`);
+
+            if (selectedContacts.length === 0) {
+                return NextResponse.json({
+                    error: `No contacts matched. Sent ${effectiveContactIds.length} IDs but none found in contacts payload.`,
+                    sent: 0, failed: 0, skipped: 0, results: [],
+                }, { status: 400 });
+            }
         }
 
         let result;
-        if (channel === 'email') {
+        if (smsResult) {
+            result = smsResult;
+            callListSkipped = guardSkipped?.call_list ?? 0;
+        } else if (channel === 'email') {
             result = await sendBulkEmail(
                 locationKey,
                 selectedContacts.map(c => ({
@@ -819,12 +921,7 @@ export async function POST(req: NextRequest) {
                 subject || 'Chin Up! Aesthetics',
             );
         } else {
-            result = await sendBulkSMS(
-                locationKey,
-                selectedContacts.map(c => ({ ...c, lastService: c.lastTreatmentType })),
-                message,
-                LOCATION_NAMES[locationKey] || 'Chin Up!',
-            );
+            throw new Error('unreachable: SMS is sent by the server-checked path above');
         }
 
         console.log(`[ghl-reactivation] Result: sent=${result.sent}, failed=${result.failed}, skipped=${result.skipped}`);
@@ -834,32 +931,38 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Record Campaign History (HIPAA-safe) ──
-        const segmentLabel = segment ? (SMS_TEMPLATES[segment]?.label || segment) : 'unknown';
+        // SMS rows were written as each text went out; here we only close the run.
+        // Email still records after the loop.
         try {
-            const runResult = await sql`
-                INSERT INTO campaign_runs (segment, segment_label, channel, location_key, total_targeted, total_sent, total_failed, total_skipped, message_template_key, run_by)
-                VALUES (${segment || 'unknown'}, ${segmentLabel}, ${channel}, ${locationKey}, ${selectedContacts.length}, ${result.sent}, ${result.failed}, ${result.skipped}, ${segment || 'custom'}, ${session.user.email})
-                RETURNING run_id
-            `;
-            // Self-migrate instrumentation columns (idempotent, additive)
-            await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS holdout BOOLEAN DEFAULT false`;
-            await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS treatment TEXT`;
-            await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS cadence_days INTEGER`;
-            await sql`ALTER TABLE campaign_contacts ADD COLUMN IF NOT EXISTS variant_id TEXT`;
-
-            const runId = runResult.rows[0]?.run_id;
-            if (runId && result.results) {
-                // Insert contact records with phone/email hashes (no PII)
-                for (const r of result.results) {
-                    const contact = selectedContacts.find(c => c.contactId === r.contactId);
-                    const ph = contact?.phone ? hashPhone(contact.phone) : null;
-                    const eh = contact?.email ? hashEmail(contact.email) : null;
-                    await sql`
-                        INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, email_hash, location_key, channel, status, error_message, holdout, treatment, cadence_days, variant_id)
-                        VALUES (${runId}, ${r.contactId}, ${ph}, ${eh}, ${locationKey}, ${channel}, ${r.success ? 'sent' : 'failed'}, ${r.error?.slice(0, 200) || null}, false, ${contact?.lastTreatmentType || null}, ${contact?.daysSinceOutreach ?? null}, ${variantId || null})
-                    `;
+            let runId: string | null = smsRunId;
+            if (smsRunId) {
+                await sql`
+                    UPDATE campaign_runs SET total_sent = ${result.sent}, total_failed = ${result.failed}, total_skipped = ${result.skipped}
+                    WHERE run_id = ${smsRunId}
+                `;
+            } else {
+                const segmentLabel = segment ? (SMS_TEMPLATES[segment]?.label || segment) : 'unknown';
+                const runResult = await sql`
+                    INSERT INTO campaign_runs (segment, segment_label, channel, location_key, total_targeted, total_sent, total_failed, total_skipped, message_template_key, run_by)
+                    VALUES (${segment || 'unknown'}, ${segmentLabel}, ${channel}, ${locationKey}, ${selectedContacts.length}, ${result.sent}, ${result.failed}, ${result.skipped}, ${segment || 'custom'}, ${session.user.email})
+                    RETURNING run_id
+                `;
+                runId = runResult.rows[0]?.run_id ?? null;
+                if (runId && result.results) {
+                    // Insert contact records with phone/email hashes (no PII)
+                    for (const r of result.results) {
+                        const contact = selectedContacts.find(c => c.contactId === r.contactId);
+                        const ph = contact?.phone ? hashPhone(contact.phone) : null;
+                        const eh = contact?.email ? hashEmail(contact.email) : null;
+                        await sql`
+                            INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, email_hash, location_key, channel, status, error_message, holdout, treatment, cadence_days, variant_id)
+                            VALUES (${runId}, ${r.contactId}, ${ph}, ${eh}, ${locationKey}, ${channel}, ${r.success ? 'sent' : 'failed'}, ${r.error?.slice(0, 200) || null}, false, ${contact?.lastTreatmentType || null}, ${contact?.daysSinceOutreach ?? null}, ${variantId || null})
+                        `;
+                    }
                 }
+            }
 
+            if (runId) {
                 // Record the ~12% holdout control group (not messaged) for lift measurement.
                 // Log each control patient ONCE — they are a stable, deterministic group
                 // that is never messaged, so without this guard they were re-inserted on
@@ -899,6 +1002,7 @@ export async function POST(req: NextRequest) {
             emailCapped,
             emailCapRemaining: emailCapped ? contactIds.length - MAX_EMAIL_PER_RUN : 0,
             callListSkipped,
+            ...(guardSkipped ? { guardSkipped } : {}),
             message: `Campaign complete: ${result.sent} sent, ${result.failed} failed, ${result.skipped} skipped`
                 + (callListSkipped ? `, ${callListSkipped} left out (on the lapsed-patient call list)` : ''),
             sentBy: session.user.email,

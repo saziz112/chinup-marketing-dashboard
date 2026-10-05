@@ -162,9 +162,13 @@ export async function sendBulkSMS(
         phone: string;
         tags: string[];
         lastService?: string;
+        /** GHL's own DND flag, when the caller has it. Tags are checked either way. */
+        dnd?: boolean;
     }[],
     messageTemplate: string,
     locationName: string,
+    /** Awaited after every attempt (sent, failed or skipped); its errors are logged, never thrown. */
+    onResult?: (r: SMSResult & { contactId: string }) => Promise<void>,
 ): Promise<BulkSMSResult> {
     const config = getV2Config(locationKey);
     if (!config) {
@@ -180,9 +184,17 @@ export async function sendBulkSMS(
     for (let i = 0; i < contacts.length; i++) {
         const contact = contacts[i];
 
-        if (isDNDContact(contact.tags, contact.phone)) {
-            results.push({ contactId: contact.contactId, contactName: contact.contactName, success: false, error: 'DND/opted-out or no phone' });
+        const report = async (r: SMSResult) => {
+            if (!onResult) return;
+            try { await onResult(r); }
+            catch (e) { console.error('[sendBulkSMS] onResult failed', r.contactId, e); }
+        };
+
+        if (contact.dnd || isDNDContact(contact.tags, contact.phone)) {
+            const skip: SMSResult = { contactId: contact.contactId, contactName: contact.contactName, success: false, error: 'DND/opted-out or no phone' };
+            results.push(skip);
             skipped++;
+            await report(skip);
             continue;
         }
 
@@ -194,7 +206,9 @@ export async function sendBulkSMS(
         });
 
         const result = await sendSMS(config.locationId, config.pit, contact.contactId, message);
-        results.push({ contactId: contact.contactId, contactName: contact.contactName, ...result });
+        const full: SMSResult = { contactId: contact.contactId, contactName: contact.contactName, ...result };
+        results.push(full);
+        await report(full);
 
         if (result.success) sent++;
         else failed++;
