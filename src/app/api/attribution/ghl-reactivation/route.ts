@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@/lib/db/sql';
-import { type LocationKey, isGHLConfigured, getLocations, getContact } from '@/lib/integrations/gohighlevel';
+import { type LocationKey, isGHLConfigured, getLocations } from '@/lib/integrations/gohighlevel';
 import {
     getConversationsIntelligence,
     getLapsedPatients,
@@ -22,7 +22,7 @@ import {
 } from '@/lib/integrations/ghl-conversations';
 import {
     sendBulkSMS, sendBulkEmail, SMS_TEMPLATES, EMAIL_TEMPLATES,
-    sendSMS, sendEmail, renderTemplate, isDNDContact,
+    sendSMS, sendEmail, renderTemplate, isDNDContact, getV2Config, getContactForSend,
 } from '@/lib/integrations/ghl-messaging';
 import { hashPhone, hashEmail } from '@/lib/dnd-check';
 import { normalizePhone } from '@/lib/integrations/mindbody';
@@ -775,22 +775,22 @@ export async function POST(req: NextRequest) {
         // from GHL now, and the guard runs at send time.
         let smsResult: Awaited<ReturnType<typeof sendBulkSMS>> | null = null;
         let smsRunId: string | null = null;
-        let guardSkipped: Record<SkipReason, number> | null = null;
+        let guardSkipped: Record<SkipReason | 'lookup_failed', number> | null = null;
         if (channel === 'sms') {
-            const location = getLocations().find(l => l.key === locationKey);
-            if (!location) {
+            if (!getV2Config(locationKey)) {
                 return NextResponse.json({ error: 'Location not configured', sent: 0, failed: 0, skipped: 0, results: [] }, { status: 400 });
             }
             const clientById = new Map((contactsData || []).map(c => [c.contactId, c]));
             const ids = [...new Set(effectiveContactIds)];
             const loaded: { contactId: string; contactName: string; firstName: string; phone: string; tags: string[]; dnd: boolean; lastTreatmentType?: string; daysSinceOutreach?: number }[] = [];
+            let lookupFailed = 0;
             for (let i = 0; i < ids.length; i += 5) {
-                const batch = await Promise.all(ids.slice(i, i + 5).map(id => getContact(location, id)));
+                const batch = await Promise.all(ids.slice(i, i + 5).map(id => getContactForSend(locationKey, id).catch(() => null)));
                 batch.forEach((g, j) => {
-                    if (!g) return; // GHL can't find it: never send
                     const id = ids[i + j];
+                    if (!g) { lookupFailed++; return; } // can't confirm phone/DND: never send
                     const client = clientById.get(id);
-                    const dnd = g.dnd === true || g.dndSettings?.SMS?.status === 'active' || isDNDContact(g.tags, g.phone);
+                    const dnd = g.smsDnd || isDNDContact(g.tags, g.phone);
                     loaded.push({
                         contactId: id,
                         contactName: `${g.firstName} ${g.lastName}`.trim() || client?.contactName || id,
@@ -821,13 +821,14 @@ export async function POST(req: NextRequest) {
             }
 
             const { send, skipped } = filterCampaignRecipients(loaded, { onCallList, bonusBlocked, recentlyCampaigned }, hashPhone);
-            guardSkipped = { call_list: 0, bonus_recent: 0, campaign_cooldown: 0, no_phone: 0 };
+            guardSkipped = { call_list: 0, bonus_recent: 0, campaign_cooldown: 0, no_phone: 0, lookup_failed: lookupFailed };
             for (const s of skipped) guardSkipped[s.reason]++;
             if (send.length === 0) {
                 return NextResponse.json({
-                    error: 'Nobody was left to text after the recent-contact checks, so nothing was sent.',
+                    error: 'Nobody was left to text after the recent-contact checks, so nothing was sent.'
+                        + (lookupFailed ? ` ${lookupFailed} couldn't be looked up in GHL.` : ''),
                     guardSkipped, callListSkipped: guardSkipped.call_list,
-                    sent: 0, failed: 0, skipped: skipped.length, results: [],
+                    sent: 0, failed: 0, skipped: skipped.length + lookupFailed, results: [],
                 }, { status: 400 });
             }
 
@@ -847,6 +848,7 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ error: "Couldn't start the campaign record, so nothing was sent.", sent: 0, failed: 0, skipped: 0, results: [] }, { status: 500 });
             }
             const runId = smsRunId;
+            console.log(`[ghl-reactivation] POST: channel=${channel}, location=${locationKey}, segment=${segment}, contactIds=${effectiveContactIds.length}, matched=${send.length}`);
             const byId = new Map(send.map(c => [c.contactId, c]));
 
             smsResult = await sendBulkSMS(
@@ -856,10 +858,11 @@ export async function POST(req: NextRequest) {
                 LOCATION_NAMES[locationKey] || 'Chin Up!',
                 async (r) => {
                     const c = byId.get(r.contactId);
-                    await sql`
+                    const insert = () => sql`
                         INSERT INTO campaign_contacts (run_id, contact_id, phone_hash, email_hash, location_key, channel, status, error_message, holdout, treatment, cadence_days, variant_id)
                         VALUES (${runId}, ${r.contactId}, ${c?.phone ? hashPhone(c.phone) : null}, ${null}, ${locationKey}, ${channel}, ${r.success ? 'sent' : 'failed'}, ${r.error?.slice(0, 200) || null}, false, ${c?.lastTreatmentType || null}, ${c?.daysSinceOutreach ?? null}, ${variantId || null})
                     `;
+                    try { await insert(); } catch { await insert(); } // one retry; sendBulkSMS logs a second failure
                 },
             );
         }

@@ -33,7 +33,7 @@ interface V2LocationConfig {
     pit: string;
 }
 
-function getV2Config(locationKey: LocationKey): V2LocationConfig | null {
+export function getV2Config(locationKey: LocationKey): V2LocationConfig | null {
     const envMap: Record<LocationKey, { envId: string; envPit: string }> = {
         decatur: { envId: 'GHL_LOCATION_ID_DECATUR', envPit: 'GHL_PIT_DECATUR' },
         smyrna: { envId: 'GHL_LOCATION_ID_SMYRNA', envPit: 'GHL_PIT_SMYRNA' },
@@ -45,6 +45,48 @@ function getV2Config(locationKey: LocationKey): V2LocationConfig | null {
     const pit = process.env[config.envPit];
     if (!locationId || !pit) return null;
     return { locationId, pit };
+}
+
+/* ── Strict v2 contact lookup (send-time recheck) ─────────── */
+
+export interface V2ContactForSend {
+    firstName: string;
+    lastName: string;
+    phone: string;
+    tags: string[];
+    /** Native DND flag or SMS channel DND active. */
+    smsDnd: boolean;
+}
+
+/**
+ * Fresh v2 read of one contact. v1 doesn't return dndSettings, so the send-time
+ * check must use v2. Throws on any error, non-200 or timeout: callers fail closed.
+ * Deliberately uncached.
+ */
+export async function getContactForSend(locationKey: LocationKey, contactId: string): Promise<V2ContactForSend> {
+    const config = getV2Config(locationKey);
+    if (!config) throw new Error('Location not configured');
+    const res = await fetch(`${GHL_V2_BASE}/contacts/${encodeURIComponent(contactId)}`, {
+        headers: {
+            'Authorization': `Bearer ${config.pit}`,
+            'Version': GHL_API_VERSION,
+            'Accept': 'application/json',
+        },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10_000),
+    });
+    trackCall('ghl', 'getContactForSend', false);
+    if (res.status !== 200) throw new Error(`contact lookup returned ${res.status}`);
+    const data = await res.json() as { contact?: Record<string, any> };
+    const c = data.contact;
+    if (!c) throw new Error('contact lookup returned no contact');
+    return {
+        firstName: c.firstName || '',
+        lastName: c.lastName || '',
+        phone: c.phone || '',
+        tags: Array.isArray(c.tags) ? c.tags : [],
+        smsDnd: c.dnd === true || c.dndSettings?.SMS?.status === 'active',
+    };
 }
 
 /* ── Send Single SMS ─────────────────────────────────────── */

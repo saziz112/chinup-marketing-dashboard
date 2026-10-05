@@ -40,4 +40,11 @@ describe('sendBulkSMS onResult', () => {
         expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ contactId: 'a', success: false }));
         expect(fetch).not.toHaveBeenCalled();
     });
+
+    it('does not send to a contact with the dnd flag set even without DND tags', async () => {
+        const res = await sendBulkSMS('kennesaw', [{ ...contact('a'), dnd: true }], 'Hi', 'Kennesaw');
+        expect(fetch).not.toHaveBeenCalled();
+        expect(res.skipped).toBe(1);
+        expect(res.sent).toBe(0);
+    });
 });

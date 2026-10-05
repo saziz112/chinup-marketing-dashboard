@@ -78,9 +78,6 @@ export interface GHLContact {
     dateUpdated: string;
     city?: string;
     state?: string;
-    /** GHL's native do-not-disturb flag and per-channel settings (set by getContact). */
-    dnd?: boolean;
-    dndSettings?: { SMS?: { status?: string }; Email?: { status?: string } };
 }
 
 export interface PipelineSummary {
@@ -344,8 +341,6 @@ export async function getContact(location: GHLLocation, contactId: string): Prom
             dateUpdated: c.dateUpdated,
             city: c.city,
             state: c.state,
-            dnd: c.dnd === true,
-            dndSettings: c.dndSettings,
         };
     } catch {
         return null;
