@@ -1298,15 +1298,17 @@ export default function LeadsPipelinePage() {
                                                 <div className="metric-card">
                                                     <div className="label">Est. Responses</div>
                                                     <div className="value">{smsData.forecast.predictedResponses}</div>
-                                                    <div className="change">{smsData.forecast.predictedResponseRate}% rate</div>
+                                                    <div className="change">assumes {smsData.forecast.predictedResponseRate}% reply</div>
                                                 </div>
                                                 <div className="metric-card">
                                                     <div className="label">Est. Bookings</div>
                                                     <div className="value">{smsData.forecast.predictedBookings}</div>
+                                                    <div className="change">assumes {smsData.forecast.assumedBookingRate}% of replies book</div>
                                                 </div>
                                                 <div className="metric-card">
-                                                    <div className="label">Projected Revenue</div>
+                                                    <div className="label">Est. Revenue</div>
                                                     <div className="value" style={{ color: '#34D399' }}>{formatCurrency(smsData.forecast.projectedRevenue)}</div>
+                                                    <div className="change">estimate · {formatCurrency(smsData.forecast.assumedAvgValue)} avg per booking</div>
                                                 </div>
                                             </div>
                                         )}
