@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Assistant, Italiana } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
 import Providers from './providers';
 import './globals.css';
 
@@ -30,6 +31,7 @@ export default function RootLayout({
         <html lang="en">
             <body className={`${assistant.variable} ${italiana.variable}`}>
                 <Providers>{children}</Providers>
+                <Analytics />
             </body>
         </html>
     );
