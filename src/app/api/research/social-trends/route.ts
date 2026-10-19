@@ -62,8 +62,8 @@ export async function GET(req: NextRequest) {
                 break;
         }
 
-        // Cache the result
-        if (result) {
+        // Cache only real data, so a failed or unconfigured fetch retries next time
+        if (hasData(result)) {
             await cacheResult(source, result);
         }
 
@@ -84,6 +84,11 @@ export async function GET(req: NextRequest) {
 }
 
 // --- Cache helpers ---
+
+function hasData(result: any): boolean {
+    if (!result || result.error) return false;
+    return (result.results?.length ?? 0) > 0 || (result.hashtagResults?.length ?? 0) > 0;
+}
 
 async function getCachedResult(source: string): Promise<any | null> {
     try {
