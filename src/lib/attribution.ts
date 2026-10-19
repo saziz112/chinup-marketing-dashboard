@@ -100,6 +100,9 @@ function hasCallHandlingTag(tags: readonly string[] | null | undefined): boolean
   return tags.some((t) => CALL_HANDLING_TAGS.some((re) => re.test(t)));
 }
 
+/** GHL `source` labels for Meta leads, used only when attribution is missing. */
+const META_SOURCE_LABELS = new Set(['facebook', 'instagram']);
+
 /** True when attribution shows this lead came from a paid ad unit. */
 function isPaidAd(a: AttributionSource): boolean {
   const medium = (a.medium || '').toLowerCase();
@@ -151,6 +154,9 @@ export function resolveChannel(
   // 5. Nothing usable. Distinguish "attribution exists but is empty" (Other)
   //    from "no attribution at all" (Unattributed) so the gap stays visible.
   if (sessionSource) return 'Other';
+  //    Not fetched yet but labeled Facebook/Instagram: native agreed on 58/60
+  //    of these, so count them as paid rather than lose them to Unattributed.
+  if (!attribution && source && META_SOURCE_LABELS.has(source.trim().toLowerCase())) return 'Paid Social';
   return 'Unattributed';
 }
 
