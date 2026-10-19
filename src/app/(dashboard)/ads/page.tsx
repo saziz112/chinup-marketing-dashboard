@@ -387,7 +387,7 @@ export default function AdsPage() {
                         {isAdmin && (
                             <KpiCard label="Total Spend" value={fmt$(acc?.totalSpend)} sub={`${acc?.currency || 'USD'} • ${periodLabel}`} gold />
                         )}
-                        <KpiCard label="Impressions" value={fmtNum(acc?.totalImpressions)} sub={`${fmtNum(acc?.totalReach)} reach`} />
+                        <KpiCard label="Impressions" value={fmtNum(acc?.totalImpressions)} sub={acc?.totalReach != null ? `${fmtNum(acc.totalReach)} reach` : 'Reach not combinable across platforms'} />
                         <KpiCard label="Clicks" value={fmtNum(acc?.totalClicks)} sub={`CTR ${fmtPct(overallCtr)}`} />
                         <KpiCard
                             label="Leads (Results)"
