@@ -9,7 +9,7 @@
  *   3. Exchange for long-lived: POST /oauth/access_token?grant_type=fb_exchange_token&...
  *   4. Add to .env.local as META_ADS_ACCESS_TOKEN=...
  *
- * When not configured, serves realistic mock data for immediate UI development.
+ * When not configured or when the API fails, throws: callers show an error, never a number.
  */
 
 import { trackCall } from '@/lib/api-usage-tracker';
@@ -120,6 +120,31 @@ async function adsGet<T>(endpoint: string, token: string): Promise<T> {
     return response.json() as Promise<T>;
 }
 
+// Fetches every page of a Graph list endpoint. `url` is a full URL including the token;
+// Meta's paging.next links carry the token, so they are followed as-is.
+async function graphGetAll<T>(url: string, label: string): Promise<T[]> {
+    const rows: T[] = [];
+    let next: string | undefined = url;
+    while (next) {
+        const response = await fetch(next);
+        trackCall('metaAds', label, false);
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(`Meta API error: ${response.status} ${label} — ${JSON.stringify(err)}`);
+        }
+        const page = await response.json() as { data?: T[]; paging?: { next?: string } };
+        rows.push(...(page.data || []));
+        next = page.paging?.next;
+    }
+    return rows;
+}
+
+// A "result" is a lead. Link clicks are never counted as leads.
+function getLeadCount(actions: Array<{ action_type: string; value: string }> | undefined): number {
+    const get = (type: string) => parseFloat(actions?.find(a => a.action_type === type)?.value || '0');
+    return get('lead') || get('onsite_conversion.lead_grouped') || get('offsite_conversion.fb_pixel_lead');
+}
+
 // --- Insight field parser ---
 
 function parseInsights(insights: {
@@ -164,19 +189,12 @@ function parseInsights(insights: {
     const cpc = parseFloat(d.cpc || '0');
     const ctr = parseFloat(d.ctr || '0');
 
-    // Results = leads (primary) or link_clicks as fallback
-    let results = getAction(d.actions, 'lead') || getAction(d.actions, 'onsite_conversion.lead_grouped');
-    if (!results) results = getAction(d.actions, 'offsite_conversion.fb_pixel_lead');
-    if (!results) results = getAction(d.actions, 'link_click');
+    const results = getLeadCount(d.actions);
 
-    // Cost per result
-    const costPerAction = d.cost_per_action_type;
-    let costPerResult = 0;
-    if (costPerAction) {
-        costPerResult = parseFloat(costPerAction.find(a => a.action_type === 'lead')?.value || '0')
-            || parseFloat(costPerAction.find(a => a.action_type === 'link_click')?.value || '0');
-    }
-    if (!costPerResult && results > 0) costPerResult = spend / results;
+    // Cost per lead; 0 when the window has no leads
+    const costPerResult = results > 0
+        ? (getAction(d.cost_per_action_type, 'lead') || spend / results)
+        : 0;
 
     // ROAS from purchase action values
     const purchaseValue = getAction(d.action_values, 'offsite_conversion.fb_pixel_purchase');
@@ -225,8 +243,9 @@ async function fetchAccountSummary(token: string, since: string, until: string):
 }
 
 async function fetchCampaigns(token: string, since: string, until: string): Promise<MetaCampaign[]> {
-    const data = await adsGet<{
-        data: Array<{
+    // time_range must sit on the insights field itself; a top-level time_range does not
+    // reach the nested expansion, and Meta silently falls back to last_30d.
+    const campaigns = await graphGetAll<{
             id: string;
             name: string;
             status: CampaignStatus;
@@ -248,14 +267,12 @@ async function fetchCampaigns(token: string, since: string, until: string): Prom
                     action_values?: Array<{ action_type: string; value: string }>;
                 }>;
             };
-        }>;
-        paging?: unknown;
     }>(
-        `/${AD_ACCOUNT_ID}/campaigns?fields=id,name,status,objective,start_time,stop_time,insights{spend,impressions,clicks,reach,frequency,cpm,cpc,ctr,actions,cost_per_action_type,action_values}&time_range={"since":"${since}","until":"${until}"}&limit=50`,
-        token
+        `${GRAPH_BASE}/${AD_ACCOUNT_ID}/campaigns?fields=id,name,status,objective,start_time,stop_time,insights.time_range({"since":"${since}","until":"${until}"}){spend,impressions,clicks,reach,frequency,cpm,cpc,ctr,actions,cost_per_action_type,action_values}&limit=100&access_token=${token}`,
+        '/campaigns'
     );
 
-    return (data.data || []).map(c => {
+    return campaigns.map(c => {
         const ins = parseInsights(c.insights || null);
         return {
             id: c.id,
@@ -280,23 +297,19 @@ async function fetchCampaigns(token: string, since: string, until: string): Prom
 }
 
 async function fetchDailySpend(token: string, since: string, until: string): Promise<MetaDailySpend[]> {
-    const data = await adsGet<{
-        data: Array<{
-            spend?: string;
-            impressions?: string;
-            clicks?: string;
-            actions?: Array<{ action_type: string; value: string }>;
-            date_start: string;
-        }>;
+    const rows = await graphGetAll<{
+        spend?: string;
+        impressions?: string;
+        clicks?: string;
+        actions?: Array<{ action_type: string; value: string }>;
+        date_start: string;
     }>(
-        `/${AD_ACCOUNT_ID}/insights?fields=spend,impressions,clicks,actions&time_increment=1&time_range={"since":"${since}","until":"${until}"}`,
-        token
+        `${GRAPH_BASE}/${AD_ACCOUNT_ID}/insights?fields=spend,impressions,clicks,actions&time_increment=1&time_range={"since":"${since}","until":"${until}"}&access_token=${token}`,
+        '/insights(daily)'
     );
 
-    return (data.data || []).map(d => {
-        const getAction = (type: string) =>
-            parseFloat(d.actions?.find(a => a.action_type === type)?.value || '0');
-        const results = getAction('lead') || getAction('onsite_conversion.lead_grouped') || getAction('link_click');
+    return rows.map(d => {
+        const results = getLeadCount(d.actions);
         return {
             date: d.date_start,
             spend: parseFloat(d.spend || '0'),
@@ -315,34 +328,24 @@ export async function getMetaAdsData(since: string, until: string): Promise<Meta
     if (cached) { trackCall('metaAds', 'getMetaAdsData', true); return cached; }
 
     const token = getOptionalEnv('META_ADS_ACCESS_TOKEN');
-    if (!token) {
-        const mock = getMockData(since, until);
-        setCache(cacheKey, mock);
-        return mock;
-    }
+    if (!token) throw new Error('Meta Ads not configured: META_ADS_ACCESS_TOKEN is missing');
 
-    try {
-        const [account, campaigns, dailySpend] = await Promise.all([
-            fetchAccountSummary(token, since, until),
-            fetchCampaigns(token, since, until),
-            fetchDailySpend(token, since, until),
-        ]);
+    // Errors propagate uncached, so a fixed token takes effect on the next request.
+    const [account, campaigns, dailySpend] = await Promise.all([
+        fetchAccountSummary(token, since, until),
+        fetchCampaigns(token, since, until),
+        fetchDailySpend(token, since, until),
+    ]);
 
-        const result: MetaAdsData = {
-            isConfigured: true,
-            isMock: false,
-            account,
-            campaigns,
-            dailySpend,
-        };
-        setCache(cacheKey, result);
-        return result;
-    } catch (err) {
-        console.error('[MetaAds] Live API failed, falling back to mock:', err);
-        const mock = getMockData(since, until);
-        setCache(cacheKey, mock);
-        return mock;
-    }
+    const result: MetaAdsData = {
+        isConfigured: true,
+        isMock: false,
+        account,
+        campaigns,
+        dailySpend,
+    };
+    setCache(cacheKey, result);
+    return result;
 }
 
 // --- Lead Ads API ---
@@ -390,280 +393,90 @@ export async function getMetaLeads(since: string, until: string): Promise<{
     const pageId = process.env.META_PAGE_ID;
 
     if (!pageToken || !pageId) {
-        console.warn('[MetaLeads] META_PAGE_ACCESS_TOKEN or META_PAGE_ID not configured. Using Mock Data.');
-        return getMockLeads(since, until);
+        throw new Error('Meta lead forms not configured: META_PAGE_ACCESS_TOKEN or META_PAGE_ID is missing');
     }
 
-    try {
-        // Fetch all lead gen forms from the page (requires page token, NOT ads token)
-        // Using direct fetch to avoid adsGet which may mix tokens
-        const formsUrl = `${GRAPH_BASE}/${pageId}/leadgen_forms?fields=id,name,leads_count&limit=100&access_token=${pageToken}`;
-        const formsRes = await fetch(formsUrl);
-        trackCall('metaAds', '/leadgen_forms', false);
-        if (!formsRes.ok) {
-            const err = await formsRes.json().catch(() => ({}));
-            throw new Error(`leadgen_forms error: ${formsRes.status} — ${JSON.stringify(err)}`);
-        }
-        const formsData = await formsRes.json() as { data: Array<{ id: string; name: string; leads_count?: number }> };
+    // Fetch all lead gen forms from the page (requires page token, NOT ads token)
+    const forms = await graphGetAll<{ id: string; name: string; leads_count?: number }>(
+        `${GRAPH_BASE}/${pageId}/leadgen_forms?fields=id,name,leads_count&limit=100&access_token=${pageToken}`,
+        '/leadgen_forms'
+    );
 
-        if (!formsData.data?.length) {
-            return { leads: [], byCampaign: new Map(), totalLeads: 0, hasLeadForms: false };
-        }
-
-        // Filter to forms that actually have leads
-        const formsWithLeads = formsData.data.filter(f => (f.leads_count || 0) > 0);
-        if (!formsWithLeads.length) {
-            // Forms exist but no leads yet
-            return { leads: [], byCampaign: new Map(), totalLeads: 0, hasLeadForms: true };
-        }
-
-        // Date filter as Unix timestamps
-        const sinceTs = Math.floor(new Date(since).getTime() / 1000);
-        const untilTs = Math.floor(new Date(until + 'T23:59:59').getTime() / 1000);
-
-        const allLeads: MetaLead[] = [];
-        const byCampaign = new Map<string, MetaLead[]>();
-
-        // Fetch leads from each form (page token required)
-        await Promise.all(formsWithLeads.map(async form => {
-            try {
-                const filterStr = encodeURIComponent(JSON.stringify([
-                    { field: 'time_created', operator: 'GREATER_THAN', value: sinceTs },
-                    { field: 'time_created', operator: 'LESS_THAN', value: untilTs },
-                ]));
-                const leadsUrl = `${GRAPH_BASE}/${form.id}/leads` +
-                    `?fields=id,created_time,ad_id,campaign_id,campaign_name,field_data` +
-                    `&filtering=${filterStr}` +
-                    `&limit=500` +
-                    `&access_token=${pageToken}`;
-                const leadsRes = await fetch(leadsUrl);
-                trackCall('metaAds', '/form/leads', false);
-                if (!leadsRes.ok) {
-                    const err = await leadsRes.json().catch(() => ({}));
-                    console.warn(`[MetaLeads] form ${form.id} error:`, err);
-                    return;
-                }
-                const leadsData = await leadsRes.json() as {
-                    data: Array<{
-                        id: string;
-                        created_time: string;
-                        ad_id?: string;
-                        campaign_id?: string;
-                        campaign_name?: string;
-                        field_data: RawLeadFieldData[];
-                    }>;
-                };
-
-                for (const raw of leadsData.data || []) {
-                    const getField = (name: string) =>
-                        raw.field_data?.find(f =>
-                            f.name === name ||
-                            f.name.toLowerCase().includes(name.toLowerCase())
-                        )?.values?.[0] || null;
-
-                    const lead: MetaLead = {
-                        id: raw.id,
-                        createdTime: raw.created_time,
-                        campaignId: raw.campaign_id || form.id,
-                        campaignName: raw.campaign_name || form.name,
-                        adId: raw.ad_id || '',
-                        email: getField('email'),
-                        phone: getField('phone_number') || getField('phone'),
-                        firstName: getField('first_name'),
-                        lastName: getField('last_name'),
-                    };
-
-                    allLeads.push(lead);
-                    const arr = byCampaign.get(lead.campaignId) || [];
-                    arr.push(lead);
-                    byCampaign.set(lead.campaignId, arr);
-                }
-            } catch (err) {
-                console.warn(`[MetaLeads] Could not fetch leads for form ${form.id}:`, err);
-            }
-        }));
-
-        const result = {
-            leads: allLeads,
-            byCampaign,
-            totalLeads: allLeads.length,
-            hasLeadForms: true,
-        };
-        setCache(cacheKey, result);
-        return result;
-    } catch (err) {
-        console.error('[MetaLeads] Failed to fetch leads:', err);
+    if (!forms.length) {
         return { leads: [], byCampaign: new Map(), totalLeads: 0, hasLeadForms: false };
     }
-}
 
+    // Filter to forms that actually have leads
+    const formsWithLeads = forms.filter(f => (f.leads_count || 0) > 0);
+    if (!formsWithLeads.length) {
+        // Forms exist but no leads yet
+        return { leads: [], byCampaign: new Map(), totalLeads: 0, hasLeadForms: true };
+    }
 
-// --- Mock Data Helpers ---
-
-function getMockLeads(since: string, until: string): { leads: MetaLead[]; byCampaign: Map<string, MetaLead[]>; totalLeads: number; hasLeadForms: boolean } {
-    // We generate some mock leads corresponding to the mock campaigns in `getMockData`.
-    // Campaign 1: mock_camp_1 (Botox)
-    // Campaign 2: mock_camp_2 (Filler)
-    // Campaign 3: mock_camp_3 (Hydrafacial)
-
-    // Hardcode a few known emails from the MindBody mock dataset if we want them to "match",
-    // or just generate random ones. Let's use some common names.
-    const mockEmailsThatMatch = ['sam.aziz@chinupaesthetics.com', 'sharia@chinupaesthetics.com', 'test@example.com', 'john.doe@gmail.com', 'jane.smith@yahoo.com'];
-    const randomEmails = ['user1@mail.com', 'lead2@test.org', 'nopurchase@gmail.com', 'info@nobody.com'];
+    // Date filter as Unix timestamps
+    const sinceTs = Math.floor(new Date(since).getTime() / 1000);
+    const untilTs = Math.floor(new Date(until + 'T23:59:59').getTime() / 1000);
 
     const allLeads: MetaLead[] = [];
     const byCampaign = new Map<string, MetaLead[]>();
 
-    const generateLeads = (campId: string, campName: string, count: number, matchedCount: number) => {
-        for (let i = 0; i < count; i++) {
-            const isMatched = i < matchedCount;
-            const email = isMatched ? mockEmailsThatMatch[i % mockEmailsThatMatch.length] : randomEmails[i % randomEmails.length];
+    // Fetch leads from each form (page token required). One failed form fails the
+    // whole call: a partial count would read as a real (low) number.
+    await Promise.all(formsWithLeads.map(async form => {
+        const filterStr = encodeURIComponent(JSON.stringify([
+            { field: 'time_created', operator: 'GREATER_THAN', value: sinceTs },
+            { field: 'time_created', operator: 'LESS_THAN', value: untilTs },
+        ]));
+        const leadsUrl = `${GRAPH_BASE}/${form.id}/leads` +
+            `?fields=id,created_time,ad_id,campaign_id,campaign_name,field_data` +
+            `&filtering=${filterStr}` +
+            `&limit=500` +
+            `&access_token=${pageToken}`;
+        const rawLeads = await graphGetAll<{
+            id: string;
+            created_time: string;
+            ad_id?: string;
+            campaign_id?: string;
+            campaign_name?: string;
+            field_data: RawLeadFieldData[];
+        }>(leadsUrl, '/form/leads');
+
+        for (const raw of rawLeads) {
+            const getField = (name: string) =>
+                raw.field_data?.find(f =>
+                    f.name === name ||
+                    f.name.toLowerCase().includes(name.toLowerCase())
+                )?.values?.[0] || null;
 
             const lead: MetaLead = {
-                id: `mock_lead_${campId}_${i}`,
-                createdTime: new Date().toISOString(),
-                campaignId: campId,
-                campaignName: campName,
-                adId: `mock_ad_${i}`,
-                email,
-                phone: '555-0100',
-                firstName: isMatched ? 'Matched' : 'Unmatched',
-                lastName: `User ${i}`,
+                id: raw.id,
+                createdTime: raw.created_time,
+                campaignId: raw.campaign_id || form.id,
+                campaignName: raw.campaign_name || form.name,
+                adId: raw.ad_id || '',
+                email: getField('email'),
+                phone: getField('phone_number') || getField('phone'),
+                firstName: getField('first_name'),
+                lastName: getField('last_name'),
             };
+
             allLeads.push(lead);
-            const arr = byCampaign.get(campId) || [];
+            const arr = byCampaign.get(lead.campaignId) || [];
             arr.push(lead);
-            byCampaign.set(campId, arr);
+            byCampaign.set(lead.campaignId, arr);
         }
-    };
+    }));
 
-    // ~25 total mock leads
-    generateLeads('mock_camp_1', 'Botox Special — Spring 2026', 15, 6);
-    generateLeads('mock_camp_2', 'Filler Awareness — Houston', 8, 3);
-    generateLeads('mock_camp_3', 'Hydrafacial Retargeting', 6, 4);
-
-    return {
+    const result = {
         leads: allLeads,
         byCampaign,
         totalLeads: allLeads.length,
         hasLeadForms: true,
     };
+    setCache(cacheKey, result);
+    return result;
 }
 
-// --- Mock Data ---
-
-function getMockData(since: string, until: string): MetaAdsData {
-    const start = new Date(since);
-    const end = new Date(until);
-    const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000));
-
-    // Generate daily spend data
-    const dailySpend: MetaDailySpend[] = [];
-    for (let i = 0; i < days; i++) {
-        const date = new Date(start);
-        date.setDate(date.getDate() + i);
-        const daySpend = 20 + Math.random() * 40;
-        const impressions = Math.round(daySpend * 180 + Math.random() * 500);
-        const clicks = Math.round(impressions * (0.012 + Math.random() * 0.008));
-        const results = Math.random() > 0.4 ? Math.round(clicks * (0.05 + Math.random() * 0.08)) : 0;
-        dailySpend.push({
-            date: date.toISOString().split('T')[0],
-            spend: Math.round(daySpend * 100) / 100,
-            impressions,
-            clicks,
-            results,
-        });
-    }
-
-    const totalSpend = dailySpend.reduce((s, d) => s + d.spend, 0);
-    const totalImpressions = dailySpend.reduce((s, d) => s + d.impressions, 0);
-    const totalClicks = dailySpend.reduce((s, d) => s + d.clicks, 0);
-    const totalResults = dailySpend.reduce((s, d) => s + d.results, 0);
-
-    const campaigns: MetaCampaign[] = [
-        {
-            id: 'mock_camp_1',
-            name: 'Botox Special — Spring 2026',
-            status: 'ACTIVE',
-            objective: 'OUTCOME_LEADS',
-            spend: Math.round(totalSpend * 0.45 * 100) / 100,
-            impressions: Math.round(totalImpressions * 0.45),
-            clicks: Math.round(totalClicks * 0.45),
-            reach: Math.round(totalImpressions * 0.38),
-            frequency: 1.4,
-            cpm: 18.50,
-            cpc: 1.62,
-            ctr: 1.14,
-            results: Math.round(totalResults * 0.5),
-            costPerResult: 0,
-            roas: 3.2,
-            startTime: since,
-            stopTime: null,
-        },
-        {
-            id: 'mock_camp_2',
-            name: 'Filler Awareness — Houston',
-            status: 'ACTIVE',
-            objective: 'OUTCOME_AWARENESS',
-            spend: Math.round(totalSpend * 0.35 * 100) / 100,
-            impressions: Math.round(totalImpressions * 0.35),
-            clicks: Math.round(totalClicks * 0.35),
-            reach: Math.round(totalImpressions * 0.30),
-            frequency: 1.8,
-            cpm: 14.20,
-            cpc: 2.10,
-            ctr: 0.68,
-            results: Math.round(totalResults * 0.3),
-            costPerResult: 0,
-            roas: 2.1,
-            startTime: since,
-            stopTime: null,
-        },
-        {
-            id: 'mock_camp_3',
-            name: 'Hydrafacial Retargeting',
-            status: 'PAUSED',
-            objective: 'OUTCOME_LEADS',
-            spend: Math.round(totalSpend * 0.20 * 100) / 100,
-            impressions: Math.round(totalImpressions * 0.20),
-            clicks: Math.round(totalClicks * 0.20),
-            reach: Math.round(totalImpressions * 0.16),
-            frequency: 2.3,
-            cpm: 22.80,
-            cpc: 1.38,
-            ctr: 1.65,
-            results: Math.round(totalResults * 0.2),
-            costPerResult: 0,
-            roas: 4.8,
-            startTime: since,
-            stopTime: until,
-        },
-    ];
-
-    // Fill costPerResult
-    for (const c of campaigns) {
-        c.costPerResult = c.results > 0 ? Math.round((c.spend / c.results) * 100) / 100 : 0;
-    }
-
-    return {
-        isConfigured: false,
-        isMock: true,
-        account: {
-            id: AD_ACCOUNT_ID,
-            name: 'Chin Up! Aesthetics',
-            currency: 'USD',
-            timezone: 'America/Chicago',
-            accountStatus: 1,
-            totalSpend: Math.round(totalSpend * 100) / 100,
-            totalImpressions,
-            totalClicks,
-            totalReach: Math.round(totalImpressions * 0.84),
-            totalResults,
-        },
-        campaigns,
-        dailySpend,
-    };
-}
 
 // --- Ad Creatives ---
 
