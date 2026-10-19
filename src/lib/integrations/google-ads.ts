@@ -123,10 +123,7 @@ async function runAdsQuery(accessToken: string, query: string): Promise<any[]> {
 const googleAdsCache = createMemCache<GoogleAdsData>(4 * 60 * 60 * 1000); // 4 hours
 
 export async function getGoogleAdsData(since: string, until: string): Promise<GoogleAdsData> {
-    if (!isGoogleAdsConfigured()) {
-        console.warn('[GoogleAds] Credentials missing, falling back to mock data...');
-        return getMockData(since, until);
-    }
+    if (!isGoogleAdsConfigured()) throw new Error('Google Ads not configured: credentials are missing');
 
     // Check cache first
     const cacheKey = `google_ads_${since}_${until}`;
@@ -256,14 +253,7 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
 
     } catch (error: any) {
         console.error('[GoogleAds REST] Live API Error Details:', error.message || error);
-
-        // Return Mock if API fails to prevent dashboard UI break
-        const mock = getMockData(since, until);
-        return {
-            ...mock,
-            isConfigured: true,
-            isMock: true
-        };
+        throw error; // uncached; the Ads page shows the error instead of numbers
     }
 }
 
@@ -301,56 +291,54 @@ export async function getGhlGoogleLeads(since: string, until: string): Promise<{
     const untilMs = new Date(until + 'T23:59:59').getTime();
     const matched: GhlGoogleLead[] = [];
 
-    try {
-        const locations = getLocations();
-        for (const loc of locations) {
-            try {
-                const pipelines = await getPipelines(loc);
-                for (const pipeline of pipelines) {
-                    // Fetch all statuses so we catch leads regardless of outcome
-                    for (const status of ['open', 'won', 'lost', 'abandoned'] as const) {
-                        const { opportunities } = await getOpportunities(loc, pipeline.id, { status, maxPages: 10 });
-                        for (const opp of opportunities) {
-                            // Catch Google-attributed leads three ways:
-                            //  (1) source contains "google" (e.g. "Google Ads - General Medspa Form")
-                            //  (2) opportunity name contains "Google Ad" (landing-page leads where
-                            //      GHL tagged source as "Website" but the name preserves attribution)
-                            //  (3) source mentions "ppc" / "paid" (rarely used)
-                            const src = opp.source || '';
-                            const nm = opp.name || '';
-                            const isGoogle = /google/i.test(src) || /\bgoogle\s*ads?\b/i.test(nm);
-                            if (!isGoogle) continue;
-                            const created = opp.createdAt ? new Date(opp.createdAt).getTime() : 0;
-                            if (created < sinceMs || created > untilMs) continue;
-                            const ghlUrl = opp.contactId
-                                ? `https://app.gohighlevel.com/v2/location/${loc.locationId}/contacts/detail/${opp.contactId}`
-                                : null;
-                            matched.push({
-                                id: opp.id,
-                                name: opp.name,
-                                source: opp.source,
-                                createdAt: opp.createdAt,
-                                status: opp.status,
-                                locationKey: loc.key,
-                                contactId: opp.contactId,
-                                contactName: opp.contactName,
-                                contactEmail: opp.contactEmail,
-                                monetaryValue: opp.monetaryValue,
-                                ghlUrl,
-                                mbClientId: null,
-                                mbRevenue: 0,
-                                mbBooked: 0,
-                                mbCompleted: 0,
-                            });
-                        }
+    const locations = getLocations();
+    for (const loc of locations) {
+        try {
+            const pipelines = await getPipelines(loc);
+            for (const pipeline of pipelines) {
+                // Fetch all statuses so we catch leads regardless of outcome
+                for (const status of ['open', 'won', 'lost', 'abandoned'] as const) {
+                    const { opportunities } = await getOpportunities(loc, pipeline.id, { status, maxPages: 10 });
+                    for (const opp of opportunities) {
+                        // Catch Google-attributed leads three ways:
+                        //  (1) source contains "google" (e.g. "Google Ads - General Medspa Form")
+                        //  (2) opportunity name contains "Google Ad" (landing-page leads where
+                        //      GHL tagged source as "Website" but the name preserves attribution)
+                        //  (3) source mentions "ppc" / "paid" (rarely used)
+                        const src = opp.source || '';
+                        const nm = opp.name || '';
+                        const isGoogle = /google/i.test(src) || /\bgoogle\s*ads?\b/i.test(nm);
+                        if (!isGoogle) continue;
+                        const created = opp.createdAt ? new Date(opp.createdAt).getTime() : 0;
+                        if (created < sinceMs || created > untilMs) continue;
+                        const ghlUrl = opp.contactId
+                            ? `https://app.gohighlevel.com/v2/location/${loc.locationId}/contacts/detail/${opp.contactId}`
+                            : null;
+                        matched.push({
+                            id: opp.id,
+                            name: opp.name,
+                            source: opp.source,
+                            createdAt: opp.createdAt,
+                            status: opp.status,
+                            locationKey: loc.key,
+                            contactId: opp.contactId,
+                            contactName: opp.contactName,
+                            contactEmail: opp.contactEmail,
+                            monetaryValue: opp.monetaryValue,
+                            ghlUrl,
+                            mbClientId: null,
+                            mbRevenue: 0,
+                            mbBooked: 0,
+                            mbCompleted: 0,
+                        });
                     }
                 }
-            } catch (e) {
-                console.warn(`[ghl-google-leads] location ${loc.key} failed:`, e);
             }
+        } catch (e) {
+            // A missing location would read as a real (lower) lead count; fail instead.
+            console.warn(`[ghl-google-leads] location ${loc.key} failed:`, e);
+            throw e;
         }
-    } catch (e) {
-        console.warn('[ghl-google-leads] fatal:', e);
     }
 
     const result = { count: matched.length, opportunities: matched };
@@ -391,7 +379,7 @@ export async function enrichGhlLeadsWithMindBody(
     const mbEnd = `${until}T23:59:59`;
 
     // 1. Pull MindBody email→client map (with revenue summed for the window)
-    const emailMap = await getClientEmailMapFromDB(mbStart, mbEnd).catch(() => new Map());
+    const emailMap = await getClientEmailMapFromDB(mbStart, mbEnd);
     const matchedClientIds: string[] = [];
 
     // 2. Match each GHL lead to a POS client (Zenoti or MindBody history) by email
@@ -409,26 +397,25 @@ export async function enrichGhlLeadsWithMindBody(
 
     // 3. Lookup booked/completed appointments for matched clients
     if (matchedClientIds.length > 0) {
-        try {
-            const apptMap = await getAppointmentsByClientIds([...new Set(matchedClientIds)], mbStart, mbEnd);
-            for (const lead of leads) {
-                if (!lead.mbClientId) continue;
-                const appts = apptMap.get(lead.mbClientId);
-                if (appts) {
-                    lead.mbBooked = appts.booked;
-                    lead.mbCompleted = appts.completed;
-                }
+        const apptMap = await getAppointmentsByClientIds([...new Set(matchedClientIds)], mbStart, mbEnd);
+        for (const lead of leads) {
+            if (!lead.mbClientId) continue;
+            const appts = apptMap.get(lead.mbClientId);
+            if (appts) {
+                lead.mbBooked = appts.booked;
+                lead.mbCompleted = appts.completed;
             }
-        } catch (e) {
-            console.warn('[google-ads enrich] appts lookup failed:', e);
         }
     }
 
-    // 4. Aggregate totals (no per-campaign breakdown — see function docstring)
-    const matched = leads.filter(l => !!l.mbClientId);
+    // 4. Aggregate totals (no per-campaign breakdown — see function docstring).
+    // Matched = the person bought in the window; a $0 client record is not a paying patient.
+    // Appointments count every lead with a client record, once per client.
+    const matched = leads.filter(l => l.mbRevenue > 0);
     const totalRevenue = matched.reduce((s, l) => s + l.mbRevenue, 0);
-    const appointmentsBooked = matched.reduce((s, l) => s + l.mbBooked, 0);
-    const appointmentsCompleted = matched.reduce((s, l) => s + l.mbCompleted, 0);
+    const withClient = [...new Map(leads.filter(l => l.mbClientId).map(l => [l.mbClientId, l])).values()];
+    const appointmentsBooked = withClient.reduce((s, l) => s + l.mbBooked, 0);
+    const appointmentsCompleted = withClient.reduce((s, l) => s + l.mbCompleted, 0);
     const totals = {
         totalLeads: leads.length,
         mbMatchedClients: matched.length,
@@ -439,42 +426,4 @@ export async function enrichGhlLeadsWithMindBody(
     };
 
     return { leads, totals };
-}
-
-function getMockData(_since: string, _until: string): GoogleAdsData {
-    return {
-        isConfigured: false,
-        isMock: true,
-        account: {
-            id: '123-456-7890',
-            name: 'Chin Up Google Ads',
-            currency: 'USD',
-            timezone: 'America/Chicago',
-            accountStatus: 1,
-            totalSpend: 1500.00,
-            totalImpressions: 5000,
-            totalClicks: 250,
-            totalResults: 15
-        },
-        campaigns: [
-            {
-                id: 'mock_gAds_1',
-                name: 'Search - Local Med Spa',
-                status: 'ACTIVE',
-                objective: 'SEARCH',
-                spend: 750.00,
-                impressions: 2500,
-                clicks: 125,
-                cpm: 65.40,
-                cpc: 3.20,
-                ctr: 4.8,
-                results: 10,
-                costPerResult: 75.00,
-                roas: 4.1,
-                startTime: '2026-02-01',
-                stopTime: null
-            }
-        ],
-        dailySpend: []
-    };
 }
