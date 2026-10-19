@@ -34,6 +34,15 @@ describe('summarizeMatchedRevenue', () => {
 
     it('handles no purchases', () => {
         const s = summarizeMatchedRevenue([{ email: 'd@x.com', revenue: 0, leadDate: '2026-10-01', firstSaleDate: null }]);
-        expect(s).toEqual({ purchasingLeads: 0, totalRevenue: 0, priorPatientRevenue: 0, newPatientRevenue: 0, topPatientRevenue: 0, topPatientShare: 0 });
+        expect(s).toEqual({ purchasingLeads: 0, purchasingPatients: 0, totalRevenue: 0, priorPatientRevenue: 0, newPatientRevenue: 0, topPatientRevenue: 0, topPatientShare: 0 });
+    });
+    it('counts a buyer who submitted several forms as one paying patient', () => {
+        const s = summarizeMatchedRevenue([
+            { email: 'a@x.com', revenue: 100, leadDate: '2026-10-01', firstSaleDate: '2026-10-02' },
+            { email: 'a@x.com', revenue: 100, leadDate: '2026-10-03', firstSaleDate: '2026-10-02' },
+            { email: 'b@x.com', revenue: 50, leadDate: '2026-10-01', firstSaleDate: '2026-10-05' },
+        ]);
+        expect(s.purchasingLeads).toBe(3);
+        expect(s.purchasingPatients).toBe(2);
     });
 });

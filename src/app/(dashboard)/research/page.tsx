@@ -52,6 +52,7 @@ export default function ResearchPage() {
     const [trafficData, setTrafficData] = useState<TrafficSourceData | null>(null);
     const [trafficLoading, setTrafficLoading] = useState(false);
     const [trafficError, setTrafficError] = useState<string | null>(null);
+    const [competitorError, setCompetitorError] = useState<string | null>(null);
 
     // --- Calendar Persistence ---
     const loadSavedCalendar = useCallback(async (m: number, y: number) => {
@@ -138,10 +139,14 @@ export default function ResearchPage() {
         setTrafficLoading(true);
 
         // Competitor Watch
+        setCompetitorError(null);
         fetch('/api/research/competitor-watch?location=all')
-            .then(r => r.json())
-            .then(d => setCompetitorData(d))
-            .catch(() => {})
+            .then(async r => {
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.error || 'Competitor fetch failed');
+                setCompetitorData(d);
+            })
+            .catch((e: Error) => setCompetitorError(e.message))
             .finally(() => setCompetitorLoading(false));
 
         // Content Performance Analysis
@@ -286,6 +291,7 @@ export default function ResearchPage() {
                     trafficError={trafficError}
                     competitorLoading={competitorLoading}
                     competitorData={competitorData}
+                    competitorError={competitorError}
                     marketLoading={marketLoading}
                     marketData={marketData}
                 />

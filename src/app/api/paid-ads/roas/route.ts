@@ -272,7 +272,7 @@ export async function GET(request: NextRequest) {
             metaLeads: metaLeadsTotal,
             hasLeadForms: leadData.hasLeadForms,
             // MindBody matched
-            matchedClients: matchedCount,
+            matchedClients: revenueSummary.purchasingPatients,
             matchedRevenue: Math.round(matchedRevenue * 100) / 100,
             priorPatientRevenue: Math.round(revenueSummary.priorPatientRevenue * 100) / 100,
             newPatientRevenue: Math.round(revenueSummary.newPatientRevenue * 100) / 100,
@@ -284,8 +284,8 @@ export async function GET(request: NextRequest) {
             matchedClientsDetails,
             // Calculated ROAS
             trueRoas,
-            costPerMatchedClient: matchedCount > 0 && metaSpend > 0
-                ? Math.round((metaSpend / matchedCount) * 100) / 100
+            costPerMatchedClient: revenueSummary.purchasingPatients > 0 && metaSpend > 0
+                ? Math.round((metaSpend / revenueSummary.purchasingPatients) * 100) / 100
                 : null,
             // Meta platform ROAS (for comparison), spend-weighted across campaigns
             metaPlatformRoas: (() => {

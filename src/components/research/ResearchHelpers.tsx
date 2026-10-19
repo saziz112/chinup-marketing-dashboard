@@ -581,13 +581,14 @@ export interface MarketIntelTabProps {
     trafficError: string | null;
     competitorLoading: boolean;
     competitorData: CompetitorWatchData | null;
+    competitorError: string | null;
     marketLoading: boolean;
     marketData: MarketData | null;
 }
 
 export function MarketIntelTab({
     marketFetched, fetchMarketIntel, contentAnalysisLoading, contentAnalysis,
-    trafficLoading, trafficData, trafficError, competitorLoading, competitorData,
+    trafficLoading, trafficData, trafficError, competitorLoading, competitorData, competitorError,
     marketLoading, marketData,
 }: MarketIntelTabProps) {
     return (
@@ -698,7 +699,9 @@ export function MarketIntelTab({
                     {/* Section 3: Competitor Watch */}
                     <div className="section-card">
                         <h3>Competitor Watch</h3>
-                        {competitorLoading ? <LoadingDots /> : competitorData ? (
+                        {competitorLoading ? <LoadingDots /> : competitorError ? (
+                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>Unavailable: {competitorError}</div>
+                        ) : competitorData ? (
                             <>
                                 {competitorData.summary && (
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 12 }}>

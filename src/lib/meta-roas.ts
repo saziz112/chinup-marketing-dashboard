@@ -9,6 +9,7 @@ export interface MatchedLead {
 
 export interface MatchedRevenueSummary {
     purchasingLeads: number;
+    purchasingPatients: number;   // distinct people; one buyer can submit several forms
     totalRevenue: number;
     priorPatientRevenue: number;  // from people who had already bought before this lead
     newPatientRevenue: number;
@@ -29,6 +30,7 @@ export function summarizeMatchedRevenue(leads: MatchedLead[]): MatchedRevenueSum
     const topPatientRevenue = Math.max(0, ...byPerson.values());
     return {
         purchasingLeads: purchasing.length,
+        purchasingPatients: byPerson.size,
         totalRevenue,
         priorPatientRevenue,
         newPatientRevenue: totalRevenue - priorPatientRevenue,
