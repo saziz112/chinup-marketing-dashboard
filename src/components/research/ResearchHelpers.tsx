@@ -121,7 +121,6 @@ export interface TrafficSourceData {
     directVisits: number;
     totalSessions: number;
     period: string;
-    isMock: boolean;
 }
 
 // ================================================================
@@ -579,6 +578,7 @@ export interface MarketIntelTabProps {
     contentAnalysis: ContentAnalysisData | null;
     trafficLoading: boolean;
     trafficData: TrafficSourceData | null;
+    trafficError: string | null;
     competitorLoading: boolean;
     competitorData: CompetitorWatchData | null;
     marketLoading: boolean;
@@ -587,7 +587,7 @@ export interface MarketIntelTabProps {
 
 export function MarketIntelTab({
     marketFetched, fetchMarketIntel, contentAnalysisLoading, contentAnalysis,
-    trafficLoading, trafficData, competitorLoading, competitorData,
+    trafficLoading, trafficData, trafficError, competitorLoading, competitorData,
     marketLoading, marketData,
 }: MarketIntelTabProps) {
     return (
@@ -663,8 +663,10 @@ export function MarketIntelTab({
 
                     {/* Section 2: Traffic Sources */}
                     <div className="section-card">
-                        <h3>Website Traffic Sources {trafficData?.isMock && <span style={{ fontSize: '0.625rem', color: 'var(--text-muted)', fontWeight: 400 }}>(Demo — connect GA4 for live data)</span>}</h3>
-                        {trafficLoading ? <LoadingDots /> : trafficData ? (
+                        <h3>Website Traffic Sources</h3>
+                        {trafficLoading ? <LoadingDots /> : trafficError ? (
+                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>Unavailable: {trafficError}</div>
+                        ) : trafficData ? (
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
                                 <div>
                                     <div style={sectionLabelStyle}>Sessions by Source (30d)</div>

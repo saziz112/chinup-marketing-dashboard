@@ -37,7 +37,6 @@ export interface TrafficSourceData {
     directVisits: number;
     totalSessions: number;
     period: string;
-    isMock: boolean;
 }
 
 export function isGA4Configured(): boolean {
@@ -66,8 +65,7 @@ export async function getTrafficSources(days: number = 30): Promise<TrafficSourc
     }
 
     if (!isGA4Configured()) {
-        console.warn('[GA4] Not configured. Set GA4_PROPERTY_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY.');
-        return generateMockData(days);
+        throw new Error('GA4 not configured. Set GA4_PROPERTY_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY.');
     }
 
     const propertyId = process.env.GA4_PROPERTY_ID;
@@ -170,7 +168,6 @@ export async function getTrafficSources(days: number = 30): Promise<TrafficSourc
             directVisits,
             totalSessions,
             period: `${days} days`,
-            isMock: false,
         };
 
         cachedTrafficData = data;
@@ -178,33 +175,7 @@ export async function getTrafficSources(days: number = 30): Promise<TrafficSourc
         return data;
     } catch (error: any) {
         console.error('[GA4] Error fetching data:', error.message);
-        // Return mock on error so the page doesn't break
-        return generateMockData(days);
+        throw error;
     }
 }
 
-function generateMockData(days: number): TrafficSourceData {
-    return {
-        sourceBreakdown: [
-            { source: 'google', medium: 'organic', sessions: 1200, users: 980 },
-            { source: '(direct)', medium: '(none)', sessions: 450, users: 380 },
-            { source: 'instagram', medium: 'referral', sessions: 342, users: 290 },
-            { source: 'facebook', medium: 'referral', sessions: 128, users: 105 },
-            { source: 'google', medium: 'cpc', sessions: 95, users: 82 },
-        ],
-        instagramVisits: 342,
-        instagramTopPages: [
-            { page: '/services/dysport', views: 89, sessions: 72 },
-            { page: '/services/lip-filler', views: 67, sessions: 54 },
-            { page: '/book', views: 45, sessions: 38 },
-            { page: '/', views: 41, sessions: 35 },
-            { page: '/services/hydrafacial', views: 28, sessions: 22 },
-        ],
-        facebookVisits: 128,
-        googleVisits: 1295,
-        directVisits: 450,
-        totalSessions: 2215,
-        period: `${days} days`,
-        isMock: true,
-    };
-}

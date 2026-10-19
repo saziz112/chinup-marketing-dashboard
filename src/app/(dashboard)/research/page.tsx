@@ -51,6 +51,7 @@ export default function ResearchPage() {
     const [contentAnalysisLoading, setContentAnalysisLoading] = useState(false);
     const [trafficData, setTrafficData] = useState<TrafficSourceData | null>(null);
     const [trafficLoading, setTrafficLoading] = useState(false);
+    const [trafficError, setTrafficError] = useState<string | null>(null);
 
     // --- Calendar Persistence ---
     const loadSavedCalendar = useCallback(async (m: number, y: number) => {
@@ -151,10 +152,14 @@ export default function ResearchPage() {
             .finally(() => setContentAnalysisLoading(false));
 
         // Traffic Sources (GA4)
+        setTrafficError(null);
         fetch('/api/research/traffic-sources?days=30')
-            .then(r => r.json())
-            .then(d => setTrafficData(d))
-            .catch(() => {})
+            .then(async r => {
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.error || 'Traffic source fetch failed');
+                setTrafficData(d);
+            })
+            .catch((e: Error) => setTrafficError(e.message))
             .finally(() => setTrafficLoading(false));
 
         // IG hashtag trends
@@ -278,6 +283,7 @@ export default function ResearchPage() {
                     contentAnalysis={contentAnalysis}
                     trafficLoading={trafficLoading}
                     trafficData={trafficData}
+                    trafficError={trafficError}
                     competitorLoading={competitorLoading}
                     competitorData={competitorData}
                     marketLoading={marketLoading}
