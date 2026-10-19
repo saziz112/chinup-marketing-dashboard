@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@/lib/db/sql';
+import { postEngagementRate, averageRate } from '@/lib/engagement';
 
 type ContentCategory = 'educational' | 'before_after' | 'promotional' | 'trending' | 'lifestyle';
 
@@ -85,7 +86,7 @@ interface CategoryStats {
     avgViews: number;
     avgLikes: number;
     avgComments: number;
-    avgEngagement: number;
+    avgEngagement: number | null;
     bestPost: { caption: string; views: number; engagement: number; permalink: string } | null;
 }
 
@@ -107,8 +108,8 @@ export async function GET() {
         const result = await sql`
             SELECT
                 caption, platform, post_type, permalink,
-                likes, comments, shares, saves, views,
-                engagement_rate, posted_at
+                likes, comments, shares, saves, views, reach,
+                posted_at
             FROM social_posts
             WHERE posted_at > NOW() - INTERVAL '90 days'
                 AND caption IS NOT NULL
@@ -126,20 +127,29 @@ export async function GET() {
         }
 
         // Categorize each post
-        const categorized = posts.map(p => ({
-            caption: p.caption as string,
-            platform: p.platform as string,
-            post_type: p.post_type as string,
-            permalink: p.permalink as string,
-            likes: Number(p.likes) || 0,
-            comments: Number(p.comments) || 0,
-            shares: Number(p.shares) || 0,
-            saves: Number(p.saves) || 0,
-            views: Number(p.views) || 0,
-            engagement_rate: Number(p.engagement_rate) || 0,
-            posted_at: p.posted_at as string,
-            content_category: categorizePost(p.caption || ''),
-        }));
+        // Rate is recomputed from the raw counts rather than read from the stored
+        // engagement_rate, which older syncs wrote as interactions ÷ 1 for posts
+        // with no views or reach.
+        const categorized = posts.map(p => {
+            const counts = {
+                likes: Number(p.likes) || 0,
+                comments: Number(p.comments) || 0,
+                shares: Number(p.shares) || 0,
+                saves: Number(p.saves) || 0,
+                views: Number(p.views) || 0,
+                reach: Number(p.reach) || 0,
+            };
+            return {
+                caption: p.caption as string,
+                platform: p.platform as string,
+                post_type: p.post_type as string,
+                permalink: p.permalink as string,
+                ...counts,
+                engagement_rate: postEngagementRate(counts),
+                posted_at: p.posted_at as string,
+                content_category: categorizePost(p.caption || ''),
+            };
+        });
 
         type CategorizedPost = typeof categorized[number];
 
@@ -156,12 +166,13 @@ export async function GET() {
             const totalViews = catPosts.reduce((s, p) => s + (Number(p.views) || 0), 0);
             const totalLikes = catPosts.reduce((s, p) => s + (Number(p.likes) || 0), 0);
             const totalComments = catPosts.reduce((s, p) => s + (Number(p.comments) || 0), 0);
-            const totalEngagement = catPosts.reduce((s, p) => s + (Number(p.engagement_rate) || 0), 0);
+            const avgEngagement = averageRate(catPosts.map(p => p.engagement_rate));
             const count = catPosts.length;
 
-            // Find best post by engagement
-            const sorted = [...catPosts].sort((a, b) => (Number(b.engagement_rate) || 0) - (Number(a.engagement_rate) || 0));
-            const best = sorted[0];
+            // Find best post by engagement, among posts that have a rate
+            const best = catPosts
+                .filter(p => p.engagement_rate !== null)
+                .sort((a, b) => b.engagement_rate! - a.engagement_rate!)[0];
 
             categories.push({
                 category: cat,
@@ -170,27 +181,27 @@ export async function GET() {
                 avgViews: Math.round(totalViews / count),
                 avgLikes: Math.round(totalLikes / count),
                 avgComments: Math.round(totalComments / count),
-                avgEngagement: Number((totalEngagement / count).toFixed(4)),
+                avgEngagement: avgEngagement === null ? null : Number(avgEngagement.toFixed(4)),
                 bestPost: best ? {
                     caption: (best.caption || '').slice(0, 80),
                     views: Number(best.views) || 0,
-                    engagement: Number(best.engagement_rate) || 0,
+                    engagement: best.engagement_rate!,
                     permalink: best.permalink || '',
                 } : null,
             });
         }
 
         // Sort by avg engagement descending
-        categories.sort((a, b) => b.avgEngagement - a.avgEngagement);
+        categories.sort((a, b) => (b.avgEngagement ?? -1) - (a.avgEngagement ?? -1));
 
         // Overall stats
-        const overallAvgEngagement = posts.reduce((s, p) => s + (Number(p.engagement_rate) || 0), 0) / posts.length;
+        const overallAvgEngagement = averageRate(categorized.map(p => p.engagement_rate));
         const overallAvgViews = posts.reduce((s, p) => s + (Number(p.views) || 0), 0) / posts.length;
 
         return NextResponse.json({
             categories,
             totalPosts: posts.length,
-            overallAvgEngagement: Number(overallAvgEngagement.toFixed(4)),
+            overallAvgEngagement: overallAvgEngagement === null ? null : Number(overallAvgEngagement.toFixed(4)),
             overallAvgViews: Math.round(overallAvgViews),
             period: '90 days',
         });

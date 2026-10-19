@@ -6,6 +6,7 @@
 
 import { sql } from '@/lib/db/sql';
 import { IGMedia, isMetaConfigured } from './meta-organic';
+import { postEngagementRate } from '@/lib/engagement';
 
 const GRAPH_API_VERSION = 'v22.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -123,8 +124,8 @@ async function upsertPosts(posts: IGMedia[]): Promise<number> {
         const saves = p.saved || 0;
         const views = p.views || 0;
         const reach = p.reach || 0;
-        const denominator = Math.max(views, reach, 1);
-        const engagementRate = Math.min((likes + comments + shares + saves) / denominator, 99.9999);
+        const rate = postEngagementRate({ likes, comments, shares, saves, views, reach });
+        const engagementRate = rate === null ? null : Math.min(rate, 99.9999);
 
         await sql`
             INSERT INTO social_posts (platform, post_id, post_type, posted_at, caption, permalink, media_url, likes, comments, shares, saves, views, reach, impressions, engagement_rate, updated_at)

@@ -109,17 +109,9 @@ export async function GET(req: NextRequest) {
                 return { keyword: kw, label, competitorCount: count };
             });
 
-        // ── Compute our avg engagement for comparison ──
-        let ourAvgEngagement = 0;
-        try {
-            const ourEngResult = await sql`
-                SELECT ROUND(AVG(engagement_rate)::numeric, 4) AS avg_eng
-                FROM social_posts
-                WHERE posted_at > NOW() - INTERVAL '90 days' AND engagement_rate IS NOT NULL
-            `;
-            ourAvgEngagement = Number(ourEngResult.rows[0]?.avg_eng) || 0;
-        } catch { /* ignore */ }
-
+        // No "ours vs theirs" engagement comparison: ours is interactions ÷ views,
+        // and Business Discovery only allows (likes + comments) ÷ followers for
+        // competitors. The ratio of the two was meaningless (it showed +1,080,410%).
         const competitorAvgEngagement = competitorsWithEngagement > 0
             ? totalCompetitorEngagement / competitorsWithEngagement
             : 0;
@@ -158,10 +150,6 @@ export async function GET(req: NextRequest) {
             summary: {
                 totalCompetitors: competitors.length,
                 competitorAvgEngagement,
-                ourAvgEngagement,
-                engagementDiff: ourAvgEngagement > 0 && competitorAvgEngagement > 0
-                    ? ((ourAvgEngagement - competitorAvgEngagement) / competitorAvgEngagement * 100).toFixed(1)
-                    : null,
             },
         });
     } catch (error: any) {

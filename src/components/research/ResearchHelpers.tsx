@@ -90,7 +90,7 @@ export interface CompetitorWatchData {
     competitors: CompetitorCard[];
     hashtagGaps: Array<{ tag: string; competitorCount: number }>;
     contentGaps: Array<{ keyword: string; label: string; competitorCount: number }>;
-    summary: { totalCompetitors: number; competitorAvgEngagement: number; ourAvgEngagement: number; engagementDiff: string | null };
+    summary: { totalCompetitors: number; competitorAvgEngagement: number };
 }
 
 export interface ContentCategoryStats {
@@ -100,14 +100,14 @@ export interface ContentCategoryStats {
     avgViews: number;
     avgLikes: number;
     avgComments: number;
-    avgEngagement: number;
+    avgEngagement: number | null;
     bestPost: { caption: string; views: number; engagement: number; permalink: string } | null;
 }
 
 export interface ContentAnalysisData {
     categories: ContentCategoryStats[];
     totalPosts: number;
-    overallAvgEngagement: number;
+    overallAvgEngagement: number | null;
     overallAvgViews: number;
     period: string;
 }
@@ -614,8 +614,8 @@ export function MarketIntelTab({
                         {contentAnalysisLoading ? <LoadingDots /> : contentAnalysis && contentAnalysis.categories.length > 0 ? (
                             <div>
                                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 12 }}>
-                                    {contentAnalysis.totalPosts} posts analyzed &middot; Overall avg: {(contentAnalysis.overallAvgEngagement * 100).toFixed(1)}% engagement, {contentAnalysis.overallAvgViews.toLocaleString()} views
-                                    <br /><span style={{ fontSize: '0.6875rem', opacity: 0.7 }}>Engagement rate = (likes + comments + shares + saves) &divide; views</span>
+                                    {contentAnalysis.totalPosts} posts analyzed &middot; Overall avg: {contentAnalysis.overallAvgEngagement !== null ? `${(contentAnalysis.overallAvgEngagement * 100).toFixed(1)}%` : '\u2014'} engagement, {contentAnalysis.overallAvgViews.toLocaleString()} views
+                                    <br /><span style={{ fontSize: '0.6875rem', opacity: 0.7 }}>Engagement rate = (likes + comments + shares + saves) &divide; views or reach, whichever is larger. Posts Instagram gave neither for are left out.</span>
                                 </div>
                                 <div style={{ overflowX: 'auto' }}>
                                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
@@ -636,8 +636,8 @@ export function MarketIntelTab({
                                                     <td style={{ ...tdStyle, fontWeight: 600 }}>{cat.label}</td>
                                                     <td style={{ ...tdStyle, textAlign: 'right' }}>{cat.postCount}</td>
                                                     <td style={{ ...tdStyle, textAlign: 'right' }}>{cat.avgViews.toLocaleString()}</td>
-                                                    <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600, color: cat.avgEngagement >= contentAnalysis.overallAvgEngagement ? 'var(--success)' : 'var(--text-muted)' }}>
-                                                        {(cat.avgEngagement * 100).toFixed(1)}%
+                                                    <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600, color: cat.avgEngagement !== null && contentAnalysis.overallAvgEngagement !== null && cat.avgEngagement >= contentAnalysis.overallAvgEngagement ? 'var(--success)' : 'var(--text-muted)' }}>
+                                                        {cat.avgEngagement !== null ? `${(cat.avgEngagement * 100).toFixed(1)}%` : '\u2014'}
                                                         <div style={{ fontSize: '0.625rem', fontWeight: 400, color: 'var(--text-muted)' }}>
                                                             ~{Math.round(cat.avgLikes + cat.avgComments)} interactions/post
                                                         </div>
@@ -706,11 +706,6 @@ export function MarketIntelTab({
                                 {competitorData.summary && (
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 12 }}>
                                         {competitorData.summary.totalCompetitors} competitors tracked
-                                        {competitorData.summary.engagementDiff && (
-                                            <> &middot; Your engagement is <span style={{ color: Number(competitorData.summary.engagementDiff) >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
-                                                {Number(competitorData.summary.engagementDiff) >= 0 ? '+' : ''}{competitorData.summary.engagementDiff}%
-                                            </span> vs competitor avg</>
-                                        )}
                                     </div>
                                 )}
 
