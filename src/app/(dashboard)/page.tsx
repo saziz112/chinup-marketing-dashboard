@@ -15,6 +15,7 @@ type Period = '7d' | '30d' | '90d';
 
 interface PlatformData {
     followers: string;
+    followerCount: number;
     engagement: string;
     configured: boolean;
 }
@@ -26,16 +27,17 @@ export default function OverviewPage() {
         leads: { val: '--', loading: true },
     });
     const [platforms, setPlatforms] = useState<Record<string, PlatformData>>({
-        Instagram: { followers: '--', engagement: '--%', configured: false },
-        Facebook: { followers: '--', engagement: '--%', configured: false },
-        YouTube: { followers: '--', engagement: '--%', configured: false },
+        Instagram: { followers: '--', followerCount: 0, engagement: '--%', configured: false },
+        Facebook: { followers: '--', followerCount: 0, engagement: '--%', configured: false },
+        YouTube: { followers: '--', followerCount: 0, engagement: '--%', configured: false },
     });
 
     const [igDataRaw, setIgDataRaw] = useState<any>(null);
     const [fbDataRaw, setFbDataRaw] = useState<any>(null);
     const [socialLoading, setSocialLoading] = useState(true);
-    const [googleRating, setGoogleRating] = useState<{ rating: string; reviews: string; fiveStarRate: string; needsAttention: number; loading: boolean }>({ rating: '--', reviews: '--', fiveStarRate: '--', needsAttention: 0, loading: true });
-    const [searchData, setSearchData] = useState<{ clicks: number; impressions: number; position: number; loading: boolean }>({ clicks: 0, impressions: 0, position: 0, loading: true });
+    // error = the source failed; render "Unavailable", never a number
+    const [googleRating, setGoogleRating] = useState<{ rating: string; reviews: string; loading: boolean; error: boolean }>({ rating: '--', reviews: '--', loading: true, error: false });
+    const [searchData, setSearchData] = useState<{ clicks: number; impressions: number; position: number; loading: boolean; error: boolean }>({ clicks: 0, impressions: 0, position: 0, loading: true, error: false });
 
     const user = session?.user as Record<string, unknown> | undefined;
     const isAdmin = user?.isAdmin === true;
@@ -49,13 +51,14 @@ export default function OverviewPage() {
             try {
                 const res = await fetch(`/api/metrics/leads?period=${period}`);
                 const leadsData = await res.json();
+                if (!res.ok || typeof leadsData.count !== 'number') throw new Error(leadsData.error || `HTTP ${res.status}`);
                 setMetrics({
-                    leads: { val: leadsData.count?.toString() || '0', loading: false },
+                    leads: { val: leadsData.count.toString(), loading: false },
                 });
             } catch (error) {
                 console.error('[Overview] Failed to fetch leads:', error);
                 setMetrics({
-                    leads: { val: 'Error', loading: false },
+                    leads: { val: 'Unavailable', loading: false },
                 });
             }
         };
@@ -64,24 +67,16 @@ export default function OverviewPage() {
             try {
                 const res = await fetch('/api/reputation/reviews?location=all');
                 const data = await res.json();
-                if (data.metrics) {
-                    const reviews = data.reviews || [];
-                    const fiveStarCount = reviews.filter((r: any) => r.rating === 5).length;
-                    const fiveStarRate = reviews.length > 0 ? Math.round((fiveStarCount / reviews.length) * 100) : 0;
-                    const needsAttention = reviews.filter((r: any) => r.rating <= 3).length;
-                    setGoogleRating({
-                        rating: data.metrics.averageRating?.toFixed(1) || '--',
-                        reviews: formatNumber(data.metrics.totalReviews || 0),
-                        fiveStarRate: `${fiveStarRate}%`,
-                        needsAttention,
-                        loading: false,
-                    });
-                } else {
-                    setGoogleRating(prev => ({ ...prev, loading: false }));
-                }
+                if (!res.ok || !data.metrics) throw new Error(data.error || `HTTP ${res.status}`);
+                setGoogleRating({
+                    rating: data.metrics.averageRating.toFixed(1),
+                    reviews: data.metrics.totalReviews.toLocaleString(),
+                    loading: false,
+                    error: false,
+                });
             } catch (error) {
                 console.error('[Overview] Failed to fetch Google rating:', error);
-                setGoogleRating(prev => ({ ...prev, loading: false }));
+                setGoogleRating(prev => ({ ...prev, loading: false, error: true }));
             }
         };
 
@@ -89,13 +84,11 @@ export default function OverviewPage() {
             try {
                 const res = await fetch('/api/reputation/search?period=30');
                 const data = await res.json();
-                if (data.totals) {
-                    setSearchData({ clicks: data.totals.clicks, impressions: data.totals.impressions, position: data.totals.position, loading: false });
-                } else {
-                    setSearchData(prev => ({ ...prev, loading: false }));
-                }
-            } catch {
-                setSearchData(prev => ({ ...prev, loading: false }));
+                if (!res.ok || !data.totals) throw new Error(data.error || `HTTP ${res.status}`);
+                setSearchData({ clicks: data.totals.clicks, impressions: data.totals.impressions, position: data.totals.position, loading: false, error: false });
+            } catch (error) {
+                console.error('[Overview] Failed to fetch Search Console:', error);
+                setSearchData(prev => ({ ...prev, loading: false, error: true }));
             }
         };
 
@@ -129,6 +122,7 @@ export default function OverviewPage() {
                     setIgDataRaw(igData);
                     updated.Instagram = {
                         followers: formatNumber(igData.summary.followers),
+                        followerCount: igData.summary.followers,
                         engagement: `${igData.summary.engagementRate}%`,
                         configured: true,
                     };
@@ -140,6 +134,7 @@ export default function OverviewPage() {
                     setFbDataRaw(fbData);
                     updated.Facebook = {
                         followers: formatNumber(fbData.summary.followers),
+                        followerCount: fbData.summary.followers,
                         engagement: `${fbData.summary.engagementRate}%`,
                         configured: true,
                     };
@@ -150,6 +145,7 @@ export default function OverviewPage() {
                 if (ytData?.configured && ytData?.summary) {
                     updated.YouTube = {
                         followers: formatNumber(ytData.summary.subscribers),
+                        followerCount: ytData.summary.subscribers,
                         engagement: `${ytData.summary.engagementRate}%`,
                         configured: true,
                     };
@@ -168,24 +164,11 @@ export default function OverviewPage() {
         fetchSocial();
     }, [period]);
 
-    // Compute total followers across connected platforms
-    const totalFollowers = (() => {
-        let total = 0;
-        let hasAny = false;
-        for (const p of Object.values(platforms)) {
-            if (p.configured) {
-                hasAny = true;
-                const num = p.followers.replace(/[KMk,]/g, '');
-                const parsed = parseFloat(num);
-                if (!isNaN(parsed)) {
-                    if (p.followers.includes('K') || p.followers.includes('k')) total += parsed * 1000;
-                    else if (p.followers.includes('M')) total += parsed * 1_000_000;
-                    else total += parsed;
-                }
-            }
-        }
-        return hasAny ? formatNumber(Math.round(total)) : '--';
-    })();
+    // Compute total followers across connected platforms, from raw counts
+    const connected = Object.values(platforms).filter(p => p.configured);
+    const totalFollowers = connected.length > 0
+        ? connected.reduce((sum, p) => sum + p.followerCount, 0).toLocaleString()
+        : '--';
 
     // Build trend chart data
     const combinedDaily = (() => {
@@ -215,36 +198,18 @@ export default function OverviewPage() {
     const generateInsights = () => {
         const insights = [];
 
-        // 1. Patient-record lead growth (Zenoti + frozen MindBody history)
+        // 1. New paying patients (first purchase in the window, Zenoti + frozen MindBody history)
         const leadsNum = parseInt(metrics.leads.val);
         if (!isNaN(leadsNum) && leadsNum > 0) {
-            insights.push(`Generated ${leadsNum} new leads in the last ${period}.`);
-        } else if (metrics.leads.val !== '--') {
-            insights.push(`No new leads tracked in Zenoti for the last ${period}. Check attribution logs.`);
+            insights.push(`${leadsNum} new paying patients in the last ${period}.`);
+        } else if (leadsNum === 0) {
+            insights.push(`No new paying patients in Zenoti for the last ${period}.`);
         }
 
         // 2. Cross-platform growth check
         const totalFollowerStr = totalFollowers.replace(/[K,]/g, '');
         if (totalFollowerStr !== '--' && igDataRaw && fbDataRaw) {
             insights.push(`Total audience reach consists of primarily ${igDataRaw?.summary?.followers > fbDataRaw?.summary?.followers ? 'Instagram' : 'Facebook'} followers.`);
-        }
-
-        // 3. Highlight biggest organic winner
-        let bestEngagementPlatform = '';
-        let bestEngagementRate = 0;
-
-        for (const [name, p] of Object.entries(platforms)) {
-            if (p.configured && p.engagement !== '--%') {
-                const rate = parseFloat(p.engagement);
-                if (rate > bestEngagementRate) {
-                    bestEngagementRate = rate;
-                    bestEngagementPlatform = name;
-                }
-            }
-        }
-
-        if (bestEngagementPlatform) {
-            insights.push(`${bestEngagementPlatform} has your highest engagement rate at ${bestEngagementRate.toFixed(2)}%. Focus content efforts here.`);
         }
 
         return insights;
@@ -280,59 +245,46 @@ export default function OverviewPage() {
                     <div className="change positive">Across all platforms</div>
                 </div>
                 <div className="metric-card">
-                    <div className="label">Engagement Rate</div>
+                    <div className="label">Instagram Engagement Rate</div>
                     <div className="value">
-                        {socialLoading ? <Skeleton className="h-9 w-20" /> : (() => {
-                            const rates = Object.values(platforms)
-                                .filter(p => p.configured && p.engagement !== '--%')
-                                .map(p => parseFloat(p.engagement));
-                            return rates.length > 0
-                                ? `${(rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(2)}%`
-                                : '--%';
-                        })()}
+                        {socialLoading ? <Skeleton className="h-9 w-20" /> : (platforms.Instagram.configured ? platforms.Instagram.engagement : 'Unavailable')}
                     </div>
-                    <div className="change">Weighted average</div>
+                    <div className="change">Interactions ÷ accounts reached</div>
                 </div>
                 <div className="metric-card">
-                    <div className="label">New Leads</div>
+                    <div className="label">New Paying Patients</div>
                     <div className="value">{metrics.leads.loading ? <Skeleton className="h-9 w-16" /> : metrics.leads.val}</div>
-                    <div className="change">From Zenoti</div>
+                    <div className="change">First purchase · last {period === '7d' ? 7 : period === '90d' ? 90 : 30} days · Zenoti</div>
                 </div>
             </div>
 
             {/* Reputation & Search */}
             <div className="section-card">
                 <h3>Reputation &amp; Search</h3>
-                <div className="metrics-grid md:grid-cols-5">
+                <div className="metrics-grid md:grid-cols-4">
                     <div className="metric-card" style={{ padding: '16px' }}>
                         <div className="label">Google Rating</div>
                         <div className="value" style={{ fontSize: '1.5rem' }}>
-                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : <>{googleRating.rating} <span style={{ fontSize: '0.75em', color: '#eab308' }}>&#9733;</span></>}
+                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : googleRating.error ? 'Unavailable' : <>{googleRating.rating} <span style={{ fontSize: '0.75em', color: '#eab308' }}>&#9733;</span></>}
                         </div>
                     </div>
                     <div className="metric-card" style={{ padding: '16px' }}>
                         <div className="label">Total Reviews</div>
                         <div className="value" style={{ fontSize: '1.5rem' }}>
-                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : googleRating.reviews}
-                        </div>
-                    </div>
-                    <div className="metric-card" style={{ padding: '16px' }}>
-                        <div className="label">5-Star Rate</div>
-                        <div className="value" style={{ fontSize: '1.5rem', color: '#22c55e' }}>
-                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : googleRating.fiveStarRate}
+                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : googleRating.error ? 'Unavailable' : googleRating.reviews}
                         </div>
                     </div>
                     <div className="metric-card" style={{ padding: '16px' }}>
                         <div className="label">Search Clicks</div>
                         <div className="value" style={{ fontSize: '1.5rem' }}>
-                            {searchData.loading ? <Skeleton className="h-7 w-14" /> : formatNumber(searchData.clicks)}
+                            {searchData.loading ? <Skeleton className="h-7 w-14" /> : searchData.error ? 'Unavailable' : searchData.clicks.toLocaleString()}
                         </div>
                         <div className="change">Last 30 days</div>
                     </div>
                     <div className="metric-card" style={{ padding: '16px' }}>
                         <div className="label">Avg Position</div>
                         <div className="value" style={{ fontSize: '1.5rem' }}>
-                            {searchData.loading ? <Skeleton className="h-7 w-14" /> : searchData.position.toFixed(1)}
+                            {searchData.loading ? <Skeleton className="h-7 w-14" /> : searchData.error ? 'Unavailable' : searchData.position.toFixed(1)}
                         </div>
                         <div className="change">Google Search</div>
                     </div>
@@ -398,7 +350,7 @@ export default function OverviewPage() {
                                 <YAxis tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
                                 <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(label) => formatDate(String(label))} />
                                 <Legend wrapperStyle={{ color: '#E4E4E7', fontSize: '0.8125rem' }} />
-                                {platforms.Instagram.configured && <Line type="monotone" dataKey="igFollowers" name="IG Followers (New)" stroke={PLATFORM_COLORS.instagram} strokeWidth={2} dot={false} />}
+                                {platforms.Instagram.configured && <Line type="monotone" dataKey="igFollowers" name="IG New Follows" stroke={PLATFORM_COLORS.instagram} strokeWidth={2} dot={false} />}
                                 {platforms.Facebook.configured && <Line type="monotone" dataKey="fbFollowers" name="FB Followers (New)" stroke={PLATFORM_COLORS.facebook} strokeWidth={2} dot={false} />}
                             </LineChart>
                         </ResponsiveContainer>

@@ -46,6 +46,7 @@ export async function GET(request: NextRequest) {
         const account = {
             totalSpend: redact ? null : rawTotalSpend,
             totalLeads,
+            totalResults: totalLeads, // the Ads page reads totalResults on every tab
             totalClicks,
             totalImpressions,
             cpl: redact ? null : cpl,

@@ -36,7 +36,7 @@ export interface SaleDB {
     PurchasedItems: Array<{ TotalAmount?: number; Description?: string; IsService?: boolean }>;
 }
 
-type ClientRevenue = { client: ClientDB; revenue: number };
+type ClientRevenue = { client: ClientDB; revenue: number; firstSaleDate?: string | null };
 
 // ---------------------------------------------------------------------------
 // B1: getRevenueFromDB — replaces getSales() in metrics/revenue
@@ -154,12 +154,20 @@ export async function getClientEmailMapFromDB(
                 ON s.client_id = p.peer_id
                AND s.sale_date BETWEEN ${start} AND ${end}
             GROUP BY p.norm_email
+        ),
+        first_sale AS (
+            SELECT p.norm_email, MIN(s.sale_date) AS first_sale
+            FROM peers p
+            JOIN mb_sales_history s ON s.client_id = p.peer_id
+            GROUP BY p.norm_email
         )
         SELECT DISTINCT ON (e.norm_email)
                e.norm_email, e.client_id, e.email, e.first_name, e.last_name,
-               e.phone, e.referred_by, e.creation_date, r.revenue
+               e.phone, e.referred_by, e.creation_date, r.revenue,
+               to_char(f.first_sale, 'YYYY-MM-DD') AS first_sale_date
         FROM emailed e
         JOIN rev r ON r.norm_email = e.norm_email
+        LEFT JOIN first_sale f ON f.norm_email = e.norm_email
         ORDER BY e.norm_email, e.creation_date ASC NULLS LAST
     `;
 
@@ -178,6 +186,7 @@ export async function getClientEmailMapFromDB(
                 CreationDate: row.creation_date || null,
             },
             revenue: Number(row.revenue),
+            firstSaleDate: row.first_sale_date || null,
         });
     }
 

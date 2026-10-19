@@ -16,7 +16,7 @@ export async function GET(request: Request) {
         const days = periodParam === '7d' ? 7 : periodParam === '90d' ? 90 : 30;
 
         const endDate = new Date();
-        const startDate = subDays(endDate, days);
+        const startDate = subDays(endDate, days - 1); // inclusive of today: exactly `days` days
 
         const formattedStart = format(startDate, "yyyy-MM-dd'T'00:00:00");
         const formattedEnd = format(endDate, "yyyy-MM-dd'T'23:59:59");

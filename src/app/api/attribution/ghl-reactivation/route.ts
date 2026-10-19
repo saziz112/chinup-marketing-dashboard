@@ -71,6 +71,9 @@ function buildForecast(
         projectedRevenue,
         projectedROI,
         avgAchievabilityScore: avgAchievability,
+        // Assumptions behind the projection, shown next to it in the UI.
+        assumedBookingRate: Math.round(bookingRate * 100),
+        assumedAvgValue: Math.round(avgTreatmentValue),
     };
 }
 

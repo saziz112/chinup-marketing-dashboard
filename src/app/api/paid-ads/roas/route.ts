@@ -24,6 +24,7 @@ import { getMetaAdsData, getMetaLeads, isMetaAdsConfigured } from '@/lib/integra
 import { getClientEmailMapFromDB, getAppointmentsByClientIds } from '@/lib/integrations/mindbody-db';
 import { sql } from '@/lib/db/sql';
 import { getLocations } from '@/lib/integrations/gohighlevel';
+import { summarizeMatchedRevenue } from '@/lib/meta-roas';
 import { format, subDays, startOfMonth } from 'date-fns';
 
 const today = new Date();
@@ -114,7 +115,7 @@ export async function GET(request: NextRequest) {
         }
 
         // --- Email matching ---
-        const matchedClientsDetails: { email: string; clientName: string; revenue: number; campaignId: string; campaignName: string; leadCost: number; isSplit: boolean; ghlUrl: string | null; ghlContactId: string | null; mbClientId: string | null }[] = [];
+        const matchedClientsDetails: { email: string; clientName: string; revenue: number; leadDate: string; firstSaleDate: string | null; isPriorPatient: boolean; campaignId: string; campaignName: string; leadCost: number; isSplit: boolean; ghlUrl: string | null; ghlContactId: string | null; mbClientId: string | null }[] = [];
         const unmatchedLeads: { email: string; campaignId: string }[] = [];
 
         for (const lead of leadData.leads) {
@@ -122,7 +123,9 @@ export async function GET(request: NextRequest) {
             const email = lead.email.toLowerCase().trim();
             const mbClient = clientEmailMap.get(email);
 
-            if (mbClient) {
+            // Matched = this lead's person bought something in the window. A client
+            // record with $0 in the window is not a purchasing patient.
+            if (mbClient && mbClient.revenue > 0) {
                 // If the user submitted multiple lead forms, we split the revenue
                 // equally across the campaigns to prevent double-counting total revenue.
                 const numLeads = emailLeadCounts.get(email) || 1;
@@ -139,6 +142,9 @@ export async function GET(request: NextRequest) {
                     email,
                     clientName: `${mbClient.client.FirstName || ''} ${mbClient.client.LastName || ''}`.trim(),
                     revenue: Math.round(splitRevenue * 100) / 100, // round to 2 decimals
+                    leadDate: lead.createdTime.slice(0, 10),
+                    firstSaleDate: mbClient.firstSaleDate ?? null,
+                    isPriorPatient: !!mbClient.firstSaleDate && mbClient.firstSaleDate < lead.createdTime.slice(0, 10),
                     campaignId: lead.campaignId,
                     campaignName: lead.campaignName,
                     leadCost: campaignCostMap.get(lead.campaignId) || 0,
@@ -153,29 +159,29 @@ export async function GET(request: NextRequest) {
         }
 
         // Revenue from email-matched clients
-        const matchedRevenue = matchedClientsDetails.reduce((sum, c) => sum + c.revenue, 0);
-        const matchedCount = matchedClientsDetails.length;
+        const revenueSummary = summarizeMatchedRevenue(matchedClientsDetails);
+        const matchedRevenue = revenueSummary.totalRevenue;
+        const matchedCount = revenueSummary.purchasingLeads;
 
         // Spend from Meta Ads
         const metaSpend = adsData.account.totalSpend;
 
         // --- Appointment attribution ---
-        // Collect unique client IDs from matched leads
-        const matchedClientIds = [...new Set(matchedClientsDetails.map(m => {
-            const email = m.email.toLowerCase().trim();
-            return clientEmailMap.get(email)?.client.Id;
-        }).filter(Boolean))] as string[];
+        // Every lead with a client record counts here, purchased or not: a booked
+        // appointment is funnel progress even before the first sale.
+        const leadsWithClient = leadData.leads
+            .filter(l => l.email)
+            .map(l => ({ campaignId: l.campaignId, clientId: clientEmailMap.get(l.email!.toLowerCase().trim())?.client.Id }))
+            .filter((l): l is { campaignId: string; clientId: string } => !!l.clientId);
+        const matchedClientIds = [...new Set(leadsWithClient.map(l => l.clientId))];
 
         const appointmentMap = await getAppointmentsByClientIds(matchedClientIds, mbStart, mbEnd);
 
         // Build client→campaign mapping for appointment attribution
         const clientToCampaign = new Map<string, string[]>();
-        for (const m of matchedClientsDetails) {
-            const email = m.email.toLowerCase().trim();
-            const clientId = clientEmailMap.get(email)?.client.Id;
-            if (!clientId) continue;
+        for (const { clientId, campaignId } of leadsWithClient) {
             const campaigns = clientToCampaign.get(clientId) || [];
-            if (!campaigns.includes(m.campaignId)) campaigns.push(m.campaignId);
+            if (!campaigns.includes(campaignId)) campaigns.push(campaignId);
             clientToCampaign.set(clientId, campaigns);
         }
 
@@ -251,7 +257,7 @@ export async function GET(request: NextRequest) {
             attributionMethod = 'lead_forms_empty';
             attributionNote = 'Lead forms found but no submissions in this period. Try a wider date range.';
         } else {
-            attributionNote = `${matchedCount} of ${metaLeadsTotal} Meta leads matched to purchasing patients by email (${matchRate ?? 0}% match rate)`;
+            attributionNote = `${matchedCount} of ${metaLeadsTotal} Meta leads became paying patients in this window, matched by email (${matchRate ?? 0}%)`;
         }
 
         return NextResponse.json({
@@ -266,25 +272,33 @@ export async function GET(request: NextRequest) {
             metaLeads: metaLeadsTotal,
             hasLeadForms: leadData.hasLeadForms,
             // MindBody matched
-            matchedClients: matchedCount,
+            matchedClients: revenueSummary.purchasingPatients,
             matchedRevenue: Math.round(matchedRevenue * 100) / 100,
+            priorPatientRevenue: Math.round(revenueSummary.priorPatientRevenue * 100) / 100,
+            newPatientRevenue: Math.round(revenueSummary.newPatientRevenue * 100) / 100,
+            newPatientRoas: metaSpend > 0 ? Math.round((revenueSummary.newPatientRevenue / metaSpend) * 100) / 100 : null,
+            topPatientRevenue: Math.round(revenueSummary.topPatientRevenue * 100) / 100,
+            topPatientShare: Math.round(revenueSummary.topPatientShare * 1000) / 1000,
             unmatchedLeads: unmatchedLeads.length,
             matchRate,
             matchedClientsDetails,
             // Calculated ROAS
             trueRoas,
-            costPerMatchedClient: matchedCount > 0 && metaSpend > 0
-                ? Math.round((metaSpend / matchedCount) * 100) / 100
+            costPerMatchedClient: revenueSummary.purchasingPatients > 0 && metaSpend > 0
+                ? Math.round((metaSpend / revenueSummary.purchasingPatients) * 100) / 100
                 : null,
-            // Meta platform ROAS (for comparison)
-            metaPlatformRoas: adsData.campaigns.length > 0
-                ? Math.round((adsData.campaigns.reduce((s, c) => s + c.roas, 0) / adsData.campaigns.length) * 100) / 100
-                : 0,
+            // Meta platform ROAS (for comparison), spend-weighted across campaigns
+            metaPlatformRoas: (() => {
+                const spend = adsData.campaigns.reduce((s, c) => s + c.spend, 0);
+                return spend > 0
+                    ? Math.round((adsData.campaigns.reduce((s, c) => s + c.roas * c.spend, 0) / spend) * 100) / 100
+                    : 0;
+            })(),
             // Per-campaign
             campaignBreakdown,
-            // Appointment funnel
-            totalAppointmentsBooked: campaignBreakdown.reduce((s, c) => s + c.appointmentsBooked, 0),
-            totalAppointmentsCompleted: campaignBreakdown.reduce((s, c) => s + c.appointmentsCompleted, 0),
+            // Appointment funnel: each client counted once, even when attributed to several campaigns
+            totalAppointmentsBooked: [...appointmentMap.values()].reduce((s, a) => s + a.booked, 0),
+            totalAppointmentsCompleted: [...appointmentMap.values()].reduce((s, a) => s + a.completed, 0),
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown error';

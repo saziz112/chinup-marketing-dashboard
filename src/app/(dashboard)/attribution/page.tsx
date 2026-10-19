@@ -43,7 +43,6 @@ const LIFECYCLE_STAGES = [
     { key: 'engaged', label: 'Engaged', color: '#60A5FA', desc: 'Two-way conversation' },
     { key: 'quoted', label: 'Quoted', color: '#A78BFA', desc: 'Discussed pricing/services' },
     { key: 'ghost', label: 'Ghost', color: '#F87171', desc: 'Was engaged, went silent' },
-    { key: 'converted', label: 'Converted', color: '#34D399', desc: 'Opportunity won' },
 ] as const;
 
 const TAB_CONFIG: { id: Tab; label: string; adminOnly?: boolean }[] = [
@@ -557,7 +556,7 @@ export default function LeadsPipelinePage() {
                                 {/* Lifecycle Breakdown (from conversations API if available) */}
                                 {engagementData?.lifecycleCounts ? (
                                     <div className="section-card">
-                                        <h3 style={{ marginBottom: '16px' }}>Lifecycle Breakdown</h3>
+                                        <h3 style={{ marginBottom: '16px' }}>Lifecycle Breakdown <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>open opportunities</span></h3>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                             {LIFECYCLE_STAGES.map(stage => {
                                                 const count = engagementData.lifecycleCounts[stage.key] || 0;
@@ -584,7 +583,7 @@ export default function LeadsPipelinePage() {
                                     </div>
                                 ) : (
                                     <div className="section-card">
-                                        <h3 style={{ marginBottom: '16px' }}>Lifecycle Breakdown</h3>
+                                        <h3 style={{ marginBottom: '16px' }}>Lifecycle Breakdown <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>open opportunities</span></h3>
                                         <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
                                             Switch to the &quot;Leads &amp; Outreach&quot; tab to load conversation data, then come back for the lifecycle view.
                                         </p>
@@ -842,7 +841,7 @@ export default function LeadsPipelinePage() {
 
                                 {/* Ghost Rate by Location + Lifecycle Funnel */}
                                 <div className="section-card">
-                                    <h3 style={{ marginBottom: '16px' }}>Lifecycle Funnel</h3>
+                                    <h3 style={{ marginBottom: '16px' }}>Lifecycle Funnel <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>open opportunities</span></h3>
                                     {engagementData.lifecycleCounts && (() => {
                                         const lc = engagementData.lifecycleCounts;
                                         const funnelStages = [
@@ -850,7 +849,6 @@ export default function LeadsPipelinePage() {
                                             { key: 'attempted', label: 'Attempted', count: lc.attempted || 0, color: '#FBBF24' },
                                             { key: 'engaged', label: 'Engaged', count: lc.engaged || 0, color: '#60A5FA' },
                                             { key: 'quoted', label: 'Quoted', count: lc.quoted || 0, color: '#A78BFA' },
-                                            { key: 'converted', label: 'Converted', count: lc.converted || 0, color: '#34D399' },
                                         ];
                                         return (
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -1300,15 +1298,17 @@ export default function LeadsPipelinePage() {
                                                 <div className="metric-card">
                                                     <div className="label">Est. Responses</div>
                                                     <div className="value">{smsData.forecast.predictedResponses}</div>
-                                                    <div className="change">{smsData.forecast.predictedResponseRate}% rate</div>
+                                                    <div className="change">assumes {smsData.forecast.predictedResponseRate}% reply</div>
                                                 </div>
                                                 <div className="metric-card">
                                                     <div className="label">Est. Bookings</div>
                                                     <div className="value">{smsData.forecast.predictedBookings}</div>
+                                                    <div className="change">assumes {smsData.forecast.assumedBookingRate}% of replies book</div>
                                                 </div>
                                                 <div className="metric-card">
-                                                    <div className="label">Projected Revenue</div>
+                                                    <div className="label">Est. Revenue</div>
                                                     <div className="value" style={{ color: '#34D399' }}>{formatCurrency(smsData.forecast.projectedRevenue)}</div>
+                                                    <div className="change">estimate · {formatCurrency(smsData.forecast.assumedAvgValue)} avg per booking</div>
                                                 </div>
                                             </div>
                                         )}

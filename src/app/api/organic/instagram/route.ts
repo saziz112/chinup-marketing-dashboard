@@ -56,8 +56,8 @@ export async function GET(request: NextRequest) {
 
         const { daily, totals } = insights;
 
-        // Compute reach total + follower change from daily data
-        const totalReach = daily.reduce((sum, d) => sum + d.reach, 0);
+        // Unique accounts reached in the window (summing daily reach double-counts returning accounts)
+        const totalReach = totals.reach;
         const netFollowerChange = daily.reduce((sum, d) => sum + d.followerCount, 0);
 
         // Aggregate comment-reply stats across all fetched posts

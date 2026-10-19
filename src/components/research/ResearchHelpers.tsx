@@ -121,7 +121,6 @@ export interface TrafficSourceData {
     directVisits: number;
     totalSessions: number;
     period: string;
-    isMock: boolean;
 }
 
 // ================================================================
@@ -579,15 +578,17 @@ export interface MarketIntelTabProps {
     contentAnalysis: ContentAnalysisData | null;
     trafficLoading: boolean;
     trafficData: TrafficSourceData | null;
+    trafficError: string | null;
     competitorLoading: boolean;
     competitorData: CompetitorWatchData | null;
+    competitorError: string | null;
     marketLoading: boolean;
     marketData: MarketData | null;
 }
 
 export function MarketIntelTab({
     marketFetched, fetchMarketIntel, contentAnalysisLoading, contentAnalysis,
-    trafficLoading, trafficData, competitorLoading, competitorData,
+    trafficLoading, trafficData, trafficError, competitorLoading, competitorData, competitorError,
     marketLoading, marketData,
 }: MarketIntelTabProps) {
     return (
@@ -663,8 +664,10 @@ export function MarketIntelTab({
 
                     {/* Section 2: Traffic Sources */}
                     <div className="section-card">
-                        <h3>Website Traffic Sources {trafficData?.isMock && <span style={{ fontSize: '0.625rem', color: 'var(--text-muted)', fontWeight: 400 }}>(Demo — connect GA4 for live data)</span>}</h3>
-                        {trafficLoading ? <LoadingDots /> : trafficData ? (
+                        <h3>Website Traffic Sources</h3>
+                        {trafficLoading ? <LoadingDots /> : trafficError ? (
+                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>Unavailable: {trafficError}</div>
+                        ) : trafficData ? (
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
                                 <div>
                                     <div style={sectionLabelStyle}>Sessions by Source (30d)</div>
@@ -696,7 +699,9 @@ export function MarketIntelTab({
                     {/* Section 3: Competitor Watch */}
                     <div className="section-card">
                         <h3>Competitor Watch</h3>
-                        {competitorLoading ? <LoadingDots /> : competitorData ? (
+                        {competitorLoading ? <LoadingDots /> : competitorError ? (
+                            <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>Unavailable: {competitorError}</div>
+                        ) : competitorData ? (
                             <>
                                 {competitorData.summary && (
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 12 }}>

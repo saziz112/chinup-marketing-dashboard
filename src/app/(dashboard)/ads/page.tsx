@@ -101,6 +101,7 @@ export default function AdsPage() {
     const [googleData, setGoogleData] = useState<AdsData | null>(null);
     const [overviewData, setOverviewData] = useState<OverviewData | null>(null);
     const [roasData, setRoasData] = useState<RoasData | null>(null);
+    const [roasError, setRoasError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [showRoasModal, setShowRoasModal] = useState(false);
@@ -121,10 +122,9 @@ export default function AdsPage() {
             const isGoogle = activeTab === 'Google Ads';
             const isOverview = activeTab === 'Overview';
 
-            // Clear stale ROAS when not on Meta tab
-            if (isOverview || isGoogle) {
-                setRoasData(null);
-            }
+            // Never leave the previous range's ROAS on screen
+            setRoasData(null);
+            setRoasError(null);
 
             if (isOverview) {
                 const res = await fetch(`/api/paid-ads/overview?${params}`);
@@ -152,9 +152,10 @@ export default function AdsPage() {
                     setMetaData(mainJson as AdsData);
                 }
 
-                if (!isGoogle && results[1] && results[1].ok) {
-                    const roasJson = await results[1].json();
-                    if (!roasJson.error) setRoasData(roasJson as RoasData);
+                if (!isGoogle && results[1]) {
+                    const roasJson = await results[1].json().catch(() => ({}));
+                    if (results[1].ok && !roasJson.error) setRoasData(roasJson as RoasData);
+                    else setRoasError(roasJson.error || `HTTP ${results[1].status}`);
                 }
             }
         } catch (e) {
@@ -369,6 +370,9 @@ export default function AdsPage() {
                     )}
 
                     {/* True ROAS Banner (Admin) - Only on Meta Ads for now */}
+                    {isAdmin && roasError && isMeta && (
+                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: 16 }}>True ROAS unavailable: {roasError}</div>
+                    )}
                     {isAdmin && roasData && isMeta && (
                         <TrueRoasBanner roas={roasData} isMock={roasData.isMock} onOpenDetails={() => setShowRoasModal(true)} />
                     )}
@@ -387,7 +391,7 @@ export default function AdsPage() {
                         {isAdmin && (
                             <KpiCard label="Total Spend" value={fmt$(acc?.totalSpend)} sub={`${acc?.currency || 'USD'} • ${periodLabel}`} gold />
                         )}
-                        <KpiCard label="Impressions" value={fmtNum(acc?.totalImpressions)} sub={`${fmtNum(acc?.totalReach)} reach`} />
+                        <KpiCard label="Impressions" value={fmtNum(acc?.totalImpressions)} sub={acc?.totalReach != null ? `${fmtNum(acc.totalReach)} reach` : 'Reach not combinable across platforms'} />
                         <KpiCard label="Clicks" value={fmtNum(acc?.totalClicks)} sub={`CTR ${fmtPct(overallCtr)}`} />
                         <KpiCard
                             label="Leads (Results)"
@@ -403,7 +407,7 @@ export default function AdsPage() {
                                 <KpiCard
                                     label="GHL Leads (Google)"
                                     value={fmtNum(googleData.ghlLeads)}
-                                    sub={googleData.ghlLeads ? `${googleData.ghlMatchedClients ?? 0} matched to POS · click to view →` : 'no google-source opps'}
+                                    sub={googleData.ghlLeads ? `${googleData.ghlMatchedClients ?? 0} paying patients · click to view →` : 'no google-source opps'}
                                     green
                                 />
                             </div>

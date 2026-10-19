@@ -239,6 +239,7 @@ export async function getOpportunities(
     options?: { status?: string; maxPages?: number },
 ): Promise<{ opportunities: GHLOpportunity[]; total: number }> {
     const allOpps: GHLOpportunity[] = [];
+    const seen = new Set<string>();
     let startAfter: number | undefined;
     let startAfterId: string | undefined;
     let total = 0;
@@ -259,7 +260,12 @@ export async function getOpportunities(
 
         total = data.meta?.total || total;
         const opps = (data.opportunities || []).map(o => parseOpportunity(o, location.key));
-        allOpps.push(...opps);
+        // GHL repeats a row across page boundaries; count each opportunity once.
+        for (const o of opps) {
+            if (seen.has(o.id)) continue;
+            seen.add(o.id);
+            allOpps.push(o);
+        }
 
         // Stop if no more pages
         if (!data.meta?.nextPage || opps.length < 100) break;
@@ -349,10 +355,16 @@ export async function getContact(location: GHLLocation, contactId: string): Prom
 
 // --- Cache ---
 
-let pipelineCache: { data: FullPipelineData; timestamp: number } | null = null;
+interface PipelineSnapshot {
+    locations: PipelineSummary[];
+    openOpps: GHLOpportunity[];
+    fetchedAt: string;
+}
+
+let pipelineCache: { data: PipelineSnapshot; timestamp: number } | null = null;
 const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 
-function getCachedPipelineData(): FullPipelineData | null {
+function getCachedPipelineData(): PipelineSnapshot | null {
     if (pipelineCache && (Date.now() - pipelineCache.timestamp) < CACHE_TTL) {
         trackCall('ghl', 'getFullPipelineData', true);
         return pipelineCache.data;
@@ -368,15 +380,7 @@ export async function getFullPipelineData(options?: {
 }): Promise<FullPipelineData> {
     if (!options?.forceRefresh) {
         const cached = getCachedPipelineData();
-        if (cached) {
-            if (options?.locationFilter) {
-                return {
-                    ...cached,
-                    locations: cached.locations.filter(l => l.location === options.locationFilter),
-                };
-            }
-            return cached;
-        }
+        if (cached) return summarizePipeline(cached, options?.locationFilter);
     }
 
     const locations = getLocations();
@@ -385,7 +389,7 @@ export async function getFullPipelineData(options?: {
     }
 
     const locationSummaries: PipelineSummary[] = [];
-    const sourceMap = new Map<string, { count: number; value: number }>();
+    const allOpenOpps: GHLOpportunity[] = [];
 
     for (const loc of locations) {
         try {
@@ -421,13 +425,7 @@ export async function getFullPipelineData(options?: {
                     const stage = pipeline.stages.find(s => s.id === opp.pipelineStageId);
                     opp.stageName = stage?.name || 'Unknown';
 
-                    // Track source
-                    const src = opp.source || 'Unknown';
-                    const existing = sourceMap.get(src) || { count: 0, value: 0 };
-                    existing.count++;
-                    existing.value += opp.monetaryValue;
-                    sourceMap.set(src, existing);
-
+                    allOpenOpps.push(opp);
                     totalOpen++;
                     totalValue += opp.monetaryValue;
 
@@ -460,13 +458,38 @@ export async function getFullPipelineData(options?: {
                 pipelines: pipelineData,
             });
         } catch (error) {
+            // A missing location would silently shrink every total for 15 minutes.
             console.error(`[GHL] Failed to fetch data for ${loc.name}:`, error);
-            locationSummaries.push({
-                location: loc.key,
-                locationName: loc.name,
-                pipelines: [],
-            });
+            throw error;
         }
+    }
+
+    const snapshot: PipelineSnapshot = {
+        locations: locationSummaries,
+        openOpps: allOpenOpps,
+        fetchedAt: new Date().toISOString(),
+    };
+    pipelineCache = { data: snapshot, timestamp: Date.now() };
+
+    return summarizePipeline(snapshot, options?.locationFilter);
+}
+
+/** Totals and source mix for the selected location (or all of them). */
+function summarizePipeline(snapshot: PipelineSnapshot, locationFilter?: LocationKey): FullPipelineData {
+    const locationSummaries = locationFilter
+        ? snapshot.locations.filter(l => l.location === locationFilter)
+        : snapshot.locations;
+    const openOpps = locationFilter
+        ? snapshot.openOpps.filter(o => o.locationKey === locationFilter)
+        : snapshot.openOpps;
+
+    const sourceMap = new Map<string, { count: number; value: number }>();
+    for (const opp of openOpps) {
+        const src = opp.source || 'Unknown';
+        const existing = sourceMap.get(src) || { count: 0, value: 0 };
+        existing.count++;
+        existing.value += opp.monetaryValue;
+        sourceMap.set(src, existing);
     }
 
     // Compute totals
@@ -489,24 +512,12 @@ export async function getFullPipelineData(options?: {
         .map(([source, data]) => ({ source, ...data }))
         .sort((a, b) => b.count - a.count);
 
-    const result: FullPipelineData = {
+    return {
         locations: locationSummaries,
         totals: { totalOpen, totalValue, totalWon, totalWonValue, totalLost, conversionRate },
         sourceBreakdown,
-        fetchedAt: new Date().toISOString(),
+        fetchedAt: snapshot.fetchedAt,
     };
-
-    // Cache the full result
-    pipelineCache = { data: result, timestamp: Date.now() };
-
-    if (options?.locationFilter) {
-        return {
-            ...result,
-            locations: result.locations.filter(l => l.location === options.locationFilter),
-        };
-    }
-
-    return result;
 }
 
 // --- Stale Lead Analysis ---

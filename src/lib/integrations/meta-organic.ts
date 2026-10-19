@@ -27,6 +27,7 @@ export interface IGInsightsDay {
 }
 
 export interface IGInsightsTotals {
+    reach: number; // unique accounts reached across the whole window
     profileViews: number;
     accountsEngaged: number;
     totalInteractions: number;
@@ -261,7 +262,7 @@ export async function getIGInsights(
             total_value: { value: number };
         }>;
     }>(
-        `/${igUserId}/insights?metric=profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,views&metric_type=total_value&period=day&since=${since}&until=${until}`,
+        `/${igUserId}/insights?metric=reach,profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,views&metric_type=total_value&period=day&since=${since}&until=${until}`,
         token
     );
 
@@ -289,12 +290,13 @@ export async function getIGInsights(
 
     // Build totals from call 2
     const totals: IGInsightsTotals = {
-        profileViews: 0, accountsEngaged: 0, totalInteractions: 0,
+        reach: 0, profileViews: 0, accountsEngaged: 0, totalInteractions: 0,
         likes: 0, comments: 0, shares: 0, saves: 0, views: 0,
     };
     for (const metric of totalsData.data || []) {
         const v = metric.total_value?.value || 0;
         switch (metric.name) {
+            case 'reach': totals.reach = v; break;
             case 'profile_views': totals.profileViews = v; break;
             case 'accounts_engaged': totals.accountsEngaged = v; break;
             case 'total_interactions': totals.totalInteractions = v; break;
@@ -327,36 +329,22 @@ export async function getIGPeriodTotals(
     const token = getEnv('META_PAGE_ACCESS_TOKEN');
     const igUserId = getEnv('META_IG_USER_ID');
 
-    // Reach daily (no follower_count = no 30-day cap)
-    const reachData = await graphGet<{
-        data: Array<{ name: string; values: Array<{ value: number; end_time: string }> }>;
-    }>(
-        `/${igUserId}/insights?metric=reach&period=day&since=${since}&until=${until}`,
-        token
-    );
-
-    let totalReach = 0;
-    for (const metric of reachData.data || []) {
-        for (const val of metric.values || []) {
-            totalReach += val.value || 0;
-        }
-    }
-
     // Aggregate totals
     const totalsData = await graphGet<{
         data: Array<{ name: string; total_value: { value: number } }>;
     }>(
-        `/${igUserId}/insights?metric=profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,views&metric_type=total_value&period=day&since=${since}&until=${until}`,
+        `/${igUserId}/insights?metric=reach,profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,views&metric_type=total_value&period=day&since=${since}&until=${until}`,
         token
     );
 
     const totals: IGInsightsTotals = {
-        profileViews: 0, accountsEngaged: 0, totalInteractions: 0,
+        reach: 0, profileViews: 0, accountsEngaged: 0, totalInteractions: 0,
         likes: 0, comments: 0, shares: 0, saves: 0, views: 0,
     };
     for (const metric of totalsData.data || []) {
         const v = metric.total_value?.value || 0;
         switch (metric.name) {
+            case 'reach': totals.reach = v; break;
             case 'profile_views': totals.profileViews = v; break;
             case 'accounts_engaged': totals.accountsEngaged = v; break;
             case 'total_interactions': totals.totalInteractions = v; break;
@@ -368,7 +356,8 @@ export async function getIGPeriodTotals(
         }
     }
 
-    const result = { totalReach, totals };
+    // Unique accounts for the window; summing daily reach counts a returning account once per day
+    const result = { totalReach: totals.reach, totals };
     setCache(cacheKey, result);
     return result;
 }
@@ -998,37 +987,12 @@ export interface IGCompetitorMetrics {
     viralPosts?: (IGCompetitorPost & { engagementRate: number; multiplier: number })[];
 }
 
-function getMockCompetitors(locationId?: LocationId): IGCompetitorMetrics[] {
-    // Generate realistic competitor followers based on location
-    if (locationId === 'atlanta') {
-        return [
-            { username: 'pureblissmedspa', followersCount: 40269, mediaCount: 553 },
-            { username: 'skinsocialspa', followersCount: 4247, mediaCount: 618 },
-            { username: 'radiancemedspaatl', followersCount: 2969, mediaCount: 1067 }
-        ];
-    }
-
-    if (locationId === 'decatur') {
-        return [
-            { username: 'seamlessrecoverymedspa', followersCount: 1222, mediaCount: 236 },
-            { username: 'revolutiondecatur', followersCount: 1094, mediaCount: 340 }
-        ];
-    }
-
-    if (locationId === 'kennesaw') {
-        return [
-            { username: 'vivamedspaatl', followersCount: 3811, mediaCount: 421 },
-            { username: 'spalapazatl', followersCount: 2382, mediaCount: 443 }
-        ];
-    }
-
-    // Default / All Locations
-    return [
-        { username: 'pureblissmedspa', followersCount: 40269, mediaCount: 553 },
-        { username: 'seamlessrecoverymedspa', followersCount: 1222, mediaCount: 236 },
-        { username: 'vivamedspaatl', followersCount: 3811, mediaCount: 421 },
-        { username: 'skinsocialspa', followersCount: 4247, mediaCount: 618 },
-    ];
+// Competitor watchlist by location. Counts always come from the live API.
+function getCompetitorUsernames(locationId?: LocationId): string[] {
+    if (locationId === 'atlanta') return ['pureblissmedspa', 'skinsocialspa', 'radiancemedspaatl'];
+    if (locationId === 'decatur') return ['seamlessrecoverymedspa', 'revolutiondecatur'];
+    if (locationId === 'kennesaw') return ['vivamedspaatl', 'spalapazatl'];
+    return ['pureblissmedspa', 'seamlessrecoverymedspa', 'vivamedspaatl', 'skinsocialspa'];
 }
 
 /**
@@ -1127,17 +1091,11 @@ export async function getIGCompetitorMetrics(locationId?: LocationId): Promise<I
 
     trackCall('meta', 'getIGCompetitorMetrics', false);
 
-    // If no credentials, use mock
     if (!igUserId || !pageToken) {
-        console.warn('[Meta] Missing META_IG_USER_ID or META_PAGE_ACCESS_TOKEN. Falling back to mock IG Competitors.');
-        const mock = getMockCompetitors(locationId);
-        setCache(cacheKey, mock);
-        return mock;
+        throw new Error('Instagram competitors not configured: META_IG_USER_ID or META_PAGE_ACCESS_TOKEN is missing');
     }
 
-    // Determine target mock competitors based on location so we have usernames to query
-    const targetMocks = getMockCompetitors(locationId);
-    const usernamesToFetch = targetMocks.map(m => m.username);
+    const usernamesToFetch = getCompetitorUsernames(locationId);
 
     const results: IGCompetitorMetrics[] = [];
 
@@ -1177,16 +1135,15 @@ export async function getIGCompetitorMetrics(locationId?: LocationId): Promise<I
                     });
                 }
             } else {
-                console.warn(`[Meta] Failed to fetch competitor ${username}. Falling back to mock data for this user.`);
-                const mockFallback = targetMocks.find(m => m.username === username);
-                if (mockFallback) results.push(mockFallback);
+                // Left out rather than shown with stale numbers
+                console.warn(`[Meta] Failed to fetch competitor ${username} (${res.status}); leaving it out.`);
             }
         } catch (e) {
-            console.error(`[Meta] Error fetching competitor ${username}`, e);
-            const mockFallback = targetMocks.find(m => m.username === username);
-            if (mockFallback) results.push(mockFallback);
+            console.error(`[Meta] Error fetching competitor ${username}; leaving it out.`, e);
         }
     }
+
+    if (results.length === 0) throw new Error('Instagram competitors: every Business Discovery lookup failed');
 
     setCache(cacheKey, results);
     return results;

@@ -33,7 +33,9 @@ export async function GET(req: NextRequest) {
             `,
         ]);
 
-        const competitors = competitorsResult.status === 'fulfilled' ? competitorsResult.value : [];
+        // Without competitor data every number on this card would read as zero.
+        if (competitorsResult.status === 'rejected') throw competitorsResult.reason;
+        const competitors = competitorsResult.value;
         const ourPosts = ourPostsResult.status === 'fulfilled' ? ourPostsResult.value.rows : [];
 
         // ── Extract our hashtags ──

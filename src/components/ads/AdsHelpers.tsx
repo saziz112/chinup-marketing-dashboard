@@ -47,6 +47,11 @@ export interface RoasData {
     metaPlatformRoas: number;
     matchedClients: number;
     matchedRevenue: number;
+    priorPatientRevenue: number;
+    newPatientRevenue: number;
+    newPatientRoas: number | null;
+    topPatientRevenue: number;
+    topPatientShare: number;
     unmatchedLeads: number;
     matchRate: number | null;
     trueRoas: number | null;
@@ -251,6 +256,13 @@ export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData
                             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                                 {fmt$(roas.matchedRevenue)} rev \u00f7 {fmt$(roas.metaSpend)} spend
                             </div>
+                            {roas.matchedRevenue > 0 && (
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+                                    New patients only: {roas.newPatientRoas !== null ? `${roas.newPatientRoas.toFixed(2)}x` : '\u2014'} ({fmt$(roas.newPatientRevenue)})<br />
+                                    Already patients: {fmt$(roas.priorPatientRevenue)}<br />
+                                    Top patient: {fmt$(roas.topPatientRevenue)} ({Math.round(roas.topPatientShare * 100)}% of rev)
+                                </div>
+                            )}
                         </div>
 
                         <div style={{ width: 1, background: 'var(--border)' }} />
@@ -271,7 +283,7 @@ export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData
                                 <span style={{ fontWeight: 600 }}>{roas.metaLeads}</span>
                             </div>
                             <div style={{ fontSize: 12 }}>
-                                <span style={{ color: 'var(--text-muted)' }}>Matched to MB: </span>
+                                <span style={{ color: 'var(--text-muted)' }}>Paying patients: </span>
                                 <span style={{ fontWeight: 600, color: '#22c55e' }}>{roas.matchedClients}</span>
                             </div>
                             <div style={{ fontSize: 12 }}>
@@ -279,7 +291,7 @@ export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData
                                 <span style={{ fontWeight: 600 }}>{roas.matchRate !== null ? `${roas.matchRate}%` : '\u2014'}</span>
                             </div>
                             <div style={{ fontSize: 12 }}>
-                                <span style={{ color: 'var(--text-muted)' }}>Cost/Client: </span>
+                                <span style={{ color: 'var(--text-muted)' }}>Cost/Paying patient: </span>
                                 <span style={{ fontWeight: 600 }}>{fmt$(roas.costPerMatchedClient)}</span>
                             </div>
                         </div>
