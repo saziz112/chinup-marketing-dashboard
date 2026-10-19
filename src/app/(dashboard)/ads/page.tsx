@@ -188,10 +188,11 @@ export default function AdsPage() {
     // Dictionary for fast campaign lookups (Meta only — Google ROAS is reported
     // at the account level, not per-campaign, because GHL doesn't preserve
     // which Google campaign drove each lead).
-    const roasDict = roasData?.campaignBreakdown.reduce((acc, b) => {
+    // Empty when the window is outside Meta's lead retention: no "True ROAS" column then.
+    const roasDict = roasData?.campaignBreakdown.length ? roasData.campaignBreakdown.reduce((acc, b) => {
         acc[b.id] = b;
         return acc;
-    }, {} as Record<string, CampaignBreakdown>);
+    }, {} as Record<string, CampaignBreakdown>) : undefined;
 
     const chartData = dailySpend.map(d => {
         if (isOverview) {

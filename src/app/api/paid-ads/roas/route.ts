@@ -24,7 +24,7 @@ import { getMetaAdsData, getMetaLeads, isMetaAdsConfigured } from '@/lib/integra
 import { getClientEmailMapFromDB, getAppointmentsByClientIds } from '@/lib/integrations/mindbody-db';
 import { sql } from '@/lib/db/sql';
 import { getLocations } from '@/lib/integrations/gohighlevel';
-import { summarizeMatchedRevenue } from '@/lib/meta-roas';
+import { summarizeMatchedRevenue, isWithinLeadRetention, LEAD_RETENTION_DAYS } from '@/lib/meta-roas';
 import { format, subDays, startOfMonth } from 'date-fns';
 
 const today = new Date();
@@ -44,6 +44,39 @@ export async function GET(request: NextRequest) {
 
         const since = request.nextUrl.searchParams.get('since') || defaultSince;
         const until = request.nextUrl.searchParams.get('until') || defaultUntil;
+
+        // Older windows would email-match only the few leads Meta still returns
+        // and read as ~0x. Show spend, but no ROAS.
+        if (!isWithinLeadRetention(since)) {
+            const adsData = await getMetaAdsData(since, until);
+            return NextResponse.json({
+                since,
+                until,
+                isConfigured: isMetaAdsConfigured(),
+                isMock: adsData.isMock,
+                attributionMethod: 'outside_lead_retention',
+                attributionNote: `True ROAS isn't available for this window. Meta only keeps lead form submissions for ${LEAD_RETENTION_DAYS} days, so most of these leads can't be matched anymore. Pick a range inside the last ${LEAD_RETENTION_DAYS} days.`,
+                metaSpend: Math.round((adsData.account.totalSpend || 0) * 100) / 100,
+                metaLeads: 0,
+                hasLeadForms: true,
+                matchedClients: 0,
+                matchedRevenue: 0,
+                priorPatientRevenue: 0,
+                newPatientRevenue: 0,
+                newPatientRoas: null,
+                topPatientRevenue: 0,
+                topPatientShare: 0,
+                unmatchedLeads: 0,
+                matchRate: null,
+                matchedClientsDetails: [],
+                trueRoas: null,
+                costPerMatchedClient: null,
+                metaPlatformRoas: 0,
+                campaignBreakdown: [],
+                totalAppointmentsBooked: 0,
+                totalAppointmentsCompleted: 0,
+            });
+        }
 
         const mbStart = `${since}T00:00:00`;
         const mbEnd = `${until}T23:59:59`;

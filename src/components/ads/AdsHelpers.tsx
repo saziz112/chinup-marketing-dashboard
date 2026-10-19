@@ -214,6 +214,7 @@ export function KpiCard({ label, value, sub, gold, green }: {
 
 export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData; isMock: boolean; onOpenDetails: () => void }) {
     const noLeadForms = roas.attributionMethod === 'no_lead_forms';
+    const outsideRetention = roas.attributionMethod === 'outside_lead_retention';
     const hasData = roas.trueRoas !== null;
 
     return (
@@ -234,7 +235,7 @@ export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                         <h3 style={{ margin: 0 }}>ROAS Reconciliation</h3>
                         {isMock && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: '#f59e0b22', color: '#f59e0b', border: '1px solid #f59e0b44' }}>Demo</span>}
-                        {!isMock && !noLeadForms && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}>Email-matched</span>}
+                        {!isMock && !noLeadForms && !outsideRetention && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}>Email-matched</span>}
                     </div>
                     <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
                         {roas.attributionNote}
@@ -246,7 +247,7 @@ export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData
                     <div style={{ fontSize: 13, color: 'var(--text-muted)', maxWidth: 300, textAlign: 'right', lineHeight: 1.5 }}>
                         Set up a <strong>Lead Generation</strong> campaign with a native Facebook form to enable email-level attribution.
                     </div>
-                ) : (
+                ) : outsideRetention ? null : (
                     <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
                         <div style={{ textAlign: 'center' }}>
                             <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>True ROAS</div>

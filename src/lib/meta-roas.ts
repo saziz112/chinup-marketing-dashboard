@@ -1,5 +1,7 @@
 /** Revenue summary for Meta leads matched to patients by email. */
 
+import { format, subDays } from 'date-fns';
+
 export interface MatchedLead {
     email: string;
     revenue: number;              // in-window revenue, already split across that person's leads
@@ -37,4 +39,16 @@ export function summarizeMatchedRevenue(leads: MatchedLead[]): MatchedRevenueSum
         topPatientRevenue,
         topPatientShare: totalRevenue > 0 ? topPatientRevenue / totalRevenue : 0,
     };
+}
+
+/**
+ * Meta only returns lead form submissions from the last 90 days, so for an
+ * older window most leads are missing and the email match reads as ~0 ROAS.
+ * One day of margin keeps a window starting exactly 90 days back out, since
+ * its earliest leads expire during the day.
+ */
+export const LEAD_RETENTION_DAYS = 90;
+
+export function isWithinLeadRetention(since: string, today: Date = new Date()): boolean {
+    return since >= format(subDays(today, LEAD_RETENTION_DAYS - 1), 'yyyy-MM-dd');
 }

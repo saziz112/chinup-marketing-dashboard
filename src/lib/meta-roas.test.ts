@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { summarizeMatchedRevenue } from './meta-roas';
+import { summarizeMatchedRevenue, isWithinLeadRetention } from './meta-roas';
 
 describe('summarizeMatchedRevenue', () => {
     const leads = [
@@ -44,5 +44,19 @@ describe('summarizeMatchedRevenue', () => {
         ]);
         expect(s.purchasingLeads).toBe(3);
         expect(s.purchasingPatients).toBe(2);
+    });
+});
+
+describe('isWithinLeadRetention', () => {
+    const today = new Date('2026-10-19T19:00:00');
+
+    it('is true for a window that starts within the last 90 days', () => {
+        expect(isWithinLeadRetention('2026-09-20', today)).toBe(true);
+        expect(isWithinLeadRetention('2026-07-22', today)).toBe(true); // 89 days back
+    });
+
+    it('is false once the window starts before Meta stops returning leads', () => {
+        expect(isWithinLeadRetention('2026-07-01', today)).toBe(false);
+        expect(isWithinLeadRetention('2026-07-20', today)).toBe(false); // 91 days back
     });
 });
