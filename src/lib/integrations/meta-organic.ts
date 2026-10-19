@@ -987,37 +987,12 @@ export interface IGCompetitorMetrics {
     viralPosts?: (IGCompetitorPost & { engagementRate: number; multiplier: number })[];
 }
 
-function getMockCompetitors(locationId?: LocationId): IGCompetitorMetrics[] {
-    // Generate realistic competitor followers based on location
-    if (locationId === 'atlanta') {
-        return [
-            { username: 'pureblissmedspa', followersCount: 40269, mediaCount: 553 },
-            { username: 'skinsocialspa', followersCount: 4247, mediaCount: 618 },
-            { username: 'radiancemedspaatl', followersCount: 2969, mediaCount: 1067 }
-        ];
-    }
-
-    if (locationId === 'decatur') {
-        return [
-            { username: 'seamlessrecoverymedspa', followersCount: 1222, mediaCount: 236 },
-            { username: 'revolutiondecatur', followersCount: 1094, mediaCount: 340 }
-        ];
-    }
-
-    if (locationId === 'kennesaw') {
-        return [
-            { username: 'vivamedspaatl', followersCount: 3811, mediaCount: 421 },
-            { username: 'spalapazatl', followersCount: 2382, mediaCount: 443 }
-        ];
-    }
-
-    // Default / All Locations
-    return [
-        { username: 'pureblissmedspa', followersCount: 40269, mediaCount: 553 },
-        { username: 'seamlessrecoverymedspa', followersCount: 1222, mediaCount: 236 },
-        { username: 'vivamedspaatl', followersCount: 3811, mediaCount: 421 },
-        { username: 'skinsocialspa', followersCount: 4247, mediaCount: 618 },
-    ];
+// Competitor watchlist by location. Counts always come from the live API.
+function getCompetitorUsernames(locationId?: LocationId): string[] {
+    if (locationId === 'atlanta') return ['pureblissmedspa', 'skinsocialspa', 'radiancemedspaatl'];
+    if (locationId === 'decatur') return ['seamlessrecoverymedspa', 'revolutiondecatur'];
+    if (locationId === 'kennesaw') return ['vivamedspaatl', 'spalapazatl'];
+    return ['pureblissmedspa', 'seamlessrecoverymedspa', 'vivamedspaatl', 'skinsocialspa'];
 }
 
 /**
@@ -1116,17 +1091,11 @@ export async function getIGCompetitorMetrics(locationId?: LocationId): Promise<I
 
     trackCall('meta', 'getIGCompetitorMetrics', false);
 
-    // If no credentials, use mock
     if (!igUserId || !pageToken) {
-        console.warn('[Meta] Missing META_IG_USER_ID or META_PAGE_ACCESS_TOKEN. Falling back to mock IG Competitors.');
-        const mock = getMockCompetitors(locationId);
-        setCache(cacheKey, mock);
-        return mock;
+        throw new Error('Instagram competitors not configured: META_IG_USER_ID or META_PAGE_ACCESS_TOKEN is missing');
     }
 
-    // Determine target mock competitors based on location so we have usernames to query
-    const targetMocks = getMockCompetitors(locationId);
-    const usernamesToFetch = targetMocks.map(m => m.username);
+    const usernamesToFetch = getCompetitorUsernames(locationId);
 
     const results: IGCompetitorMetrics[] = [];
 
@@ -1166,16 +1135,15 @@ export async function getIGCompetitorMetrics(locationId?: LocationId): Promise<I
                     });
                 }
             } else {
-                console.warn(`[Meta] Failed to fetch competitor ${username}. Falling back to mock data for this user.`);
-                const mockFallback = targetMocks.find(m => m.username === username);
-                if (mockFallback) results.push(mockFallback);
+                // Left out rather than shown with stale numbers
+                console.warn(`[Meta] Failed to fetch competitor ${username} (${res.status}); leaving it out.`);
             }
         } catch (e) {
-            console.error(`[Meta] Error fetching competitor ${username}`, e);
-            const mockFallback = targetMocks.find(m => m.username === username);
-            if (mockFallback) results.push(mockFallback);
+            console.error(`[Meta] Error fetching competitor ${username}; leaving it out.`, e);
         }
     }
+
+    if (results.length === 0) throw new Error('Instagram competitors: every Business Discovery lookup failed');
 
     setCache(cacheKey, results);
     return results;

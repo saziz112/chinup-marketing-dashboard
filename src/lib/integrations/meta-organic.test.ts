@@ -44,3 +44,41 @@ describe('Instagram reach', () => {
         expect(res.daily.map(d => d.reach)).toEqual([100, 100, 100]);
     });
 });
+
+describe('getIGCompetitorMetrics', () => {
+    beforeEach(() => {
+        vi.stubEnv('META_PAGE_ACCESS_TOKEN', 'tok');
+        vi.stubEnv('META_IG_USER_ID', 'ig1');
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+    });
+    afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+    const stubDiscovery = (failing: (u: string) => boolean) => vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        const username = decodeURIComponent(url).match(/business_discovery\.username\(([^)]+)\)/)![1];
+        if (failing(username)) return { ok: false, status: 400, json: async () => ({}) } as Response;
+        return { ok: true, status: 200, json: async () => ({ business_discovery: { username, followers_count: 999, media_count: 10, media: { data: [] } } }) } as Response;
+    }));
+
+    it('leaves out a competitor that fails instead of showing stale hardcoded numbers', async () => {
+        stubDiscovery(u => u === 'revolutiondecatur');
+        const { getIGCompetitorMetrics } = await load();
+        const res = await getIGCompetitorMetrics('decatur');
+        expect(res.map(r => r.username)).toEqual(['seamlessrecoverymedspa']);
+        expect(res.every(r => r.followersCount === 999)).toBe(true);
+    });
+
+    it('throws when every competitor fails', async () => {
+        stubDiscovery(() => true);
+        const { getIGCompetitorMetrics } = await load();
+        await expect(getIGCompetitorMetrics('decatur')).rejects.toThrow();
+    });
+
+    it('throws when credentials are missing instead of returning hardcoded counts', async () => {
+        vi.stubEnv('META_IG_USER_ID', '');
+        stubDiscovery(() => false);
+        const { getIGCompetitorMetrics } = await load();
+        await expect(getIGCompetitorMetrics('decatur')).rejects.toThrow();
+    });
+});
