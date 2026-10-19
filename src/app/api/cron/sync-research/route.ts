@@ -2,7 +2,7 @@
  * Vercel Cron: Sync Research Data + GHL
  * Runs daily at 9 AM UTC (5 AM ET).
  * Incrementally syncs social posts (IG), Search Console query data,
- * and GHL contacts into Postgres. Patient data (Zenoti) syncs in its
+ * and GHL contacts into Postgres, then stamps GHL attribution on new contacts. Patient data (Zenoti) syncs in its
  * own cron: /api/cron/sync-zenoti (8 AM UTC).
  */
 
@@ -11,15 +11,19 @@ import { isCronAuthorized } from '@/lib/cron-auth';
 import { incrementalSocialSync } from '@/lib/integrations/social-posts-sync';
 import { incrementalSearchConsoleSync } from '@/lib/integrations/search-console-sync';
 import { incrementalGhlSync } from '@/lib/integrations/ghl-contacts-sync';
+import { syncGhlAttribution } from '@/lib/integrations/ghl-attribution-sync';
 import { pgCacheInvalidatePrefix } from '@/lib/pg-cache';
 
 export const maxDuration = 300; // Zenoti incremental sync now pulls a 120-day forward appt window
+const ATTRIBUTION_BUDGET_MS = 240_000; // leaves headroom under maxDuration; the backlog resumes next run
 
 export async function GET(req: NextRequest) {
     // Verify cron secret (Vercel sets this header for cron jobs)
     if (!isCronAuthorized(req.headers.get('authorization'))) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const started = Date.now();
 
     try {
         // MindBody incremental sync is FROZEN at the 2026-07-01 cutover (MindBody is
@@ -37,10 +41,14 @@ export async function GET(req: NextRequest) {
             incrementalGhlSync().catch(e => ({
                 newContacts: 0, apiCalls: 0,
                 error: e.message,
+            })).then(async ghlResult => ({
+                ...ghlResult,
+                attribution: await syncGhlAttribution(started + ATTRIBUTION_BUDGET_MS)
+                    .catch(e => ({ error: e.message as string })),
             })),
         ]);
 
-        console.log(`[sync-research] Social: ${social.chunkLabel} | GSC: ${gsc.chunkLabel} | GHL: ${ghl.newContacts} new contacts`);
+        console.log(`[sync-research] Social: ${social.chunkLabel} | GSC: ${gsc.chunkLabel} | GHL: ${ghl.newContacts} new contacts | Attribution: ${JSON.stringify(ghl.attribution)}`);
 
         // Fresh GHL data just landed — drop campaign-segment caches so the next
         // request rebuilds from the updated tables (prevents targeting patients who just visited).
