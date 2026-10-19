@@ -27,6 +27,7 @@ export interface IGInsightsDay {
 }
 
 export interface IGInsightsTotals {
+    reach: number; // unique accounts reached across the whole window
     profileViews: number;
     accountsEngaged: number;
     totalInteractions: number;
@@ -261,7 +262,7 @@ export async function getIGInsights(
             total_value: { value: number };
         }>;
     }>(
-        `/${igUserId}/insights?metric=profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,views&metric_type=total_value&period=day&since=${since}&until=${until}`,
+        `/${igUserId}/insights?metric=reach,profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,views&metric_type=total_value&period=day&since=${since}&until=${until}`,
         token
     );
 
@@ -289,12 +290,13 @@ export async function getIGInsights(
 
     // Build totals from call 2
     const totals: IGInsightsTotals = {
-        profileViews: 0, accountsEngaged: 0, totalInteractions: 0,
+        reach: 0, profileViews: 0, accountsEngaged: 0, totalInteractions: 0,
         likes: 0, comments: 0, shares: 0, saves: 0, views: 0,
     };
     for (const metric of totalsData.data || []) {
         const v = metric.total_value?.value || 0;
         switch (metric.name) {
+            case 'reach': totals.reach = v; break;
             case 'profile_views': totals.profileViews = v; break;
             case 'accounts_engaged': totals.accountsEngaged = v; break;
             case 'total_interactions': totals.totalInteractions = v; break;
@@ -327,36 +329,22 @@ export async function getIGPeriodTotals(
     const token = getEnv('META_PAGE_ACCESS_TOKEN');
     const igUserId = getEnv('META_IG_USER_ID');
 
-    // Reach daily (no follower_count = no 30-day cap)
-    const reachData = await graphGet<{
-        data: Array<{ name: string; values: Array<{ value: number; end_time: string }> }>;
-    }>(
-        `/${igUserId}/insights?metric=reach&period=day&since=${since}&until=${until}`,
-        token
-    );
-
-    let totalReach = 0;
-    for (const metric of reachData.data || []) {
-        for (const val of metric.values || []) {
-            totalReach += val.value || 0;
-        }
-    }
-
     // Aggregate totals
     const totalsData = await graphGet<{
         data: Array<{ name: string; total_value: { value: number } }>;
     }>(
-        `/${igUserId}/insights?metric=profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,views&metric_type=total_value&period=day&since=${since}&until=${until}`,
+        `/${igUserId}/insights?metric=reach,profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves,views&metric_type=total_value&period=day&since=${since}&until=${until}`,
         token
     );
 
     const totals: IGInsightsTotals = {
-        profileViews: 0, accountsEngaged: 0, totalInteractions: 0,
+        reach: 0, profileViews: 0, accountsEngaged: 0, totalInteractions: 0,
         likes: 0, comments: 0, shares: 0, saves: 0, views: 0,
     };
     for (const metric of totalsData.data || []) {
         const v = metric.total_value?.value || 0;
         switch (metric.name) {
+            case 'reach': totals.reach = v; break;
             case 'profile_views': totals.profileViews = v; break;
             case 'accounts_engaged': totals.accountsEngaged = v; break;
             case 'total_interactions': totals.totalInteractions = v; break;
@@ -368,7 +356,8 @@ export async function getIGPeriodTotals(
         }
     }
 
-    const result = { totalReach, totals };
+    // Unique accounts for the window; summing daily reach counts a returning account once per day
+    const result = { totalReach: totals.reach, totals };
     setCache(cacheKey, result);
     return result;
 }
