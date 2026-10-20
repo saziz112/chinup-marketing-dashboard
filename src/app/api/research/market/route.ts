@@ -26,7 +26,10 @@ export async function GET(req: NextRequest) {
                 SELECT
                     COALESCE(SUBSTRING(caption FROM 1 FOR 60), post_type || ' post') AS title,
                     platform,
-                    engagement_rate,
+                    -- Recomputed from counts (same rule as src/lib/engagement.ts): older
+                    -- syncs stored interactions ÷ 1 for posts with no views or reach.
+                    (COALESCE(likes,0) + COALESCE(comments,0) + COALESCE(shares,0) + COALESCE(saves,0))::numeric
+                        / GREATEST(COALESCE(views,0), COALESCE(reach,0)) AS engagement_rate,
                     views,
                     likes,
                     comments,
@@ -35,8 +38,8 @@ export async function GET(req: NextRequest) {
                     permalink
                 FROM social_posts
                 WHERE posted_at > NOW() - INTERVAL '90 days'
-                AND engagement_rate IS NOT NULL
-                ORDER BY engagement_rate DESC NULLS LAST
+                AND GREATEST(COALESCE(views,0), COALESCE(reach,0)) > 0
+                ORDER BY engagement_rate DESC
                 LIMIT 10
             `,
             // Search Console top queries
