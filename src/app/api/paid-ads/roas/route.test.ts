@@ -49,4 +49,24 @@ describe('GET /api/paid-ads/roas', () => {
         expect((await res.json()).attributionMethod).not.toBe('outside_lead_retention');
         expect(h.leads).toHaveBeenCalled();
     });
+
+    it('returns the same body as before caching, and serves a repeat load without refetching', async () => {
+        const lead = (id: string, email: string, campaignId: string, day: string) =>
+            ({ id, email, campaignId, campaignName: 'Botox Leads', createdTime: `2026-10-${day}T10:00:00+0000`, adId: '', phone: null, firstName: null, lastName: null });
+        h.leads.mockResolvedValue({
+            leads: [lead('1', 'A@x.com', 'c1', '01'), lead('2', 'a@x.com', 'form9', '03'), lead('3', 'b@x.com', 'c1', '05'), lead('4', 'c@x.com', 'c1', '07')],
+            byCampaign: new Map(), totalLeads: 4, hasLeadForms: true,
+        });
+        h.emails.mockResolvedValue(new Map([
+            ['a@x.com', { client: { Id: 'A', FirstName: 'Amy', LastName: 'Lee' }, revenue: 1200, firstSaleDate: '2025-02-01' }],
+            ['b@x.com', { client: { Id: 'B', FirstName: 'Bo', LastName: '' }, revenue: 300, firstSaleDate: '2026-10-09' }],
+            ['c@x.com', { client: { Id: 'C', FirstName: 'Cy', LastName: 'X' }, revenue: 0, firstSaleDate: null }],
+        ]));
+        const url = 'http://x/api/paid-ads/roas?since=2026-09-25&until=2026-10-15';
+        const first = await (await GET(new NextRequest(url))).json();
+        expect(first).toMatchSnapshot();
+        const second = await (await GET(new NextRequest(url))).json();
+        expect(second).toEqual(first);
+        expect(h.leads).toHaveBeenCalledTimes(1);
+    });
 });
