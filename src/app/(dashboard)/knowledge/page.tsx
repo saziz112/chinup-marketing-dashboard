@@ -148,7 +148,6 @@ export default function KnowledgeBasePage() {
                                     { icon: 'Paid Ads', route: '/ads', desc: 'Meta Ads and Google Ads campaign performance + ROAS' },
                                     { icon: 'Leads & Pipeline', route: '/attribution', desc: 'GHL pipeline summary, conversation-based lead outreach, campaigns' },
                                     { icon: 'Research', route: '/research', desc: 'Social trends, competitor analysis, content calendar, market intel' },
-                                    { icon: 'Reputation', route: '/reputation', desc: 'Google reviews, Search Console rankings, competitor tracking' },
                                     { icon: 'Knowledge', route: '/knowledge', desc: 'This page — documentation for all dashboard features' },
                                     { icon: 'Settings', route: '/settings', desc: 'Admin: manage users, connect accounts, monitor API usage, trigger syncs' },
                                 ].map(item => (
@@ -533,19 +532,6 @@ export default function KnowledgeBasePage() {
                                 'Aggregate review scores across all locations',
                                 'Recent review feed with star ratings and text',
                                 'Review volume trends over time',
-                            ]}
-                        />
-                        <Feature
-                            name="Competitor Analysis"
-                            source="Manual tracking + public data"
-                            features={[
-                                'Side-by-side comparison with configured competitors',
-                                'Review count and rating comparisons',
-                                'Notes and observations per competitor',
-                            ]}
-                            notes={[
-                                'Competitors are configured in the Settings page',
-                                'Data is pulled from publicly available sources — no private competitor data',
                             ]}
                         />
                         <Feature
