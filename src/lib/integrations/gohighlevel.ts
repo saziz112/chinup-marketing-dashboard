@@ -570,7 +570,12 @@ export interface StaleLead {
 
 // Separate cache for contact dateUpdated values (avoids re-fetching on every call)
 const contactDateCache = new Map<string, { dateUpdated: string | null; timestamp: number }>();
-const CONTACT_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+// Contact dates are shared across instances so a cold start doesn't re-fetch thousands.
+const CONTACT_DATES_PG_KEY = 'ghl_contact_dates_v1';
+const CONTACT_DATES_PG_TTL_HOURS = 6;
+// Leaves room in the 300s function limit for the rest of the request. Contacts not
+// reached keep their opportunity date; the next load picks up where this one stopped.
+const CONTACT_FETCH_BUDGET_MS = 60 * 1000;
 
 /** Batch-fetch with concurrency limit */
 async function batchAsync<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -646,11 +651,12 @@ export async function getStaleLeads(locationFilter?: LocationKey): Promise<Stale
     // Layer 2 fallback: fetch contact dateUpdated for stale candidates
     // Only fires if contactDateUpdated wasn't in the opportunity response
     if (!hasAnyContactDate && candidates.length > 0) {
+        const persisted = await pgCacheGet<Record<string, { dateUpdated: string | null; timestamp: number }>>(CONTACT_DATES_PG_KEY) || {};
         // Filter to candidates we haven't cached yet
         const needsFetch = candidates.filter(c => {
             if (!c.opp.contactId) return false;
-            const cached = contactDateCache.get(c.opp.contactId);
-            if (cached && (now - cached.timestamp) < CONTACT_CACHE_TTL) {
+            const cached = contactDateCache.get(c.opp.contactId) || persisted[c.opp.contactId];
+            if (cached && (now - cached.timestamp) < CONTACT_DATES_PG_TTL_HOURS * 3600 * 1000) {
                 // Use cached value
                 if (cached.dateUpdated) {
                     c.contactDaysSince = Math.floor((now - new Date(cached.dateUpdated).getTime()) / MS_PER_DAY);
@@ -662,16 +668,27 @@ export async function getStaleLeads(locationFilter?: LocationKey): Promise<Stale
 
         if (needsFetch.length > 0) {
             console.log(`[ghl-stale] Fetching ${needsFetch.length} contacts for dateUpdated (${candidates.length - needsFetch.length} cached)`);
+            const deadline = Date.now() + CONTACT_FETCH_BUDGET_MS;
+            const fetched: typeof persisted = {};
             await batchAsync(needsFetch, 20, async (c) => {
+                if (Date.now() > deadline) return;
                 const location = locationsByKey.get(c.opp.locationKey);
                 if (!location) return;
                 const contact = await getContact(location, c.opp.contactId);
-                const dateUpdated = contact?.dateUpdated || null;
-                contactDateCache.set(c.opp.contactId, { dateUpdated, timestamp: now });
+                if (!contact) return; // failed lookup: retry next load rather than cache a miss
+                const dateUpdated = contact.dateUpdated || null;
+                const entry = { dateUpdated, timestamp: now };
+                contactDateCache.set(c.opp.contactId, entry);
+                fetched[c.opp.contactId] = entry;
                 if (dateUpdated) {
                     c.contactDaysSince = Math.floor((now - new Date(dateUpdated).getTime()) / MS_PER_DAY);
                 }
             });
+            if (Object.keys(fetched).length > 0) {
+                const fresh = Object.fromEntries(Object.entries(persisted)
+                    .filter(([, v]) => (now - v.timestamp) < CONTACT_DATES_PG_TTL_HOURS * 3600 * 1000));
+                await pgCacheSet(CONTACT_DATES_PG_KEY, { ...fresh, ...fetched }, { ttlHours: CONTACT_DATES_PG_TTL_HOURS });
+            }
         }
     }
 
