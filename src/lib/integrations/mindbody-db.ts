@@ -39,32 +39,6 @@ export interface SaleDB {
 type ClientRevenue = { client: ClientDB; revenue: number; firstSaleDate?: string | null };
 
 // ---------------------------------------------------------------------------
-// B1: getRevenueFromDB — replaces getSales() in metrics/revenue
-// ---------------------------------------------------------------------------
-
-export async function getRevenueFromDB(
-    startDate: string,
-    endDate: string,
-): Promise<{ totalRevenue: number; saleCount: number }> {
-    const start = startDate.split('T')[0];
-    const end = endDate.split('T')[0];
-
-    // Use payments_total when available, fall back to total_amount for historical rows
-    // (difference is only gift card purchases — negligible for most sales)
-    const result = await sql`
-        SELECT COALESCE(SUM(CASE WHEN payments_total > 0 THEN payments_total ELSE total_amount END), 0) as total,
-               COUNT(*) as count
-        FROM mb_sales_history
-        WHERE sale_date BETWEEN ${start} AND ${end}
-    `;
-
-    return {
-        totalRevenue: Number(result.rows[0]?.total || 0),
-        saleCount: Number(result.rows[0]?.count || 0),
-    };
-}
-
-// ---------------------------------------------------------------------------
 // B2: getNewClientsCountFromDB — replaces getNewClients() in metrics/leads
 // ---------------------------------------------------------------------------
 
