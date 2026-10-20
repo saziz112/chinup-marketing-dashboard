@@ -82,7 +82,7 @@ export default function OverviewPage() {
 
         const fetchSearchConsole = async () => {
             try {
-                const res = await fetch('/api/reputation/search?period=30');
+                const res = await fetch(`/api/reputation/search?period=${parseInt(period, 10)}`);
                 const data = await res.json();
                 if (!res.ok || !data.totals) throw new Error(data.error || `HTTP ${res.status}`);
                 setSearchData({ clicks: data.totals.clicks, impressions: data.totals.impressions, position: data.totals.position, loading: false, error: false });
@@ -279,7 +279,7 @@ export default function OverviewPage() {
                         <div className="stat-value">
                             {searchData.loading ? <Skeleton className="h-7 w-14" /> : searchData.error ? 'Unavailable' : searchData.clicks.toLocaleString()}
                         </div>
-                        <div className="stat-sub">Last 30 days</div>
+                        <div className="stat-sub">Last {parseInt(period, 10)} days</div>
                     </div>
                     <div className="stat">
                         <div className="stat-label">Avg Position</div>

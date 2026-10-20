@@ -528,7 +528,7 @@ export default function LeadsPipelinePage() {
                                 <div className="metric-card">
                                     <div className="label">Lost</div>
                                     <div className="value" style={{ color: 'var(--danger)' }}>{formatNumber(pipelineData.totals.totalLost)}</div>
-                                    <div className="change">Abandoned</div>
+                                    <div className="change">Lost or abandoned</div>
                                 </div>
                                 <div className="metric-card">
                                     <div className="label">Conversion</div>

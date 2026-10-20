@@ -389,7 +389,7 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
                                 {isAdmin && <Th label="CPM" col="cpm" />}
                                 <Th label="Leads" col="results" />
                                 {isAdmin && <Th label="Cost/Lead" col="costPerResult" />}
-                                {isAdmin && !!roasDict && <Th label="MB Clients" col="mbClients" />}
+                                {isAdmin && !!roasDict && <Th label="Paying Patients" col="mbClients" />}
                                 {isAdmin && !!roasDict && <Th label="Booked" col="apptsBooked" />}
                                 {isAdmin && !!roasDict && <Th label="Completed" col="apptsCompleted" />}
                                 <Th label={isAdmin && !!roasDict ? "True ROAS" : isGoogle ? "Conv. value / cost" : "ROAS"} col={isAdmin && !!roasDict ? "trueRoas" : "roas"} />
@@ -539,7 +539,7 @@ export function CustomTooltip({ active, payload, label, isAdmin }: {
             <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>{label}</p>
             {payload.map(p => (
                 <p key={p.name} style={{ color: p.color }}>
-                    {p.name}: {p.name === 'Spend' ? (isAdmin ? `$${p.value.toFixed(0)}` : '\u2014') : fmtNum(p.value)}
+                    {p.name}: {p.name.endsWith('Spend') ? (isAdmin ? `$${p.value.toFixed(0)}` : '\u2014') : fmtNum(p.value)}
                 </p>
             ))}
         </div>
