@@ -13,14 +13,14 @@ try {
   const pairs = await sql`
     WITH cand AS (
       SELECT client_id,
-             NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+             NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10),'') AS phone,
              NULLIF(LOWER(TRIM(email)),'') AS email
       FROM mb_clients_cache WHERE source='mindbody'
     ),
     peers AS (
       SELECT DISTINCT cand.client_id AS mb_id, c.client_id AS peer_id, c.source AS peer_source
       FROM cand JOIN mb_clients_cache c
-        ON (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') = cand.phone)
+        ON (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') = cand.phone)
         OR (cand.email IS NOT NULL AND NULLIF(LOWER(TRIM(c.email)),'') = cand.email)
     )
     SELECT mb_id, peer_id, peer_source FROM peers WHERE peer_source='zenoti' LIMIT 10`;
@@ -31,14 +31,14 @@ try {
   const cnt = await sql`
     WITH cand AS (
       SELECT client_id,
-             NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+             NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10),'') AS phone,
              NULLIF(LOWER(TRIM(email)),'') AS email
       FROM mb_clients_cache WHERE source='mindbody'
     )
     SELECT COUNT(DISTINCT cand.client_id) AS n
     FROM cand JOIN mb_clients_cache c
       ON c.source='zenoti' AND (
-        (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') = cand.phone)
+        (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') = cand.phone)
         OR (cand.email IS NOT NULL AND NULLIF(LOWER(TRIM(c.email)),'') = cand.email))`;
   console.log(`\nDistinct MindBody patients bridged to a Zenoti identity: ${cnt[0].n}`);
   console.log('(These are the patients whose future Zenoti bookings the fix will now see.)');

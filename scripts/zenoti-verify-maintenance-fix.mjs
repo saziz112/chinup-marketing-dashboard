@@ -15,13 +15,13 @@ try {
   const atRisk = await sql`
     WITH mb AS (
       SELECT c.client_id,
-             NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+             NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
              NULLIF(LOWER(TRIM(c.email)),'') AS email,
              (SELECT MAX(sale_date) FROM mb_sales_history s WHERE s.client_id=c.client_id) AS mb_last
       FROM mb_clients_cache c WHERE c.source='mindbody'
     ),
     zn AS (
-      SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+      SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
              NULLIF(LOWER(TRIM(c.email)),'') AS email, MAX(s.sale_date) AS zn_last
       FROM mb_clients_cache c JOIN mb_sales_history s ON s.client_id=c.client_id AND s.source='zenoti'
       WHERE c.source='zenoti' GROUP BY 1,2
@@ -39,12 +39,12 @@ try {
   const ml = await sql`
     WITH cand AS (
       SELECT client_id,
-             NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+             NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10),'') AS phone,
              NULLIF(LOWER(TRIM(email)),'') AS email
       FROM mb_clients_cache WHERE client_id = ANY(${atRiskIds})
     ),
     activity AS (
-      SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+      SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
              NULLIF(LOWER(TRIM(c.email)),'') AS email, a.activity_date
       FROM (
         SELECT client_id, sale_date AS activity_date FROM mb_sales_history

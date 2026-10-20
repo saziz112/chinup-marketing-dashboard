@@ -25,7 +25,7 @@ try {
     active_contacts AS (
       SELECT DISTINCT
         NULLIF(LOWER(TRIM(c.email)),'') AS email,
-        NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone
+        NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone
       FROM mb_clients_cache c
       WHERE c.client_id IN (
         SELECT DISTINCT client_id FROM client_activity
@@ -33,14 +33,14 @@ try {
       )
     )
     SELECT a.client_id,
-           NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+           NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
            NULLIF(LOWER(TRIM(c.email)),'') AS email
     FROM client_activity a
     LEFT JOIN mb_clients_cache c ON c.client_id = a.client_id
     WHERE a.client_id NOT IN (SELECT client_id FROM future_booked)
       AND NOT EXISTS (
         SELECT 1 FROM active_contacts ac
-        WHERE (ac.phone IS NOT NULL AND ac.phone = NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),''))
+        WHERE (ac.phone IS NOT NULL AND ac.phone = NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),''))
            OR (ac.email IS NOT NULL AND ac.email = NULLIF(LOWER(TRIM(c.email)),''))
       )
     GROUP BY a.client_id, c.phone, c.email
@@ -51,7 +51,7 @@ try {
   // Zenoti-active contacts (phone last-10 + email)
   const zActive = await sql`
     SELECT DISTINCT
-      NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+      NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
       NULLIF(LOWER(TRIM(c.email)),'') AS email
     FROM mb_clients_cache c
     WHERE c.source='zenoti'

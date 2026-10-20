@@ -1908,12 +1908,12 @@ export async function getConsultOnlyPatients(
         const zlRows = await sql`
             WITH cand AS (
                 SELECT client_id,
-                       NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                       NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10),'') AS phone,
                        NULLIF(LOWER(TRIM(email)),'') AS email
                 FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
             ),
             zn AS (
-                SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+                SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
                        NULLIF(LOWER(TRIM(c.email)),'') AS email,
                        s.sale_date
                 FROM mb_clients_cache c
@@ -2090,14 +2090,14 @@ export async function getMaintenanceDuePatients(
     const fbRows = await sql`
         WITH cand AS (
             SELECT client_id,
-                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10),'') AS phone,
                    NULLIF(LOWER(TRIM(email)),'') AS email
             FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
         ),
         peers AS (
             SELECT DISTINCT cand.client_id AS req_id, c.client_id AS peer_id
             FROM cand JOIN mb_clients_cache c
-              ON (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') = cand.phone)
+              ON (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') = cand.phone)
               OR (cand.email IS NOT NULL AND NULLIF(LOWER(TRIM(c.email)),'') = cand.email)
         )
         SELECT DISTINCT p.req_id AS client_id
@@ -2118,12 +2118,12 @@ export async function getMaintenanceDuePatients(
     const mlRows = await sql`
         WITH cand AS (
             SELECT client_id,
-                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10),'') AS phone,
                    NULLIF(LOWER(TRIM(email)),'') AS email
             FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
         ),
         activity AS (
-            SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+            SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
                    NULLIF(LOWER(TRIM(c.email)),'') AS email,
                    a.activity_date
             FROM (
@@ -2275,14 +2275,14 @@ export async function getNoShowRecoveryPatients(
     const fbRows = await sql`
         WITH cand AS (
             SELECT client_id,
-                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10),'') AS phone,
                    NULLIF(LOWER(TRIM(email)),'') AS email
             FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
         ),
         peers AS (
             SELECT DISTINCT cand.client_id AS req_id, c.client_id AS peer_id
             FROM cand JOIN mb_clients_cache c
-              ON (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') = cand.phone)
+              ON (cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') = cand.phone)
               OR (cand.email IS NOT NULL AND NULLIF(LOWER(TRIM(c.email)),'') = cand.email)
         )
         SELECT DISTINCT p.req_id AS client_id
@@ -2298,12 +2298,12 @@ export async function getNoShowRecoveryPatients(
     const mlRows = await sql`
         WITH cand AS (
             SELECT client_id,
-                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10),'') AS phone,
                    NULLIF(LOWER(TRIM(email)),'') AS email
             FROM mb_clients_cache WHERE client_id = ANY(${candidateIds})
         ),
         activity AS (
-            SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+            SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
                    NULLIF(LOWER(TRIM(c.email)),'') AS email,
                    a.activity_date
             FROM (

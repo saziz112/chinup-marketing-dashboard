@@ -50,7 +50,7 @@ try{
 
   // Build phone/email -> patient map from cache for matching
   const cache=await sql`SELECT client_id,source,first_name,last_name,
-      RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10) AS p10,
+      RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10) AS p10,
       LOWER(TRIM(email)) AS em FROM mb_clients_cache`;
   const byPhone=new Map(), byEmail=new Map();
   for(const c of cache){ if(c.p10&&c.p10.length===10&&!byPhone.has(c.p10))byPhone.set(c.p10,c);

@@ -16,13 +16,13 @@ try {
   const rows = await sql`
     WITH mb AS (
       SELECT c.client_id, c.first_name, c.last_name,
-             NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+             NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
              NULLIF(LOWER(TRIM(c.email)),'') AS email,
              (SELECT MAX(sale_date) FROM mb_sales_history s WHERE s.client_id=c.client_id) AS mb_last
       FROM mb_clients_cache c WHERE c.source='mindbody'
     ),
     zn AS (
-      SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+      SELECT NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
              NULLIF(LOWER(TRIM(c.email)),'') AS email,
              MAX(s.sale_date) AS zn_last
       FROM mb_clients_cache c

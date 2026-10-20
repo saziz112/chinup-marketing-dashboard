@@ -115,14 +115,14 @@ export async function getLapsedPatientsFromDB(
             -- identity (notably a Zenoti GUID after the cutover).
             SELECT DISTINCT
                 NULLIF(LOWER(TRIM(c.email)), '') AS email,
-                NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\D', '', 'g'), 10), '') AS phone
+                NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g'), 10), '') AS phone
             FROM mb_clients_cache c
             WHERE c.client_id IN (SELECT client_id FROM future_booked)
         ),
         active_contacts AS (
             SELECT DISTINCT
                 NULLIF(LOWER(TRIM(c.email)), '') AS email,
-                NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\D', '', 'g'), 10), '') AS phone
+                NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g'), 10), '') AS phone
             FROM mb_clients_cache c
             WHERE c.client_id IN (
                 SELECT DISTINCT client_id
@@ -143,7 +143,7 @@ export async function getLapsedPatientsFromDB(
               SELECT 1 FROM future_contacts fc
               WHERE (
                   fc.phone IS NOT NULL
-                  AND fc.phone = NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\D', '', 'g'), 10), '')
+                  AND fc.phone = NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g'), 10), '')
               ) OR (
                   fc.email IS NOT NULL
                   AND fc.email = NULLIF(LOWER(TRIM(c.email)), '')
@@ -153,7 +153,7 @@ export async function getLapsedPatientsFromDB(
               SELECT 1 FROM active_contacts ac
               WHERE (
                   ac.phone IS NOT NULL
-                  AND ac.phone = NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\D', '', 'g'), 10), '')
+                  AND ac.phone = NULLIF(RIGHT(regexp_replace(COALESCE(c.phone, ''), '\\D', '', 'g'), 10), '')
               ) OR (
                   ac.email IS NOT NULL
                   AND ac.email = NULLIF(LOWER(TRIM(c.email)), '')

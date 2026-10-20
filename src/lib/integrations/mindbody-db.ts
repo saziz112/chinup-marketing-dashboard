@@ -57,7 +57,7 @@ export async function getNewClientsCountFromDB(
     const result = await sql`
         WITH candidates AS (
             SELECT DISTINCT c.client_id,
-                   NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') AS phone,
+                   NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
                    NULLIF(LOWER(TRIM(c.email)),'') AS email
             FROM mb_clients_cache c
             JOIN mb_sales_history s ON s.client_id = c.client_id
@@ -70,7 +70,7 @@ export async function getNewClientsCountFromDB(
             FROM candidates cand
             JOIN mb_clients_cache prior
               ON prior.client_id <> cand.client_id
-             AND ((cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(prior.phone,''),'\D','','g'),10),'') = cand.phone)
+             AND ((cand.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(prior.phone,''),'\\D','','g'),10),'') = cand.phone)
                OR (cand.email IS NOT NULL AND NULLIF(LOWER(TRIM(prior.email)),'') = cand.email))
             WHERE prior.creation_date < ${startDate}
         )
@@ -108,7 +108,7 @@ export async function getClientEmailMapFromDB(
             SELECT client_id, email, first_name, last_name, phone,
                    referred_by, creation_date,
                    NULLIF(LOWER(TRIM(email)),'') AS norm_email,
-                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS norm_phone
+                   NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10),'') AS norm_phone
             FROM mb_clients_cache
         ),
         emailed AS (

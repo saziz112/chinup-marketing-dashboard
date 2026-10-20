@@ -8,7 +8,7 @@ try {
     SELECT client_id, source, first_name, last_name, email, phone,
            to_char(creation_date,'YYYY-MM-DD') AS created
     FROM mb_clients_cache
-    WHERE RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10) = ${p10}
+    WHERE RIGHT(regexp_replace(COALESCE(phone,''),'\\D','','g'),10) = ${p10}
     ORDER BY source, created`;
   console.log(`Clients with phone ...${p10} (${clients.length}):`);
   for (const c of clients)
