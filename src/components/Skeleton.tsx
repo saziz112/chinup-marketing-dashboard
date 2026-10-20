@@ -8,7 +8,7 @@ interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {
 export function Skeleton({ className = '', style, ...props }: SkeletonProps) {
     return (
         <div
-            className={`animate-pulse rounded-md bg-slate-800/50 ${className}`}
+            className={`skeleton-block ${className}`}
             style={style}
             {...props}
         />
@@ -29,9 +29,9 @@ export function SkeletonKpiCard() {
 
 export function SkeletonChart({ height = 240 }: { height?: number }) {
     return (
-        <div className="section-card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="chart-container" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <Skeleton className="h-6 w-48" />
-            <Skeleton className="w-full rounded-lg" style={{ height }} />
+            <Skeleton className="w-full" style={{ height }} />
         </div>
     );
 }
@@ -45,7 +45,7 @@ export function SkeletonTable({ rows = 5 }: { rows?: number }) {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {/* Header row */}
-                <Skeleton className="h-10 w-full rounded bg-slate-800/80" />
+                <Skeleton className="h-10 w-full" />
                 {/* Body rows */}
                 {Array.from({ length: rows }).map((_, i) => (
                     <Skeleton key={i} className="h-12 w-full" />

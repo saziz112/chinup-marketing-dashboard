@@ -4,7 +4,7 @@ import { useSession } from 'next-auth/react';
 import { useState, useEffect } from 'react';
 import { Skeleton, SkeletonChart } from '@/components/Skeleton';
 import { formatNumber, formatDate } from '@/lib/format';
-import { TOOLTIP_STYLE, PLATFORM_COLORS } from '@/lib/constants';
+import { TOOLTIP_STYLE, PLATFORM_COLORS, AXIS_PROPS, GRID_PROPS } from '@/lib/constants';
 
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -219,12 +219,12 @@ export default function OverviewPage() {
 
     return (
         <>
-            <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+            <div className="page-header page-header-row">
                 <div>
                     <h1>Welcome back, {firstName}</h1>
                     <p className="subtitle">Here&apos;s your marketing performance overview</p>
                 </div>
-                <div className="period-selector">
+                <div className="period-selector" role="group" aria-label="Time period">
                     {(['7d', '30d', '90d'] as Period[]).map(p => (
                         <button
                             key={p}
@@ -238,11 +238,11 @@ export default function OverviewPage() {
             </div>
 
             {/* KPI Cards */}
-            <div className="metrics-grid md:grid-cols-3">
+            <div className="metrics-grid kpi-grid md:grid-cols-3">
                 <div className="metric-card">
                     <div className="label">Total Followers</div>
                     <div className="value">{socialLoading ? <Skeleton className="h-9 w-24" /> : totalFollowers}</div>
-                    <div className="change positive">Across all platforms</div>
+                    <div className="change">Across all platforms</div>
                 </div>
                 <div className="metric-card">
                     <div className="label">Instagram Engagement Rate</div>
@@ -261,32 +261,32 @@ export default function OverviewPage() {
             {/* Reputation & Search */}
             <div className="section-card">
                 <h3>Reputation &amp; Search</h3>
-                <div className="metrics-grid md:grid-cols-4">
-                    <div className="metric-card" style={{ padding: '16px' }}>
-                        <div className="label">Google Rating</div>
-                        <div className="value" style={{ fontSize: '1.5rem' }}>
-                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : googleRating.error ? 'Unavailable' : <>{googleRating.rating} <span style={{ fontSize: '0.75em', color: '#eab308' }}>&#9733;</span></>}
+                <div className="stat-grid">
+                    <div className="stat">
+                        <div className="stat-label">Google Rating</div>
+                        <div className="stat-value">
+                            {googleRating.loading ? <Skeleton className="h-7 w-14" /> : googleRating.error ? 'Unavailable' : <>{googleRating.rating} <span style={{ fontSize: '0.75em', color: 'var(--accent-primary)' }}>&#9733;</span></>}
                         </div>
                     </div>
-                    <div className="metric-card" style={{ padding: '16px' }}>
-                        <div className="label">Total Reviews</div>
-                        <div className="value" style={{ fontSize: '1.5rem' }}>
+                    <div className="stat">
+                        <div className="stat-label">Total Reviews</div>
+                        <div className="stat-value">
                             {googleRating.loading ? <Skeleton className="h-7 w-14" /> : googleRating.error ? 'Unavailable' : googleRating.reviews}
                         </div>
                     </div>
-                    <div className="metric-card" style={{ padding: '16px' }}>
-                        <div className="label">Search Clicks</div>
-                        <div className="value" style={{ fontSize: '1.5rem' }}>
+                    <div className="stat">
+                        <div className="stat-label">Search Clicks</div>
+                        <div className="stat-value">
                             {searchData.loading ? <Skeleton className="h-7 w-14" /> : searchData.error ? 'Unavailable' : searchData.clicks.toLocaleString()}
                         </div>
-                        <div className="change">Last 30 days</div>
+                        <div className="stat-sub">Last 30 days</div>
                     </div>
-                    <div className="metric-card" style={{ padding: '16px' }}>
-                        <div className="label">Avg Position</div>
-                        <div className="value" style={{ fontSize: '1.5rem' }}>
+                    <div className="stat">
+                        <div className="stat-label">Avg Position</div>
+                        <div className="stat-value">
                             {searchData.loading ? <Skeleton className="h-7 w-14" /> : searchData.error ? 'Unavailable' : searchData.position.toFixed(1)}
                         </div>
-                        <div className="change">Google Search</div>
+                        <div className="stat-sub">Google Search</div>
                     </div>
                 </div>
             </div>
@@ -302,7 +302,7 @@ export default function OverviewPage() {
                     ].map(platform => {
                         const data = platforms[platform.name];
                         return (
-                            <a key={platform.name} href={`/organic?tab=${platform.tab}`} className="platform-card" style={{ textDecoration: 'none', color: 'inherit', cursor: 'pointer', transition: 'transform 0.2s, box-shadow 0.2s' }}>
+                            <a key={platform.name} href={`/organic?tab=${platform.tab}`} className="platform-card">
                                 <div className="platform-card-header">
                                     <div className={`platform-icon ${platform.icon}`}>
                                         <span style={{ color: platform.color }}>{platform.name[0]}</span>
@@ -332,24 +332,24 @@ export default function OverviewPage() {
 
             {/* Trend Charts */}
             {socialLoading ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="chart-grid">
                     <SkeletonChart height={280} />
                     <SkeletonChart height={280} />
                 </div>
             ) : combinedDaily.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="chart-grid">
                     <div className="chart-container">
                         <div className="chart-header">
                             <h3>Follower Growth</h3>
                             <span className="badge info">{period}</span>
                         </div>
                         <ResponsiveContainer width="100%" height={280}>
-                            <LineChart data={combinedDaily} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                                <XAxis dataKey="date" tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={formatDate} />
-                                <YAxis tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
-                                <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(label) => formatDate(String(label))} />
-                                <Legend wrapperStyle={{ color: '#E4E4E7', fontSize: '0.8125rem' }} />
+                            <LineChart data={combinedDaily} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                                <CartesianGrid {...GRID_PROPS} />
+                                <XAxis dataKey="date" {...AXIS_PROPS} tickFormatter={formatDate} minTickGap={16} />
+                                <YAxis {...AXIS_PROPS} width={44} tickFormatter={(v) => formatNumber(v)} />
+                                <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(255,255,255,0.04)' }} labelFormatter={(label) => formatDate(String(label))} />
+                                <Legend iconType="circle" iconSize={8} wrapperStyle={{ color: '#E4E4E7', fontSize: '0.8125rem', paddingTop: 8 }} />
                                 {platforms.Instagram.configured && <Line type="monotone" dataKey="igFollowers" name="IG New Follows" stroke={PLATFORM_COLORS.instagram} strokeWidth={2} dot={false} />}
                                 {platforms.Facebook.configured && <Line type="monotone" dataKey="fbFollowers" name="FB Followers (New)" stroke={PLATFORM_COLORS.facebook} strokeWidth={2} dot={false} />}
                             </LineChart>
@@ -362,12 +362,12 @@ export default function OverviewPage() {
                             <span className="badge info">{period}</span>
                         </div>
                         <ResponsiveContainer width="100%" height={280}>
-                            <BarChart data={combinedDaily} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                                <XAxis dataKey="date" tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={formatDate} />
-                                <YAxis tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
-                                <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(label) => formatDate(String(label))} />
-                                <Legend wrapperStyle={{ color: '#E4E4E7', fontSize: '0.8125rem' }} />
+                            <BarChart data={combinedDaily} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                                <CartesianGrid {...GRID_PROPS} />
+                                <XAxis dataKey="date" {...AXIS_PROPS} tickFormatter={formatDate} minTickGap={16} />
+                                <YAxis {...AXIS_PROPS} width={44} tickFormatter={(v) => formatNumber(v)} />
+                                <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(255,255,255,0.04)' }} labelFormatter={(label) => formatDate(String(label))} />
+                                <Legend iconType="circle" iconSize={8} wrapperStyle={{ color: '#E4E4E7', fontSize: '0.8125rem', paddingTop: 8 }} />
                                 {platforms.Instagram.configured && <Bar dataKey="igReach" name="IG Reach" fill={PLATFORM_COLORS.instagram} radius={[4, 4, 0, 0]} />}
                                 {platforms.Facebook.configured && <Bar dataKey="fbEngagements" name="FB Engagements" fill={PLATFORM_COLORS.facebook} radius={[4, 4, 0, 0]} />}
                             </BarChart>
@@ -375,7 +375,7 @@ export default function OverviewPage() {
                     </div>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="chart-grid">
                     <div className="chart-container">
                         <div className="chart-header">
                             <h3>Follower Growth</h3>
@@ -399,30 +399,11 @@ export default function OverviewPage() {
 
             {/* Quick Insights */}
             <div className="section-card">
-                <div className="chart-header" style={{ marginBottom: '16px' }}>
-                    <h3>Quick Insights</h3>
-                </div>
+                <h3>Quick Insights</h3>
                 {insightsList.length > 0 ? (
-                    <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <ul className="insight-list">
                         {insightsList.map((insight, idx) => (
-                            <li key={idx} style={{
-                                padding: '16px',
-                                background: 'rgba(255, 255, 255, 0.03)',
-                                border: '1px solid var(--border-subtle)',
-                                borderRadius: '8px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '12px'
-                            }}>
-                                <div style={{
-                                    width: '8px',
-                                    height: '8px',
-                                    borderRadius: '50%',
-                                    background: 'var(--accent-primary)',
-                                    flexShrink: 0
-                                }} />
-                                <span style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>{insight}</span>
-                            </li>
+                            <li key={idx}>{insight}</li>
                         ))}
                     </ul>
                 ) : (
