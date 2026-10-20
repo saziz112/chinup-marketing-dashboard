@@ -1,6 +1,8 @@
-# Google Ads → MindBody Revenue Attribution: Setup Guide
+# Google Ads → Zenoti Revenue Attribution: Setup Guide
 
-This is the **non-code work** Sam needs to complete in three external UIs (Google Ads, GHL, Google Tag Manager) so the dashboard can show MindBody-matched revenue per Google Ads campaign.
+This is the **non-code work** Sam needs to complete in three external UIs (Google Ads, GHL, Google Tag Manager) so paid Zenoti visits flow back into Google Ads as offline conversions.
+
+What gets uploaded: one conversion per patient per paid visit-day (Zenoti closed invoices, summed; $0 package-redemption days skipped), timed 11:59:59 PM Eastern on the visit date, only when the visit is on or after the day the gclid was captured and within 89 days of it. Daily at 10:00 UTC, after the Zenoti sync.
 
 Plan reference: `/Users/samaziz/.claude/plans/memoized-snacking-cascade.md`.
 
@@ -8,7 +10,7 @@ Total user time: ~30 minutes.
 
 ---
 
-## Step 1 — Create the "MindBody Sale" conversion action in Google Ads
+## Step 1 — Create the "Paid Visit (Zenoti)" conversion action in Google Ads
 
 **Where:** `https://ads.google.com/` → wrench icon (top-right) → **Goals** → **Conversions** → **+ New conversion action** button.
 
@@ -23,13 +25,12 @@ Total user time: ~30 minutes.
 
 | Field | Value |
 |---|---|
-| Name | `MindBody Sale` |
+| Name | `Paid Visit (Zenoti)` |
 | Category | `Purchase` |
 | Value | `Use different values for each conversion` |
 | Default value | `0` (only used as fallback) |
-| Count | `One` |
+| Count | `Every` (each paid visit inside the window is real revenue) |
 | Click-through conversion window | `90 days` |
-| View-through conversion window | `1 day` |
 | Attribution model | `Data-driven` (fallback to `Last click` if data-driven isn't available yet) |
 | Include in "Conversions" column | ✅ Yes |
 
@@ -37,7 +38,7 @@ Total user time: ~30 minutes.
 
 **Grab the Conversion Action ID:**
 
-After creating, click into the new "MindBody Sale" action. The URL will look like:
+After creating, click into the new "Paid Visit (Zenoti)" action. The URL will look like:
 
 ```
 https://ads.google.com/aw/conversions/customeractions/details?ocid=...&ctId=12345678901
@@ -134,9 +135,11 @@ function() {
       });
       var url = 'https://chinup-marketing-dashboard.vercel.app/api/track/gclid';
       if (navigator.sendBeacon) {
-        navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+        // text/plain on purpose: Chrome throws on a cross-origin beacon with an
+        // application/json Blob, and the try/catch below would hide it.
+        navigator.sendBeacon(url, new Blob([payload], { type: 'text/plain' }));
       } else {
-        fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload, keepalive: true });
+        fetch(url, { method: 'POST', headers: {'Content-Type': 'text/plain'}, body: payload, keepalive: true });
       }
     } catch (e) {}
   })();
@@ -173,7 +176,14 @@ Top-right blue **Submit** button → name the version "Add gclid capture" → **
 
 **4b. Test the offline conversion upload (manual trigger):**
 
-After at least one real MindBody sale exists for a tracked email, manually run the cron:
+After at least one real paid Zenoti visit exists for a tracked email (the visit day must be over, and the Zenoti sync must have run), dry-run first. `validateOnly=1` asks Google to check the batch without importing anything, and the dashboard records nothing:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  "https://chinup-marketing-dashboard.vercel.app/api/cron/google-offline-conversions?validateOnly=1"
+```
+
+If `errors` is empty, run it for real:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" \
@@ -182,14 +192,16 @@ curl -H "Authorization: Bearer $CRON_SECRET" \
 
 Expected response:
 ```json
-{ "ok": true, "candidates": 1, "uploaded": 1, "failed": 0, "partialError": null }
+{ "ok": true, "candidates": 1, "planned": 1, "uploaded": 1, "alreadyUploaded": 0, "failed": 0, "retry": 0, "skippedVisits": {}, "errors": [] }
 ```
 
-Then in Google Ads → Conversions → MindBody Sale → wait ~6 hours (Google's offline conversion processing window) → check that conversion count and value > 0.
+`failed` rows are permanent (expired click, conversion before click, bad gclid) and are never re-sent. `retry` rows go again on the next run. A 502 means Google rejected the whole request; nothing was recorded, so the next run retries everything.
+
+Then in Google Ads → Goals → Conversions → Paid Visit (Zenoti) → Diagnostics, and allow up to ~3 hours for stats to appear (longer for data-driven attribution). Conversions report on the date of the original click, not the upload date.
 
 **4c. Verify dashboard ROAS column:**
 
-After Step 4b succeeds, the Google Ads API will start returning real `conversions_value` for affected campaigns. The dashboard's `/ads` Google tab "ROAS" column will reflect MindBody-matched revenue automatically.
+After Step 4b succeeds, the Google Ads API will start returning real `conversions_value` for affected campaigns. The dashboard's `/ads` Google tab "ROAS" column will reflect Zenoti-matched revenue automatically.
 
 ---
 
@@ -198,7 +210,7 @@ After Step 4b succeeds, the Google Ads API will start returning real `conversion
 Once you've verified:
 - gclids are flowing into `gclid_captures`
 - offline conversions are uploading successfully
-- Google Ads UI shows revenue against the MindBody Sale action
+- Google Ads UI shows revenue against the Paid Visit (Zenoti) action
 - Dashboard ROAS column matches Google Ads ROAS within ~10%
 
 Tell Claude to **execute Phase 5** to delete the heuristic GHL→campaign matching code (~200 lines of `LOCATION_ALIASES`/`STOPWORDS`/`tokenize`/`findLocationCampaign`/`enrichGhlLeadsWithMindBodyAndCampaigns` in `google-ads.ts`). The dashboard will then read ROAS straight from Google Ads — no more guessing.
