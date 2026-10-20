@@ -319,14 +319,14 @@ export function YouTubeTab({ ytData, ytConfigured, period, renderError, renderNo
                     <div className="change">{formatNumber(s.totalVideos)} total videos</div>
                 </div>
                 <div className="metric-card">
-                    <div className="label">Views ({period})</div>
+                    <div className="label">Views on New Videos</div>
                     <div className="value">{formatNumber(s.recentVideoViews)}</div>
-                    <div className="change">{ytData?.videosInPeriod || 0} videos in period</div>
+                    <div className="change">Lifetime views of {ytData?.videosInPeriod || 0} videos posted in last {period}</div>
                 </div>
                 <div className="metric-card">
-                    <div className="label">Likes ({period})</div>
+                    <div className="label">Likes on New Videos</div>
                     <div className="value">{formatNumber(s.recentVideoLikes)}</div>
-                    <div className="change">From recent uploads</div>
+                    <div className="change">Lifetime likes, videos posted in last {period}</div>
                 </div>
                 <div className="metric-card">
                     <div className="label">Avg Views/Video</div>
