@@ -46,6 +46,8 @@ export async function GET(req: NextRequest) {
                     ...intelligence.summary,
                     lostRevenuePotential: maskValue(intelligence.summary.lostRevenuePotential),
                 },
+                // Lifecycle, ghost and speed stats cover only this sample of contacts
+                sample: intelligence.sample,
                 lifecycleCounts: intelligence.lifecycleCounts,
                 ghostAnalytics: intelligence.ghostAnalytics,
                 speedToLead: {

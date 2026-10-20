@@ -112,7 +112,30 @@ describe('getConversationsIntelligence', () => {
         const { fetchedAt: _f, ...intel } = await getConversationsIntelligence();
         expect({ lifecycleCounts: intel.lifecycleCounts, summary: intel.summary, ghostAnalytics: intel.ghostAnalytics }).toMatchSnapshot();
         expect(intel.engagementGaps.slice(0, 3).map(g => [g.opportunity.id, g.daysSinceOutreach, g.riskLevel, g.callPriority])).toMatchSnapshot();
-        const { sample: _s, ...rest } = intel as typeof intel & { sample?: unknown };
+        // sample/_sampleByLocation are new fields; everything that existed before must be identical.
+        const { sample: _s, _sampleByLocation: _sl, ...rest } = intel as typeof intel & { sample?: unknown; _sampleByLocation?: unknown };
         expect(fingerprint(rest)).toMatchSnapshot();
+    });
+
+    it('says the lifecycle and ghost stats are a sample, and how big', async () => {
+        const { getConversationsIntelligence } = await load();
+        const intel = await getConversationsIntelligence();
+        const funnelTotal = Object.values(intel.lifecycleCounts).reduce((a, b) => a + b, 0);
+        expect(intel.sample).toEqual({ analyzed: funnelTotal, eligible: N, cap: 150, selection: 'highest value and most recent first' });
+        expect(funnelTotal).toBeLessThanOrEqual(150);
+
+        // A location view (derived from the cached all-locations run) carries its own sample size.
+        const smyrna = await getConversationsIntelligence({ locationFilter: 'smyrna' });
+        const smyrnaTotal = Object.values(smyrna.lifecycleCounts).reduce((a, b) => a + b, 0);
+        expect(smyrna.sample).toMatchObject({ analyzed: smyrnaTotal, eligible: N / 3 });
+    });
+
+    it('serves another serverless instance from the shared cache without calling GHL', async () => {
+        const first = await (await load()).getConversationsIntelligence();
+        const fetchMock = globalThis.fetch as unknown as { mock: { calls: unknown[] } };
+        const callsAfterFirst = fetchMock.mock.calls.length;
+        const second = await (await load()).getConversationsIntelligence();
+        expect(fetchMock.mock.calls.length).toBe(callsAfterFirst);
+        expect(second).toEqual(JSON.parse(JSON.stringify(first)));
     });
 });

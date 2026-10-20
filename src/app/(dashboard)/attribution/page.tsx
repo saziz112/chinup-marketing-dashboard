@@ -45,6 +45,18 @@ const LIFECYCLE_STAGES = [
     { key: 'ghost', label: 'Ghost', color: '#F87171', desc: 'Was engaged, went silent' },
 ] as const;
 
+/** Lifecycle, ghost and unreplied stats come from a capped sample of contacts; say so. */
+function sampleLabel(data: any): string {
+    const s = data?.sample;
+    if (!s) return 'open opportunities';
+    const asOf = data.fetchedAt
+        ? ` · as of ${new Date(data.fetchedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+        : '';
+    return s.analyzed < s.eligible
+        ? `sample of ${s.analyzed.toLocaleString()} of ${s.eligible.toLocaleString()} open leads, ${s.selection}${asOf}`
+        : `all ${s.analyzed.toLocaleString()} open leads${asOf}`;
+}
+
 const TAB_CONFIG: { id: Tab; label: string; adminOnly?: boolean }[] = [
     { id: 'overview', label: 'Pipeline Summary' },
     { id: 'action', label: 'Leads & Outreach' },
@@ -556,7 +568,7 @@ export default function LeadsPipelinePage() {
                                 {/* Lifecycle Breakdown (from conversations API if available) */}
                                 {engagementData?.lifecycleCounts ? (
                                     <div className="section-card">
-                                        <h3 style={{ marginBottom: '16px' }}>Lifecycle Breakdown <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>open opportunities</span></h3>
+                                        <h3 style={{ marginBottom: '16px' }}>Lifecycle Breakdown <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>{sampleLabel(engagementData)}</span></h3>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                             {LIFECYCLE_STAGES.map(stage => {
                                                 const count = engagementData.lifecycleCounts[stage.key] || 0;
@@ -658,7 +670,7 @@ export default function LeadsPipelinePage() {
                                             Never Contacted
                                         </div>
                                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                            Leads with zero outreach — call them now
+                                            Sampled leads with zero outreach — call them now
                                         </div>
                                     </div>
                                 )}
@@ -671,7 +683,7 @@ export default function LeadsPipelinePage() {
                                             Unreplied Inbound
                                         </div>
                                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                            They reached out to us — respond ASAP
+                                            Sampled leads who reached out — respond ASAP
                                         </div>
                                     </div>
                                 )}
@@ -684,7 +696,7 @@ export default function LeadsPipelinePage() {
                                             Ghosts
                                         </div>
                                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                            Were engaged, went silent 14+ days
+                                            Sampled leads that were engaged, then went quiet 14+ days
                                         </div>
                                     </div>
                                 )}
@@ -716,8 +728,8 @@ export default function LeadsPipelinePage() {
                                                 <th>Lifecycle</th>
                                                 <th style={{ textAlign: 'center' }}>Priority</th>
                                                 {isAdmin && <th style={{ textAlign: 'right' }}>Value</th>}
-                                                <th style={{ textAlign: 'right' }}>Last Contact</th>
-                                                <th style={{ textAlign: 'right' }}>Gap</th>
+                                                <th style={{ textAlign: 'right' }} title="The last message or call we sent">Our Last Outreach</th>
+                                                <th style={{ textAlign: 'right' }} title="Days since we last reached out. Their own replies don't reset this.">Days Since Outreach</th>
                                                 <th>Action</th>
                                                 <th style={{ textAlign: 'center' }}></th>
                                             </tr>
@@ -806,7 +818,7 @@ export default function LeadsPipelinePage() {
                                 {/* Ghost Analytics */}
                                 {engagementData.ghostAnalytics && (
                                     <div className="section-card">
-                                        <h3 style={{ marginBottom: '16px' }}>Why Leads Ghost</h3>
+                                        <h3 style={{ marginBottom: '16px' }}>Why Leads Ghost <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>{sampleLabel(engagementData)}</span></h3>
                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
                                             <div style={{ padding: '12px', background: 'rgba(248,113,113,0.06)', borderRadius: '8px', textAlign: 'center' }}>
                                                 <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#F87171' }}>
@@ -841,7 +853,7 @@ export default function LeadsPipelinePage() {
 
                                 {/* Ghost Rate by Location + Lifecycle Funnel */}
                                 <div className="section-card">
-                                    <h3 style={{ marginBottom: '16px' }}>Lifecycle Funnel <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>open opportunities</span></h3>
+                                    <h3 style={{ marginBottom: '16px' }}>Lifecycle Funnel <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>{sampleLabel(engagementData)}</span></h3>
                                     {engagementData.lifecycleCounts && (() => {
                                         const lc = engagementData.lifecycleCounts;
                                         const funnelStages = [
@@ -923,7 +935,7 @@ export default function LeadsPipelinePage() {
                                                 </div>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8125rem' }}>
                                                     <span style={{ color: '#F87171', fontWeight: 600 }}>{formatCurrency(c.monetaryValue)}</span>
-                                                    <span style={{ color: 'var(--text-muted)' }}>{c.daysSilent}d silent | {c.conversationCount} convos</span>
+                                                    <span style={{ color: 'var(--text-muted)' }}>{c.daysSilent}d since any message | {c.conversationCount} convos</span>
                                                 </div>
                                             </div>
                                         ))}
