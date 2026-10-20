@@ -1,0 +1,320 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`getFullPipelineData output is unchanged by the parallel + shared-cache rewrite > matches the recorded output for all locations and for one location 1`] = `
+{
+  "locations": [
+    {
+      "location": "decatur",
+      "pipelines": [
+        {
+          "id": "decatur-pa",
+          "lostCount": 33,
+          "stages": [
+            [
+              "decatur-pa-s1",
+              83,
+              2100,
+              "decatur-pa-0-2",
+              "decatur-pa-2-6",
+            ],
+            [
+              "decatur-pa-s2",
+              82,
+              4100,
+              "decatur-pa-0-1",
+              "decatur-pa-2-3",
+            ],
+          ],
+          "totalOpen": 207,
+          "totalValue": 7725,
+          "wonCount": 13,
+        },
+        {
+          "id": "decatur-pb",
+          "lostCount": 33,
+          "stages": [
+            [
+              "decatur-pb-s1",
+              83,
+              2100,
+              "decatur-pb-0-2",
+              "decatur-pb-2-6",
+            ],
+            [
+              "decatur-pb-s2",
+              82,
+              4100,
+              "decatur-pb-0-1",
+              "decatur-pb-2-3",
+            ],
+          ],
+          "totalOpen": 207,
+          "totalValue": 7725,
+          "wonCount": 13,
+        },
+      ],
+    },
+    {
+      "location": "smyrna",
+      "pipelines": [
+        {
+          "id": "smyrna-pa",
+          "lostCount": 31,
+          "stages": [
+            [
+              "smyrna-pa-s1",
+              83,
+              2100,
+              "smyrna-pa-0-2",
+              "smyrna-pa-2-6",
+            ],
+            [
+              "smyrna-pa-s2",
+              82,
+              4100,
+              "smyrna-pa-0-1",
+              "smyrna-pa-2-3",
+            ],
+          ],
+          "totalOpen": 207,
+          "totalValue": 7725,
+          "wonCount": 12,
+        },
+        {
+          "id": "smyrna-pb",
+          "lostCount": 31,
+          "stages": [
+            [
+              "smyrna-pb-s1",
+              83,
+              2100,
+              "smyrna-pb-0-2",
+              "smyrna-pb-2-6",
+            ],
+            [
+              "smyrna-pb-s2",
+              82,
+              4100,
+              "smyrna-pb-0-1",
+              "smyrna-pb-2-3",
+            ],
+          ],
+          "totalOpen": 207,
+          "totalValue": 7725,
+          "wonCount": 12,
+        },
+      ],
+    },
+    {
+      "location": "kennesaw",
+      "pipelines": [
+        {
+          "id": "kennesaw-pa",
+          "lostCount": 35,
+          "stages": [
+            [
+              "kennesaw-pa-s1",
+              83,
+              2100,
+              "kennesaw-pa-0-2",
+              "kennesaw-pa-2-6",
+            ],
+            [
+              "kennesaw-pa-s2",
+              82,
+              4100,
+              "kennesaw-pa-0-1",
+              "kennesaw-pa-2-3",
+            ],
+          ],
+          "totalOpen": 207,
+          "totalValue": 7725,
+          "wonCount": 14,
+        },
+        {
+          "id": "kennesaw-pb",
+          "lostCount": 35,
+          "stages": [
+            [
+              "kennesaw-pb-s1",
+              83,
+              2100,
+              "kennesaw-pb-0-2",
+              "kennesaw-pb-2-6",
+            ],
+            [
+              "kennesaw-pb-s2",
+              82,
+              4100,
+              "kennesaw-pb-0-1",
+              "kennesaw-pb-2-3",
+            ],
+          ],
+          "totalOpen": 207,
+          "totalValue": 7725,
+          "wonCount": 14,
+        },
+      ],
+    },
+  ],
+  "sourceBreakdown": [
+    {
+      "count": 312,
+      "source": "Facebook",
+      "value": 0,
+    },
+    {
+      "count": 312,
+      "source": "Google Ads",
+      "value": 7800,
+    },
+    {
+      "count": 312,
+      "source": "Unknown",
+      "value": 15600,
+    },
+    {
+      "count": 306,
+      "source": "Website",
+      "value": 22950,
+    },
+  ],
+  "totals": {
+    "conversionRate": 28,
+    "totalLost": 198,
+    "totalOpen": 1242,
+    "totalValue": 46350,
+    "totalWon": 78,
+    "totalWonValue": 0,
+  },
+}
+`;
+
+exports[`getFullPipelineData output is unchanged by the parallel + shared-cache rewrite > matches the recorded output for all locations and for one location 2`] = `"b12521e8bf6765e08af9bfb3a65f837f9f42d3b8ac4eb5421f08f7fbe5befceb"`;
+
+exports[`getFullPipelineData output is unchanged by the parallel + shared-cache rewrite > matches the recorded output for all locations and for one location 3`] = `
+{
+  "locations": [
+    {
+      "location": "smyrna",
+      "pipelines": [
+        {
+          "id": "smyrna-pa",
+          "lostCount": 31,
+          "stages": [
+            [
+              "smyrna-pa-s1",
+              83,
+              2100,
+              "smyrna-pa-0-2",
+              "smyrna-pa-2-6",
+            ],
+            [
+              "smyrna-pa-s2",
+              82,
+              4100,
+              "smyrna-pa-0-1",
+              "smyrna-pa-2-3",
+            ],
+          ],
+          "totalOpen": 207,
+          "totalValue": 7725,
+          "wonCount": 12,
+        },
+        {
+          "id": "smyrna-pb",
+          "lostCount": 31,
+          "stages": [
+            [
+              "smyrna-pb-s1",
+              83,
+              2100,
+              "smyrna-pb-0-2",
+              "smyrna-pb-2-6",
+            ],
+            [
+              "smyrna-pb-s2",
+              82,
+              4100,
+              "smyrna-pb-0-1",
+              "smyrna-pb-2-3",
+            ],
+          ],
+          "totalOpen": 207,
+          "totalValue": 7725,
+          "wonCount": 12,
+        },
+      ],
+    },
+  ],
+  "sourceBreakdown": [
+    {
+      "count": 104,
+      "source": "Facebook",
+      "value": 0,
+    },
+    {
+      "count": 104,
+      "source": "Google Ads",
+      "value": 2600,
+    },
+    {
+      "count": 104,
+      "source": "Unknown",
+      "value": 5200,
+    },
+    {
+      "count": 102,
+      "source": "Website",
+      "value": 7650,
+    },
+  ],
+  "totals": {
+    "conversionRate": 28,
+    "totalLost": 62,
+    "totalOpen": 414,
+    "totalValue": 15450,
+    "totalWon": 24,
+    "totalWonValue": 0,
+  },
+}
+`;
+
+exports[`getFullPipelineData output is unchanged by the parallel + shared-cache rewrite > matches the recorded output for all locations and for one location 4`] = `"ac700e181f9f75fb840c4ab0004d598ea0f4ccca8d97d03f284dc1d2f1f5d122"`;
+
+exports[`getFullPipelineData output is unchanged by the parallel + shared-cache rewrite > matches the recorded stale-lead list 1`] = `
+[
+  [
+    "decatur-pa-0-2",
+    47,
+    "stale",
+    "New",
+  ],
+  [
+    "decatur-pa-0-4",
+    47,
+    "stale",
+    "New",
+  ],
+  [
+    "decatur-pa-0-8",
+    47,
+    "stale",
+    "New",
+  ],
+  [
+    "decatur-pa-0-14",
+    47,
+    "stale",
+    "New",
+  ],
+  [
+    "decatur-pa-0-16",
+    47,
+    "stale",
+    "New",
+  ],
+]
+`;
+
+exports[`getFullPipelineData output is unchanged by the parallel + shared-cache rewrite > matches the recorded stale-lead list 2`] = `"d7374bc80be15860cb010ff1d8cfa43065b0310da3ab315ced677ddf8a4c4d66"`;

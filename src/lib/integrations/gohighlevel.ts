@@ -16,6 +16,8 @@
  */
 
 import { trackCall } from '@/lib/api-usage-tracker';
+import { pgCacheGet, pgCacheSet } from '@/lib/pg-cache';
+import { mapLimit } from '@/lib/concurrency';
 
 const GHL_BASE = 'https://rest.gohighlevel.com/v1';
 
@@ -148,16 +150,22 @@ async function ghlFetch<T>(apiKey: string, endpoint: string, params?: Record<str
         url += (url.includes('?') ? '&' : '?') + search.toString();
     }
 
-    const res = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${apiKey}` },
-    });
+    for (let attempt = 0; ; attempt++) {
+        const res = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+        });
 
-    if (!res.ok) {
+        if (res.ok) return res.json();
+
+        // Back off on 429 (1s, 2s, 4s) now that calls run in parallel
+        if (res.status === 429 && attempt < 3) {
+            await new Promise(r => setTimeout(r, 1000 * 2 ** attempt));
+            continue;
+        }
+
         const text = await res.text();
         throw new Error(`GHL API error (${res.status}): ${text}`);
     }
-
-    return res.json();
 }
 
 // --- Core API Methods ---
@@ -361,16 +369,13 @@ interface PipelineSnapshot {
     fetchedAt: string;
 }
 
-let pipelineCache: { data: PipelineSnapshot; timestamp: number } | null = null;
-const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
-
-function getCachedPipelineData(): PipelineSnapshot | null {
-    if (pipelineCache && (Date.now() - pipelineCache.timestamp) < CACHE_TTL) {
-        trackCall('ghl', 'getFullPipelineData', true);
-        return pipelineCache.data;
-    }
-    return null;
-}
+// Shared across serverless instances via Postgres (a per-instance variable missed
+// on most Vercel requests). 15 minutes, same as before.
+const PIPELINE_CACHE_KEY = 'ghl_pipeline_snapshot_v1';
+const PIPELINE_CACHE_TTL_HOURS = 0.25;
+// Concurrent cold callers (e.g. getStaleLeads + getFullPipelineData in one
+// request) share a single fetch instead of each pulling every pipeline.
+let pipelineInflight: Promise<PipelineSnapshot> | null = null;
 
 // --- Master Aggregator ---
 
@@ -379,65 +384,90 @@ export async function getFullPipelineData(options?: {
     forceRefresh?: boolean;
 }): Promise<FullPipelineData> {
     if (!options?.forceRefresh) {
-        const cached = getCachedPipelineData();
-        if (cached) return summarizePipeline(cached, options?.locationFilter);
+        const cached = await pgCacheGet<PipelineSnapshot>(PIPELINE_CACHE_KEY);
+        if (cached) {
+            trackCall('ghl', 'getFullPipelineData', true);
+            return summarizePipeline(cached, options?.locationFilter);
+        }
     }
 
+    if (!pipelineInflight || options?.forceRefresh) {
+        const p = fetchPipelineSnapshot().finally(() => {
+            if (pipelineInflight === p) pipelineInflight = null;
+        });
+        pipelineInflight = p;
+    }
+    const snapshot = await pipelineInflight;
+    return summarizePipeline(snapshot, options?.locationFilter);
+}
+
+async function fetchPipelineSnapshot(): Promise<PipelineSnapshot> {
     const locations = getLocations();
     if (locations.length === 0) {
         throw new Error('No GHL locations configured');
     }
 
-    const locationSummaries: PipelineSummary[] = [];
-    const allOpenOpps: GHLOpportunity[] = [];
+    // Each location has its own API key (and rate limit), so fetch them together.
+    const perLocation = await Promise.all(locations.map(fetchLocationPipelines));
 
-    for (const loc of locations) {
-        try {
-            const pipelines = await getPipelines(loc);
-            const pipelineData = [];
+    const snapshot: PipelineSnapshot = {
+        locations: perLocation.map(l => l.summary),
+        openOpps: perLocation.flatMap(l => l.openOpps),
+        fetchedAt: new Date().toISOString(),
+    };
+    await pgCacheSet(PIPELINE_CACHE_KEY, snapshot, { ttlHours: PIPELINE_CACHE_TTL_HOURS });
+    return snapshot;
+}
 
-            for (const pipeline of pipelines) {
-                // Fetch open opportunities (full details for pipeline analysis)
-                // and just counts for won/lost/abandoned (saves API calls)
-                const [openResult, wonCount, lostCount, abandonedCount] = await Promise.all([
-                    getOpportunities(loc, pipeline.id, { status: 'open', maxPages: 30 }),
-                    getOpportunityCount(loc, pipeline.id, 'won'),
-                    getOpportunityCount(loc, pipeline.id, 'lost'),
-                    getOpportunityCount(loc, pipeline.id, 'abandoned'),
-                ]);
+async function fetchLocationPipelines(loc: GHLLocation): Promise<{ summary: PipelineSummary; openOpps: GHLOpportunity[] }> {
+    try {
+        const pipelines = await getPipelines(loc);
 
-                const openOpps = openResult.opportunities;
+        // Up to 3 pipelines at once (4 requests each) keeps a location under
+        // GHL's 100 req/10s. Results keep pipeline order.
+        const perPipeline = await mapLimit(pipelines, 3, async (pipeline) => {
+            // Fetch open opportunities (full details for pipeline analysis)
+            // and just counts for won/lost/abandoned (saves API calls)
+            const [openResult, wonCount, lostCount, abandonedCount] = await Promise.all([
+                getOpportunities(loc, pipeline.id, { status: 'open', maxPages: 30 }),
+                getOpportunityCount(loc, pipeline.id, 'won'),
+                getOpportunityCount(loc, pipeline.id, 'lost'),
+                getOpportunityCount(loc, pipeline.id, 'abandoned'),
+            ]);
 
-                // Group open opps by stage
-                const stageMap = new Map<string, {
-                    count: number;
-                    value: number;
-                    opportunities: GHLOpportunity[];
-                }>();
+            const openOpps = openResult.opportunities;
 
-                for (const stage of pipeline.stages) {
-                    stageMap.set(stage.id, { count: 0, value: 0, opportunities: [] });
+            // Group open opps by stage
+            const stageMap = new Map<string, {
+                count: number;
+                value: number;
+                opportunities: GHLOpportunity[];
+            }>();
+
+            for (const stage of pipeline.stages) {
+                stageMap.set(stage.id, { count: 0, value: 0, opportunities: [] });
+            }
+
+            let totalOpen = 0, totalValue = 0;
+
+            for (const opp of openOpps) {
+                const stage = pipeline.stages.find(s => s.id === opp.pipelineStageId);
+                opp.stageName = stage?.name || 'Unknown';
+
+                totalOpen++;
+                totalValue += opp.monetaryValue;
+
+                const stageData = stageMap.get(opp.pipelineStageId);
+                if (stageData) {
+                    stageData.count++;
+                    stageData.value += opp.monetaryValue;
+                    stageData.opportunities.push(opp);
                 }
+            }
 
-                let totalOpen = 0, totalValue = 0;
-
-                for (const opp of openOpps) {
-                    const stage = pipeline.stages.find(s => s.id === opp.pipelineStageId);
-                    opp.stageName = stage?.name || 'Unknown';
-
-                    allOpenOpps.push(opp);
-                    totalOpen++;
-                    totalValue += opp.monetaryValue;
-
-                    const stageData = stageMap.get(opp.pipelineStageId);
-                    if (stageData) {
-                        stageData.count++;
-                        stageData.value += opp.monetaryValue;
-                        stageData.opportunities.push(opp);
-                    }
-                }
-
-                pipelineData.push({
+            return {
+                openOpps,
+                entry: {
                     id: pipeline.id,
                     name: pipeline.name,
                     stages: pipeline.stages.map(s => {
@@ -449,29 +479,23 @@ export async function getFullPipelineData(options?: {
                     wonCount,
                     wonValue: 0, // would need full fetch of won opps to compute — keep lean
                     lostCount: lostCount + abandonedCount,
-                });
-            }
+                },
+            };
+        });
 
-            locationSummaries.push({
+        return {
+            summary: {
                 location: loc.key,
                 locationName: loc.name,
-                pipelines: pipelineData,
-            });
-        } catch (error) {
-            // A missing location would silently shrink every total for 15 minutes.
-            console.error(`[GHL] Failed to fetch data for ${loc.name}:`, error);
-            throw error;
-        }
+                pipelines: perPipeline.map(p => p.entry),
+            },
+            openOpps: perPipeline.flatMap(p => p.openOpps),
+        };
+    } catch (error) {
+        // A missing location would silently shrink every total for 15 minutes.
+        console.error(`[GHL] Failed to fetch data for ${loc.name}:`, error);
+        throw error;
     }
-
-    const snapshot: PipelineSnapshot = {
-        locations: locationSummaries,
-        openOpps: allOpenOpps,
-        fetchedAt: new Date().toISOString(),
-    };
-    pipelineCache = { data: snapshot, timestamp: Date.now() };
-
-    return summarizePipeline(snapshot, options?.locationFilter);
 }
 
 /** Totals and source mix for the selected location (or all of them). */

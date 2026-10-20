@@ -42,6 +42,7 @@ export default function SettingsPage() {
     const [usersLoading, setUsersLoading] = useState(true);
     const [usage, setUsage] = useState<{ trackedSince: string; apis: APIStats[] } | null>(null);
     const [usageLoading, setUsageLoading] = useState(true);
+    const [platforms, setPlatforms] = useState<{ name: string; connected: boolean }[]>([]);
     const [showAddUser, setShowAddUser] = useState(false);
     const [addEmail, setAddEmail] = useState('');
     const [addStaffId, setAddStaffId] = useState('');
@@ -89,6 +90,15 @@ export default function SettingsPage() {
             .then(data => setUsage(data))
             .catch(() => { })
             .finally(() => setUsageLoading(false));
+    }, [isAdmin]);
+
+    // Connection status comes from which credentials are set on the server
+    useEffect(() => {
+        if (!isAdmin) return;
+        fetch('/api/settings/connections')
+            .then(r => r.json())
+            .then(data => setPlatforms(data.platforms ?? []))
+            .catch(() => { });
     }, [isAdmin]);
 
     if (!isAdmin) return null;
@@ -282,17 +292,6 @@ export default function SettingsPage() {
         { id: 'accounts' as const, label: 'Connected Accounts', icon: '🔗' },
         { id: 'usage' as const, label: 'API Usage', icon: '📊' },
         { id: 'sync' as const, label: 'Data Sync', icon: '🔄' },
-    ];
-
-    const platforms = [
-        { name: 'Zenoti', connected: true },
-        { name: 'Instagram', connected: true },
-        { name: 'Facebook', connected: true },
-        { name: 'YouTube', connected: true },
-        { name: 'Meta Ads', connected: true },
-        { name: 'Google Ads', connected: true },
-        { name: 'Google Business', connected: true },
-        { name: 'Search Console', connected: true },
     ];
 
     return (

@@ -1,4 +1,5 @@
-import { createMemCache } from '@/lib/mem-cache';
+import { pgCached } from '@/lib/pg-cache';
+import { trackCall } from '@/lib/api-usage-tracker';
 import { getLocations, getPipelines, getOpportunities } from './gohighlevel';
 import { getClientEmailMapFromDB, getAppointmentsByClientIds } from './mindbody-db';
 
@@ -109,6 +110,7 @@ async function runAdsQuery(accessToken: string, query: string): Promise<any[]> {
         body: JSON.stringify({ query }),
         cache: 'no-store'
     });
+    trackCall('googleAds', 'googleAds:search', false);
 
     if (!res.ok) {
         const errortxt = await res.text();
@@ -120,16 +122,23 @@ async function runAdsQuery(accessToken: string, query: string): Promise<any[]> {
 }
 
 // --- Cache (matches Meta Ads 4-hour pattern) ---
-const googleAdsCache = createMemCache<GoogleAdsData>(4 * 60 * 60 * 1000); // 4 hours
+// Postgres-backed so every serverless instance shares it; the old per-instance
+// Map missed on almost every Vercel request.
+const GOOGLE_ADS_CACHE_TTL_HOURS = 4;
 
 export async function getGoogleAdsData(since: string, until: string): Promise<GoogleAdsData> {
     if (!isGoogleAdsConfigured()) throw new Error('Google Ads not configured: credentials are missing');
 
-    // Check cache first
-    const cacheKey = `google_ads_${since}_${until}`;
-    const cached = googleAdsCache.get(cacheKey);
-    if (cached) return cached;
+    let fetched = false;
+    const data = await pgCached(`google_ads_${since}_${until}`, { ttlHours: GOOGLE_ADS_CACHE_TTL_HOURS }, () => {
+        fetched = true;
+        return fetchGoogleAdsData(since, until);
+    });
+    if (!fetched) trackCall('googleAds', 'getGoogleAdsData', true);
+    return data;
+}
 
+async function fetchGoogleAdsData(since: string, until: string): Promise<GoogleAdsData> {
     try {
         console.log(`[GoogleAds REST] Fetching live data... Customer: ${process.env.GOOGLE_ADS_CUSTOMER_ID}`);
         const accessToken = await getAccessToken();
@@ -148,7 +157,40 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
             FROM customer 
             WHERE segments.date >= '${since}' AND segments.date <= '${until}'
         `;
-        const accountRows = await runAdsQuery(accessToken, accountQuery);
+        // 2. Campaign level metrics, 3. daily trend: independent, so all three run together
+        const campaignsQuery = `
+            SELECT
+                campaign.id,
+                campaign.name,
+                campaign.status,
+                campaign.advertising_channel_type,
+                campaign.start_date_time,
+                campaign.end_date_time,
+                metrics.cost_micros,
+                metrics.impressions,
+                metrics.clicks,
+                metrics.conversions,
+                metrics.conversions_value
+            FROM campaign
+            WHERE metrics.impressions > 0
+            AND segments.date >= '${since}' AND segments.date <= '${until}'
+        `;
+        const dailyQuery = `
+            SELECT
+                segments.date,
+                metrics.cost_micros,
+                metrics.impressions,
+                metrics.clicks,
+                metrics.conversions
+            FROM customer
+            WHERE segments.date >= '${since}' AND segments.date <= '${until}'
+            ORDER BY segments.date ASC
+        `;
+        const [accountRows, campaignRows, dailyRows] = await Promise.all([
+            runAdsQuery(accessToken, accountQuery),
+            runAdsQuery(accessToken, campaignsQuery),
+            runAdsQuery(accessToken, dailyQuery),
+        ]);
         const accountRow = accountRows[0] || {};
 
         const totalSpend = (parseInt(accountRow.metrics?.costMicros) || 0) / 1000000;
@@ -167,26 +209,6 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
             totalClicks,
             totalResults: Math.round(totalResults)
         };
-
-        // 2. Fetch Campaign Level Metrics
-        const campaignsQuery = `
-            SELECT 
-                campaign.id,
-                campaign.name,
-                campaign.status,
-                campaign.advertising_channel_type,
-                campaign.start_date_time,
-                campaign.end_date_time,
-                metrics.cost_micros,
-                metrics.impressions,
-                metrics.clicks,
-                metrics.conversions,
-                metrics.conversions_value
-            FROM campaign 
-            WHERE metrics.impressions > 0 
-            AND segments.date >= '${since}' AND segments.date <= '${until}'
-        `;
-        const campaignRows = await runAdsQuery(accessToken, campaignsQuery);
 
         const campaigns: GoogleCampaign[] = campaignRows.map((row: any) => {
             const spend = (parseInt(row.metrics?.costMicros) || 0) / 1000000;
@@ -219,20 +241,6 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
             };
         });
 
-        // 3. Fetch Daily Spend Trend
-        const dailyQuery = `
-            SELECT 
-                segments.date,
-                metrics.cost_micros,
-                metrics.impressions,
-                metrics.clicks,
-                metrics.conversions
-            FROM customer 
-            WHERE segments.date >= '${since}' AND segments.date <= '${until}'
-            ORDER BY segments.date ASC
-        `;
-        const dailyRows = await runAdsQuery(accessToken, dailyQuery);
-
         const dailySpend: GoogleDailySpend[] = dailyRows.map((row: any) => ({
             date: row.segments?.date,
             spend: Number(((parseInt(row.metrics?.costMicros) || 0) / 1000000).toFixed(2)),
@@ -248,7 +256,6 @@ export async function getGoogleAdsData(since: string, until: string): Promise<Go
             campaigns,
             dailySpend
         };
-        googleAdsCache.set(cacheKey, result);
         return result;
 
     } catch (error: any) {
@@ -276,74 +283,82 @@ export interface GhlGoogleLead {
     mbCompleted: number;
 }
 
-// Cache google-sourced lead counts for 30 min (matches strategy/pipeline cache cadence)
-const ghlGoogleLeadsCache = createMemCache<{ count: number; opportunities: GhlGoogleLead[] }>(30 * 60 * 1000);
+// Cache google-sourced lead counts for 30 min (matches strategy/pipeline cache cadence).
+// Postgres-backed so the cache holds across serverless instances.
+const GHL_GOOGLE_LEADS_TTL_HOURS = 0.5;
+const STATUSES = ['open', 'won', 'lost', 'abandoned'] as const;
 
 export async function getGhlGoogleLeads(since: string, until: string): Promise<{
     count: number;
     opportunities: GhlGoogleLead[];
 }> {
-    const cacheKey = `ghl_google_${since}_${until}`;
-    const cached = ghlGoogleLeadsCache.get(cacheKey);
-    if (cached) return cached;
+    const result = await pgCached(`ghl_google_${since}_${until}`, { ttlHours: GHL_GOOGLE_LEADS_TTL_HOURS }, async () => {
+        const sinceMs = new Date(since + 'T00:00:00').getTime();
+        const untilMs = new Date(until + 'T23:59:59').getTime();
 
-    const sinceMs = new Date(since + 'T00:00:00').getTime();
-    const untilMs = new Date(until + 'T23:59:59').getTime();
-    const matched: GhlGoogleLead[] = [];
-
-    const locations = getLocations();
-    for (const loc of locations) {
-        try {
-            const pipelines = await getPipelines(loc);
-            for (const pipeline of pipelines) {
-                // Fetch all statuses so we catch leads regardless of outcome
-                for (const status of ['open', 'won', 'lost', 'abandoned'] as const) {
-                    const { opportunities } = await getOpportunities(loc, pipeline.id, { status, maxPages: 10 });
-                    for (const opp of opportunities) {
-                        // Catch Google-attributed leads three ways:
-                        //  (1) source contains "google" (e.g. "Google Ads - General Medspa Form")
-                        //  (2) opportunity name contains "Google Ad" (landing-page leads where
-                        //      GHL tagged source as "Website" but the name preserves attribution)
-                        //  (3) source mentions "ppc" / "paid" (rarely used)
-                        const src = opp.source || '';
-                        const nm = opp.name || '';
-                        const isGoogle = /google/i.test(src) || /\bgoogle\s*ads?\b/i.test(nm);
-                        if (!isGoogle) continue;
-                        const created = opp.createdAt ? new Date(opp.createdAt).getTime() : 0;
-                        if (created < sinceMs || created > untilMs) continue;
-                        const ghlUrl = opp.contactId
-                            ? `https://app.gohighlevel.com/v2/location/${loc.locationId}/contacts/detail/${opp.contactId}`
-                            : null;
-                        matched.push({
-                            id: opp.id,
-                            name: opp.name,
-                            source: opp.source,
-                            createdAt: opp.createdAt,
-                            status: opp.status,
-                            locationKey: loc.key,
-                            contactId: opp.contactId,
-                            contactName: opp.contactName,
-                            contactEmail: opp.contactEmail,
-                            monetaryValue: opp.monetaryValue,
-                            ghlUrl,
-                            mbClientId: null,
-                            mbRevenue: 0,
-                            mbBooked: 0,
-                            mbCompleted: 0,
-                        });
+        // Locations have separate API keys, so they run together. Inside a location,
+        // pipelines stay sequential and the 4 statuses run together (4 requests in
+        // flight per location, same as the pipeline loader). Results are flattened
+        // in location -> pipeline -> status order, matching the old sequential loop.
+        const perLocation = await Promise.all(getLocations().map(async (loc) => {
+            try {
+                const matched: GhlGoogleLead[] = [];
+                const pipelines = await getPipelines(loc);
+                for (const pipeline of pipelines) {
+                    // Fetch all statuses so we catch leads regardless of outcome
+                    const byStatus = await Promise.all(STATUSES.map(status =>
+                        getOpportunities(loc, pipeline.id, { status, maxPages: 10 })));
+                    for (const { opportunities } of byStatus) {
+                        for (const opp of opportunities) {
+                            // Catch Google-attributed leads three ways:
+                            //  (1) source contains "google" (e.g. "Google Ads - General Medspa Form")
+                            //  (2) opportunity name contains "Google Ad" (landing-page leads where
+                            //      GHL tagged source as "Website" but the name preserves attribution)
+                            //  (3) source mentions "ppc" / "paid" (rarely used)
+                            const src = opp.source || '';
+                            const nm = opp.name || '';
+                            const isGoogle = /google/i.test(src) || /\bgoogle\s*ads?\b/i.test(nm);
+                            if (!isGoogle) continue;
+                            const created = opp.createdAt ? new Date(opp.createdAt).getTime() : 0;
+                            if (created < sinceMs || created > untilMs) continue;
+                            const ghlUrl = opp.contactId
+                                ? `https://app.gohighlevel.com/v2/location/${loc.locationId}/contacts/detail/${opp.contactId}`
+                                : null;
+                            matched.push({
+                                id: opp.id,
+                                name: opp.name,
+                                source: opp.source,
+                                createdAt: opp.createdAt,
+                                status: opp.status,
+                                locationKey: loc.key,
+                                contactId: opp.contactId,
+                                contactName: opp.contactName,
+                                contactEmail: opp.contactEmail,
+                                monetaryValue: opp.monetaryValue,
+                                ghlUrl,
+                                mbClientId: null,
+                                mbRevenue: 0,
+                                mbBooked: 0,
+                                mbCompleted: 0,
+                            });
+                        }
                     }
                 }
+                return matched;
+            } catch (e) {
+                // A missing location would read as a real (lower) lead count; fail instead.
+                console.warn(`[ghl-google-leads] location ${loc.key} failed:`, e);
+                throw e;
             }
-        } catch (e) {
-            // A missing location would read as a real (lower) lead count; fail instead.
-            console.warn(`[ghl-google-leads] location ${loc.key} failed:`, e);
-            throw e;
-        }
-    }
+        }));
 
-    const result = { count: matched.length, opportunities: matched };
-    ghlGoogleLeadsCache.set(cacheKey, result);
-    return result;
+        const matched = perLocation.flat();
+        return { count: matched.length, opportunities: matched };
+    });
+
+    // enrichGhlLeadsWithMindBody writes onto these objects; hand out copies so a
+    // cached entry never carries one request's enrichment into the next.
+    return { count: result.count, opportunities: result.opportunities.map(o => ({ ...o })) };
 }
 
 /**

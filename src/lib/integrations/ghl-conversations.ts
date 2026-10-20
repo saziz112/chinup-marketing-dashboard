@@ -162,7 +162,20 @@ export interface StaffMetric {
     locationKey: LocationKey;
 }
 
+/**
+ * Lifecycle counts, ghost analytics, speed-to-lead and unreplied counts cover only
+ * the contacts whose conversation history was pulled, not every open lead.
+ */
+export interface LifecycleSample {
+    analyzed: number;  // contacts in the lifecycle funnel (its total)
+    eligible: number;  // stale leads + open opportunities with a value that qualified
+    cap: number;       // max contacts analyzed per refresh (GHL rate limits)
+    selection: string; // how the analyzed contacts were picked when eligible > cap
+}
+
 export interface ConversationsIntelligence {
+    sample: LifecycleSample;
+    _sampleByLocation?: Record<LocationKey, { analyzed: number; eligible: number }>;
     engagementGaps: EngagementGap[];
     lostRevenueCandidates: LostRevenueCandidate[];
     staleLeadOverrides: { contactId: string; engagement: ContactEngagement }[];
@@ -260,9 +273,15 @@ async function ghlV2Fetch<T>(
 
 interface CacheEntry<T> { data: T; timestamp: number }
 const engagementCache = new Map<string, CacheEntry<ContactEngagement>>();
-const intelligenceCache = new Map<string, CacheEntry<ConversationsIntelligence>>();
 const ENGAGEMENT_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
-const INTELLIGENCE_CACHE_TTL = 30 * 60 * 1000;
+// Shared across serverless instances via Postgres. The daily cron
+// (/api/cron/analyze-conversations, 7am ET) refreshes 'all'; a cold rebuild
+// takes 1-2 minutes, so a page load reuses a snapshot up to 6 hours old.
+// fetchedAt in the response says how old it is.
+const INTELLIGENCE_CACHE_TTL_HOURS = 6;
+const intelligenceCacheKey = (scope: string) => `ghl_intel_v1_${scope}`;
+const MAX_CONTACTS = 150;
+const SAMPLE_SELECTION = 'highest value and most recent first';
 let outboundCooldownCache: CacheEntry<Set<string>> | null = null;
 const OUTBOUND_COOLDOWN_TTL = 30 * 60 * 1000; // 30 minutes
 const v2DndCache = new Map<string, { smsDnd: boolean; emailDnd: boolean; ts: number }>();
@@ -627,6 +646,11 @@ function filterIntelligenceByLocation(
     };
 
     return {
+        sample: {
+            ...data.sample,
+            analyzed: locationTotal,
+            eligible: data._sampleByLocation?.[locationKey]?.eligible ?? 0,
+        },
         engagementGaps: filteredGaps,
         lostRevenueCandidates: filteredLost,
         staleLeadOverrides: data.staleLeadOverrides, // aggregate
@@ -661,22 +685,15 @@ export async function getConversationsIntelligence(
     options?: { locationFilter?: LocationKey; forceRefresh?: boolean },
 ): Promise<ConversationsIntelligence> {
     const cacheKey = options?.locationFilter || 'all';
-    const now = Date.now();
 
     if (!options?.forceRefresh) {
-        const cached = intelligenceCache.get(cacheKey);
-        if (cached && (now - cached.timestamp) < INTELLIGENCE_CACHE_TTL) {
-            return cached.data;
-        }
+        const cached = await pgCacheGet<ConversationsIntelligence>(intelligenceCacheKey(cacheKey));
+        if (cached) return cached;
 
         // If requesting a specific location, derive from cached 'all' data to avoid redundant API calls
         if (options?.locationFilter) {
-            const allCached = intelligenceCache.get('all');
-            if (allCached && (now - allCached.timestamp) < INTELLIGENCE_CACHE_TTL) {
-                const filtered = filterIntelligenceByLocation(allCached.data, options.locationFilter);
-                intelligenceCache.set(cacheKey, { data: filtered, timestamp: allCached.timestamp });
-                return filtered;
-            }
+            const allCached = await pgCacheGet<ConversationsIntelligence>(intelligenceCacheKey('all'));
+            if (allCached) return filterIntelligenceByLocation(allCached, options.locationFilter);
         }
     }
 
@@ -863,8 +880,11 @@ export async function getConversationsIntelligence(
 
     // Cap contacts to avoid rate-limit issues (100 req/10s = ~600/min)
     // Each contact = 1 search + ~1-3 message fetches = ~2-4 API calls
-    // Cap at 150 contacts = ~450 API calls, safe within rate limits
-    const MAX_CONTACTS = 150;
+    // Cap at 150 contacts = ~450 API calls, safe within rate limits.
+    // Everything derived from conversations is therefore a sample; record its size.
+    const eligibleByLocation: Record<LocationKey, number> = { decatur: 0, smyrna: 0, kennesaw: 0 };
+    for (const info of contactMap.values()) eligibleByLocation[info.locationKey]++;
+    const eligibleTotal = contactMap.size;
     const excludedContacts: typeof contactMap = new Map();
     if (contactMap.size > MAX_CONTACTS) {
         // Prioritize by: monetary value (60%) + recency (40%)
@@ -909,11 +929,17 @@ export async function getConversationsIntelligence(
     const seenPhones = new Set<string>();
     const allEngagement = new Map<string, ContactEngagement>();
 
-    for (const [locationKey, contactIds] of contactsByLocation) {
-        const loc = v2ByKey.get(locationKey);
-        if (!loc) continue;
-
-        const engMap = await batchGetEngagement(loc.locationId, loc.pit, contactIds, oppStatusMap);
+    // Each location has its own PIT (and GHL rate limit), so fetch them together,
+    // then merge in the original location order so phone de-dupe is unchanged.
+    const engMaps = await Promise.all(
+        Array.from(contactsByLocation)
+            .filter(([locationKey]) => v2ByKey.has(locationKey))
+            .map(([locationKey, contactIds]) => {
+                const loc = v2ByKey.get(locationKey)!;
+                return batchGetEngagement(loc.locationId, loc.pit, contactIds, oppStatusMap);
+            }),
+    );
+    for (const engMap of engMaps) {
         for (const [cid, eng] of engMap) {
             // De-duplicate by phone
             const normalizedPhone = eng.phone?.replace(/\D/g, '') || '';
@@ -1224,7 +1250,15 @@ export async function getConversationsIntelligence(
     }
     timestampFallbackContacts.sort((a, b) => a.daysSinceUpdate - b.daysSinceUpdate);
 
+    const sum = (lc: Record<LifecycleStage, number>) => Object.values(lc).reduce((s, n) => s + n, 0);
+    const sampleByLocation = {} as Record<LocationKey, { analyzed: number; eligible: number }>;
+    for (const key of Object.keys(lifecycleByLocation) as LocationKey[]) {
+        sampleByLocation[key] = { analyzed: sum(lifecycleByLocation[key]), eligible: eligibleByLocation[key] };
+    }
+
     const intelligence: ConversationsIntelligence = {
+        sample: { analyzed: sum(lifecycleCounts), eligible: eligibleTotal, cap: MAX_CONTACTS, selection: SAMPLE_SELECTION },
+        _sampleByLocation: sampleByLocation,
         engagementGaps: engagementGaps.slice(0, 50),
         lostRevenueCandidates: lostRevenueCandidates.slice(0, 30),
         staleLeadOverrides,
@@ -1253,7 +1287,7 @@ export async function getConversationsIntelligence(
         fetchedAt: new Date().toISOString(),
     };
 
-    intelligenceCache.set(cacheKey, { data: intelligence, timestamp: now });
+    await pgCacheSet(intelligenceCacheKey(cacheKey), intelligence, { ttlHours: INTELLIGENCE_CACHE_TTL_HOURS });
     console.log(`[ghl-conversations] Analysis complete: ${intelligence.summary.totalAnalyzed} contacts, ${engagementGaps.length} gaps, ${lostRevenueCandidates.length} lost revenue candidates`);
 
     return intelligence;

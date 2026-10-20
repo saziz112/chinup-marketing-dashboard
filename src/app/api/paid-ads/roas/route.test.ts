@@ -79,7 +79,7 @@ describe('GET /api/paid-ads/roas', () => {
             ['B', { booked: 1, completed: 0, noShow: 1 }],
         ]));
 
-        const res = await GET(new NextRequest('http://x/api/paid-ads/roas?since=2026-09-20&until=2026-10-19'));
+        const res = await GET(new NextRequest('http://x/api/paid-ads/roas?since=2026-09-21&until=2026-10-19'));
         const body = await res.json();
 
         expect(h.appts).toHaveBeenCalledWith(expect.arrayContaining([
@@ -96,7 +96,27 @@ describe('GET /api/paid-ads/roas', () => {
 
     it('says the match is email-only, so it reads as different from Lead Sources', async () => {
         h.leads.mockResolvedValue({ leads: [], byCampaign: new Map(), totalLeads: 5, hasLeadForms: true });
-        const res = await GET(new NextRequest('http://x/api/paid-ads/roas?since=2026-09-20&until=2026-10-19'));
+        const res = await GET(new NextRequest('http://x/api/paid-ads/roas?since=2026-09-22&until=2026-10-19'));
         expect((await res.json()).attributionNote).toMatch(/Lead Sources.*phone/);
+    });
+
+    it('returns the same body as before caching, and serves a repeat load without refetching', async () => {
+        const lead = (id: string, email: string, campaignId: string, day: string) =>
+            ({ id, email, campaignId, campaignName: 'Botox Leads', createdTime: `2026-10-${day}T10:00:00+0000`, adId: '', phone: null, firstName: null, lastName: null });
+        h.leads.mockResolvedValue({
+            leads: [lead('1', 'A@x.com', 'c1', '01'), lead('2', 'a@x.com', 'form9', '03'), lead('3', 'b@x.com', 'c1', '05'), lead('4', 'c@x.com', 'c1', '07')],
+            byCampaign: new Map(), totalLeads: 4, hasLeadForms: true,
+        });
+        h.emails.mockResolvedValue(new Map([
+            ['a@x.com', { client: { Id: 'A', FirstName: 'Amy', LastName: 'Lee' }, revenue: 1200, firstSaleDate: '2025-02-01' }],
+            ['b@x.com', { client: { Id: 'B', FirstName: 'Bo', LastName: '' }, revenue: 300, firstSaleDate: '2026-10-09' }],
+            ['c@x.com', { client: { Id: 'C', FirstName: 'Cy', LastName: 'X' }, revenue: 0, firstSaleDate: null }],
+        ]));
+        const url = 'http://x/api/paid-ads/roas?since=2026-09-25&until=2026-10-15';
+        const first = await (await GET(new NextRequest(url))).json();
+        expect(first).toMatchSnapshot();
+        const second = await (await GET(new NextRequest(url))).json();
+        expect(second).toEqual(first);
+        expect(h.leads).toHaveBeenCalledTimes(1);
     });
 });
