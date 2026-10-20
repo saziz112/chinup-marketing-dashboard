@@ -199,24 +199,26 @@ export async function GET(request: NextRequest) {
         // Spend from Meta Ads
         const metaSpend = adsData.account.totalSpend;
 
-        // --- Appointment attribution ---
-        // Every lead with a client record counts here, purchased or not: a booked
-        // appointment is funnel progress even before the first sale.
-        const leadsWithClient = leadData.leads
-            .filter(l => l.email)
-            .map(l => ({ campaignId: l.campaignId, clientId: clientEmailMap.get(l.email!.toLowerCase().trim())?.client.Id }))
-            .filter((l): l is { campaignId: string; clientId: string } => !!l.clientId);
-        const matchedClientIds = [...new Set(leadsWithClient.map(l => l.clientId))];
-
-        const appointmentMap = await getAppointmentsByClientIds(matchedClientIds, mbStart, mbEnd);
-
-        // Build client→campaign mapping for appointment attribution
-        const clientToCampaign = new Map<string, string[]>();
-        for (const { clientId, campaignId } of leadsWithClient) {
-            const campaigns = clientToCampaign.get(clientId) || [];
-            if (!campaigns.includes(campaignId)) campaigns.push(campaignId);
-            clientToCampaign.set(clientId, campaigns);
+        // --- Booking attribution ---
+        // Every lead with a client record counts here, purchased or not: a booking
+        // is funnel progress even before the first sale. These figures count PEOPLE
+        // (leads who booked / showed), not appointments, and each person belongs
+        // to the campaign of their earliest lead so campaign rows sum to the total.
+        const firstLeadByClient = new Map<string, { campaignId: string; leadDate: string }>();
+        for (const l of leadData.leads) {
+            if (!l.email) continue;
+            const clientId = clientEmailMap.get(l.email.toLowerCase().trim())?.client.Id;
+            if (!clientId) continue;
+            const leadDate = l.createdTime.slice(0, 10);
+            const prev = firstLeadByClient.get(clientId);
+            if (!prev || leadDate < prev.leadDate) firstLeadByClient.set(clientId, { campaignId: l.campaignId, leadDate });
         }
+
+        const appointmentMap = await getAppointmentsByClientIds(
+            [...firstLeadByClient].map(([clientId, { leadDate }]) => ({ clientId, leadDate })),
+        );
+        const peopleBooked = [...appointmentMap.values()].filter(a => a.booked > 0).length;
+        const peopleCompleted = [...appointmentMap.values()].filter(a => a.completed > 0).length;
 
         // Per-campaign matched revenue
         const campaignMatchMap = new Map<string, { revenue: number; matched: number }>();
@@ -227,17 +229,15 @@ export async function GET(request: NextRequest) {
             campaignMatchMap.set(m.campaignId, entry);
         }
 
-        // Aggregate appointments per campaign
+        // People who booked / showed, per campaign (one campaign per person)
         const campaignApptMap = new Map<string, { booked: number; completed: number }>();
         for (const [clientId, appts] of appointmentMap) {
-            const campaigns = clientToCampaign.get(clientId) || [];
-            for (const cId of campaigns) {
-                const entry = campaignApptMap.get(cId) || { booked: 0, completed: 0 };
-                // If client is attributed to multiple campaigns, count for each
-                entry.booked += appts.booked;
-                entry.completed += appts.completed;
-                campaignApptMap.set(cId, entry);
-            }
+            const cId = firstLeadByClient.get(clientId)?.campaignId;
+            if (!cId) continue;
+            const entry = campaignApptMap.get(cId) || { booked: 0, completed: 0 };
+            if (appts.booked > 0) entry.booked++;
+            if (appts.completed > 0) entry.completed++;
+            campaignApptMap.set(cId, entry);
         }
 
         const campaignBreakdown = adsData.campaigns.map(c => {
@@ -329,9 +329,10 @@ export async function GET(request: NextRequest) {
             })(),
             // Per-campaign
             campaignBreakdown,
-            // Appointment funnel: each client counted once, even when attributed to several campaigns
-            totalAppointmentsBooked: [...appointmentMap.values()].reduce((s, a) => s + a.booked, 0),
-            totalAppointmentsCompleted: [...appointmentMap.values()].reduce((s, a) => s + a.completed, 0),
+            // Booking funnel, in people: leads who booked (non-cancelled, on/after
+            // their lead date) and leads who showed. Field names kept for the UI.
+            totalAppointmentsBooked: peopleBooked,
+            totalAppointmentsCompleted: peopleCompleted,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown error';

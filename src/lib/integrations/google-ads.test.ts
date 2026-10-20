@@ -90,4 +90,23 @@ describe('enrichGhlLeadsWithMindBody', () => {
         expect(res.totals.mbMatchedClients).toBe(1);
         expect(res.totals.totalRevenue).toBe(500);
     });
+
+    it('counts people who booked from their earliest lead date, not appointments', async () => {
+        h.emailMap.mockResolvedValue(new Map([
+            ['a@x.com', { client: { Id: 'A' }, revenue: 0 }],
+            ['b@x.com', { client: { Id: 'B' }, revenue: 0 }],
+        ]));
+        h.appts.mockResolvedValue(new Map([['A', { booked: 4, completed: 3, noShow: 0 }]]));
+        const { enrichGhlLeadsWithMindBody } = await load();
+        const a2 = { ...lead('a@x.com'), id: 'a2', createdAt: '2026-09-25T10:00:00Z' };
+        const res = await enrichGhlLeadsWithMindBody([lead('a@x.com'), a2, lead('b@x.com')] as never, '2026-09-20', '2026-10-19');
+        expect(h.appts).toHaveBeenCalledWith([
+            { clientId: 'A', leadDate: '2026-10-01' },
+            { clientId: 'A', leadDate: '2026-09-25' },
+            { clientId: 'B', leadDate: '2026-10-01' },
+        ]);
+        expect(res.totals.appointmentsBooked).toBe(1);
+        expect(res.totals.appointmentsCompleted).toBe(1);
+    });
 });
+

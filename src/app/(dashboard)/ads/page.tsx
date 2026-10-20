@@ -430,9 +430,9 @@ export default function AdsPage() {
                         )}
                         {isGoogle && !!googleData?.ghlAppointmentsBooked && (
                             <KpiCard
-                                label="Appts Booked"
+                                label="Leads Who Booked"
                                 value={fmtNum(googleData.ghlAppointmentsBooked)}
-                                sub={`${googleData.ghlAppointmentsCompleted ?? 0} completed`}
+                                sub={`${googleData.ghlAppointmentsCompleted ?? 0} showed`}
                                 green
                             />
                         )}
@@ -441,14 +441,14 @@ export default function AdsPage() {
                         )}
                         {isAdmin && roasData && roasData.totalAppointmentsBooked > 0 && (
                             <KpiCard
-                                label="Appts Booked"
+                                label="Leads Who Booked"
                                 value={fmtNum(roasData.totalAppointmentsBooked)}
                                 sub={roasData.metaLeads > 0 ? `${Math.round((roasData.totalAppointmentsBooked / roasData.metaLeads) * 100)}% of leads` : 'from matched leads'}
                             />
                         )}
                         {isAdmin && roasData && roasData.totalAppointmentsCompleted > 0 && (
                             <KpiCard
-                                label="Appts Completed"
+                                label="Leads Who Showed"
                                 value={fmtNum(roasData.totalAppointmentsCompleted)}
                                 sub={roasData.totalAppointmentsBooked > 0 ? `${Math.round((roasData.totalAppointmentsCompleted / roasData.totalAppointmentsBooked) * 100)}% show rate` : 'from matched leads'}
                                 green
