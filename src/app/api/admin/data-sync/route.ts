@@ -25,13 +25,7 @@ import {
     incrementalSearchConsoleSync,
     getSearchConsoleStats,
 } from '@/lib/integrations/search-console-sync';
-import {
-    migrateSchemaForZenoti,
-    backfillZenotiSales,
-    backfillZenotiAppointments,
-    backfillZenotiGuests,
-    incrementalZenotiSync,
-} from '@/lib/integrations/zenoti-sync';
+import { incrementalZenotiSync } from '@/lib/integrations/zenoti-sync';
 
 export const maxDuration = 300; // Zenoti sync now pulls a 120-day forward appt window (~54 rate-limited calls)
 
@@ -164,81 +158,6 @@ export async function POST(req: NextRequest) {
                 await sql`DELETE FROM search_console_daily`;
                 return NextResponse.json({ action, message: 'Search console data and sync state cleared.' });
             }
-            // ---------------- Zenoti cutover (2026-07-01) ----------------
-            case 'migrate-zenoti-schema': {
-                // One-time: widen sale_id/appointment_id INTEGER→TEXT + add source column.
-                // Idempotent — no-ops once applied.
-                const result = await migrateSchemaForZenoti();
-                return NextResponse.json({
-                    action,
-                    changed: result.changed,
-                    message: result.changed.length
-                        ? `Schema migrated: ${result.changed.join(', ')}`
-                        : 'Schema already migrated (no changes).',
-                });
-            }
-            case 'purge-mindbody-post-cutover': {
-                // Enforce the locked seam: MindBody authoritative ≤ 6/30, Zenoti owns 7/1→.
-                // Removes the 4 $0 sale stragglers dated > 6/30 and the 72 appointment rows
-                // dated ≥ 7/1 (false NoShows + migrated future bookings). 6/30-and-earlier stays.
-                const sales = await sql`
-                    DELETE FROM mb_sales_history
-                    WHERE sale_date > '2026-06-30'
-                    RETURNING sale_id, sale_date, total_amount
-                `;
-                const appts = await sql`
-                    DELETE FROM mb_appointments_history
-                    WHERE (start_date AT TIME ZONE 'America/New_York')::date >= '2026-07-01'
-                    RETURNING appointment_id, start_date, status
-                `;
-                return NextResponse.json({
-                    action,
-                    salesDeleted: sales.rowCount,
-                    apptsDeleted: appts.rowCount,
-                    sampleSales: sales.rows.slice(0, 5),
-                    message: `Purged ${sales.rowCount} post-6/30 sales + ${appts.rowCount} ≥7/1 appointments.`,
-                });
-            }
-            case 'backfill-zenoti-sales': {
-                const result = await backfillZenotiSales();
-                return NextResponse.json({ action, ...result });
-            }
-            case 'backfill-zenoti-appointments': {
-                const result = await backfillZenotiAppointments();
-                return NextResponse.json({ action, ...result });
-            }
-            case 'backfill-zenoti-guests': {
-                // Resumable: processes ≤40 sales-only guests per call. Loop while continue:true.
-                const result = await backfillZenotiGuests();
-                return NextResponse.json({ action, ...result, continue: !result.done });
-            }
-            case 'backfill-zenoti': {
-                // Full cutover in one entrypoint (UI auto-loops while continue:true):
-                //   migrate schema → purge post-cutover MB → sales → appointments → guests (chunked).
-                const migration = await migrateSchemaForZenoti();
-                const salesPurge = await sql`DELETE FROM mb_sales_history WHERE sale_date > '2026-06-30' RETURNING sale_id`;
-                const apptPurge = await sql`
-                    DELETE FROM mb_appointments_history
-                    WHERE (start_date AT TIME ZONE 'America/New_York')::date >= '2026-07-01'
-                    RETURNING appointment_id
-                `;
-                const sales = await backfillZenotiSales();
-                const appts = await backfillZenotiAppointments();
-                const guests = await backfillZenotiGuests();
-                return NextResponse.json({
-                    action,
-                    phase: 'guests',
-                    migration: migration.changed,
-                    purged: { sales: salesPurge.rowCount, appts: apptPurge.rowCount },
-                    sales: sales.label,
-                    appointments: appts.label,
-                    guests: guests.label,
-                    continue: !guests.done,
-                    chunkLabel: guests.done
-                        ? 'Zenoti cutover backfill complete'
-                        : 'Zenoti guests still backfilling — loop again',
-                });
-            }
             case 'sync-zenoti': {
                 const result = await incrementalZenotiSync();
                 return NextResponse.json({ action, ...result });
@@ -253,9 +172,7 @@ export async function POST(req: NextRequest) {
                         'rebackfill-columns',
                         'sync', 'sync-mindbody', 'sync-ghl', 'sync-social', 'sync-search-console',
                         'reset-social', 'reset-search-console',
-                        'migrate-zenoti-schema', 'purge-mindbody-post-cutover',
-                        'backfill-zenoti-sales', 'backfill-zenoti-appointments', 'backfill-zenoti-guests',
-                        'backfill-zenoti', 'sync-zenoti',
+                        'sync-zenoti',
                     ],
                 }, { status: 400 });
         }
