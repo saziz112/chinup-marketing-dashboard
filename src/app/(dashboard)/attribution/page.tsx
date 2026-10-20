@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 import { formatNumber, formatCurrency } from '@/lib/format';
 import { LOCATION_OPTIONS, type LocationFilter } from '@/lib/constants';
+import { AlertTriangle, X } from 'lucide-react';
 
 type Tab = 'overview' | 'action' | 'campaigns';
 
@@ -426,12 +427,12 @@ export default function LeadsPipelinePage() {
 
     return (
         <>
-            <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+            <div className="page-header page-header-row">
                 <div>
                     <h1>Leads & Pipeline</h1>
                     <p className="subtitle">Conversation-first lead intelligence across all locations</p>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <div className="period-selector is-scroll" role="group" aria-label="Location">
                     {LOCATION_OPTIONS.map(opt => (
                         <button
                             key={opt.id}
@@ -445,22 +446,13 @@ export default function LeadsPipelinePage() {
             </div>
 
             {/* Tabs */}
-            <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0' }}>
+            <div className="sub-tabs">
                 {TAB_CONFIG.filter(t => !t.adminOnly || isAdmin).map(t => (
                     <button
                         key={t.id}
                         onClick={() => setTab(t.id)}
-                        style={{
-                            padding: '10px 20px',
-                            background: 'transparent',
-                            border: 'none',
-                            borderBottom: tab === t.id ? '2px solid var(--accent-primary)' : '2px solid transparent',
-                            color: tab === t.id ? 'var(--text-primary)' : 'var(--text-muted)',
-                            fontWeight: tab === t.id ? 600 : 400,
-                            fontSize: '0.875rem',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s',
-                        }}
+                        aria-pressed={tab === t.id}
+                        className={`sub-tab ${tab === t.id ? 'active' : ''}`}
                     >
                         {t.label}
                     </button>
@@ -468,8 +460,13 @@ export default function LeadsPipelinePage() {
             </div>
 
             {error && (
-                <div className="section-card" style={{ borderColor: '#F87171', background: 'rgba(248,113,113,0.1)' }}>
-                    <p style={{ color: '#F87171', margin: 0 }}>Error: {error}</p>
+                <div className="state-card is-error" role="alert">
+                    <div className="state-icon"><AlertTriangle size={18} aria-hidden="true" /></div>
+                    <div>
+                        <div className="state-title">Couldn&apos;t load pipeline data</div>
+                        <p className="state-msg">Error: {error}</p>
+                        <button className="btn" onClick={fetchPipeline}>Retry</button>
+                    </div>
                 </div>
             )}
 
@@ -479,16 +476,26 @@ export default function LeadsPipelinePage() {
             {tab === 'overview' && (
                 <>
                     {loading ? (
-                        <div className="section-card">
-                            <div className="empty-state">
-                                <h3>Loading pipeline data...</h3>
-                                <p>Fetching opportunities from GoHighLevel</p>
+                        <div aria-busy="true">
+                            <p className="loading-caption">Loading pipeline data... Fetching opportunities from GoHighLevel</p>
+                            <div className="metrics-grid kpi-grid" style={{ gridTemplateColumns: `repeat(${isAdmin ? 5 : 4}, 1fr)` }}>
+                                {Array.from({ length: isAdmin ? 5 : 4 }).map((_, i) => (
+                                    <div key={i} className="metric-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                        <div className="skeleton-block" style={{ height: 10, width: '50%' }} />
+                                        <div className="skeleton-block" style={{ height: 26, width: '45%' }} />
+                                        <div className="skeleton-block" style={{ height: 10, width: '65%' }} />
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="split-2">
+                                <div className="section-card"><div className="skeleton-block" style={{ height: 180 }} /></div>
+                                <div className="section-card"><div className="skeleton-block" style={{ height: 180 }} /></div>
                             </div>
                         </div>
                     ) : pipelineData ? (
                         <>
                             {/* Compact KPI cards */}
-                            <div className="metrics-grid" style={{ gridTemplateColumns: `repeat(${isAdmin ? 5 : 4}, 1fr)` }}>
+                            <div className="metrics-grid kpi-grid" style={{ gridTemplateColumns: `repeat(${isAdmin ? 5 : 4}, 1fr)` }}>
                                 <div className="metric-card">
                                     <div className="label">Open</div>
                                     <div className="value">{formatNumber(pipelineData.totals.totalOpen)}</div>
@@ -503,12 +510,12 @@ export default function LeadsPipelinePage() {
                                 )}
                                 <div className="metric-card">
                                     <div className="label">Won</div>
-                                    <div className="value" style={{ color: '#34D399' }}>{formatNumber(pipelineData.totals.totalWon)}</div>
+                                    <div className="value" style={{ color: 'var(--success)' }}>{formatNumber(pipelineData.totals.totalWon)}</div>
                                     <div className="change positive">Converted</div>
                                 </div>
                                 <div className="metric-card">
                                     <div className="label">Lost</div>
-                                    <div className="value" style={{ color: '#F87171' }}>{formatNumber(pipelineData.totals.totalLost)}</div>
+                                    <div className="value" style={{ color: 'var(--danger)' }}>{formatNumber(pipelineData.totals.totalLost)}</div>
                                     <div className="change">Abandoned</div>
                                 </div>
                                 <div className="metric-card">
@@ -519,11 +526,11 @@ export default function LeadsPipelinePage() {
                             </div>
 
                             {/* Per-Location Summary + Lifecycle/Speed side-by-side */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                            <div className="split-2">
                                 {/* Per-Location Breakdown */}
                                 <div className="section-card">
                                     <h3 style={{ marginBottom: '16px' }}>By Location</h3>
-                                    <div className="data-table-wrapper"><table className="data-table">
+                                    <div className="data-table-wrapper"><table className="data-table sticky-first">
                                         <thead>
                                             <tr>
                                                 <th>Location</th>
@@ -556,7 +563,7 @@ export default function LeadsPipelinePage() {
                                 {/* Lifecycle Breakdown (from conversations API if available) */}
                                 {engagementData?.lifecycleCounts ? (
                                     <div className="section-card">
-                                        <h3 style={{ marginBottom: '16px' }}>Lifecycle Breakdown <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>open opportunities</span></h3>
+                                        <div className="card-head"><h3>Lifecycle Breakdown</h3><span className="card-meta">open opportunities</span></div>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                             {LIFECYCLE_STAGES.map(stage => {
                                                 const count = engagementData.lifecycleCounts[stage.key] || 0;
@@ -564,13 +571,13 @@ export default function LeadsPipelinePage() {
                                                 const pct = Math.round((count / total) * 100);
                                                 return (
                                                     <div key={stage.key} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                        <span style={{ width: '100px', fontSize: '0.8125rem', color: stage.color, fontWeight: 600, flexShrink: 0 }}>
+                                                        <span style={{ width: '92px', fontSize: '0.8125rem', color: stage.color, fontWeight: 600, flexShrink: 0 }}>
                                                             {stage.label}
                                                         </span>
                                                         <div style={{ flex: 1, height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
                                                             <div style={{ width: `${pct}%`, height: '100%', background: stage.color, borderRadius: '4px' }} />
                                                         </div>
-                                                        <span style={{ width: '80px', textAlign: 'right', fontSize: '0.8125rem', fontWeight: 600 }}>
+                                                        <span style={{ minWidth: '76px', textAlign: 'right', fontSize: '0.8125rem', fontWeight: 600, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                                                             {count} ({pct}%)
                                                         </span>
                                                     </div>
@@ -583,7 +590,7 @@ export default function LeadsPipelinePage() {
                                     </div>
                                 ) : (
                                     <div className="section-card">
-                                        <h3 style={{ marginBottom: '16px' }}>Lifecycle Breakdown <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>open opportunities</span></h3>
+                                        <div className="card-head"><h3>Lifecycle Breakdown</h3><span className="card-meta">open opportunities</span></div>
                                         <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
                                             Switch to the &quot;Leads &amp; Outreach&quot; tab to load conversation data, then come back for the lifecycle view.
                                         </p>
@@ -595,7 +602,7 @@ export default function LeadsPipelinePage() {
                             {engagementData?.speedToLead && (
                                 <div className="section-card" style={{ marginTop: '24px' }}>
                                     <h3 style={{ marginBottom: '16px' }}>Speed-to-Lead</h3>
-                                    <div style={{ marginBottom: '16px', padding: '12px', background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)', borderRadius: '8px', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                                    <div className="callout is-info" style={{ marginBottom: '16px' }}>
                                         Industry benchmark: Leads contacted within 5 minutes have a 21x higher conversion rate.
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
@@ -622,7 +629,7 @@ export default function LeadsPipelinePage() {
                                 </div>
                             )}
                         </>
-                    ) : (
+                    ) : error ? null : (
                         <div className="section-card">
                             <div className="empty-state">
                                 <h3>No pipeline data</h3>
@@ -960,17 +967,19 @@ export default function LeadsPipelinePage() {
             {tab === 'campaigns' && isAdmin && (
                 <div className="section-card">
                     <h3 style={{ marginBottom: '8px' }}>SMS & Email Campaigns</h3>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '24px' }}>
+                    <p className="card-desc" style={{ marginTop: 0 }}>
                         Target leads by conversation lifecycle stage or patient history (Zenoti + MindBody). All campaigns apply 30-day cooldowns and DND filtering.
                     </p>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
+                    <div className="segment-grid">
                         {VISIBLE_SEGMENTS.map(seg => {
                             const lastRun = campaignHistory[seg.id];
                             const isEmailOnly = seg.channel === 'email';
                             return (
-                                <div
+                                <button
+                                    type="button"
                                     key={seg.id}
+                                    className="segment-card"
                                     onClick={() => {
                                         setSmsSegment(seg.id);
                                         setSmsStep(1);
@@ -982,42 +991,26 @@ export default function LeadsPipelinePage() {
                                         else setSmsChannel('sms');
                                         fetchSmsContacts(seg.id);
                                     }}
-                                    style={{
-                                        padding: '16px', borderRadius: '10px', cursor: 'pointer',
-                                        border: '1px solid var(--border-subtle)',
-                                        background: isEmailOnly ? 'rgba(96,165,250,0.04)' : 'rgba(34,197,94,0.04)',
-                                        transition: 'border-color 0.2s',
-                                    }}
-                                    onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--accent-primary)')}
-                                    onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border-subtle)')}
                                 >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
-                                        <div style={{ fontWeight: 600 }}>{seg.label}</div>
-                                        <span title={isEmailOnly ? 'Cold for SMS — email-only recommended' : 'Warm enough for SMS + Email'} style={{
-                                            fontSize: '0.625rem', padding: '2px 8px', borderRadius: 999,
-                                            background: isEmailOnly ? 'rgba(96,165,250,0.18)' : 'rgba(34,197,94,0.18)',
-                                            color: isEmailOnly ? '#60A5FA' : '#22c55e',
-                                            fontWeight: 600, letterSpacing: '0.04em', whiteSpace: 'nowrap',
-                                        }}>
+                                    <span className="seg-top">
+                                        <span className="seg-title">{seg.label}</span>
+                                        <span title={isEmailOnly ? 'Cold for SMS — email-only recommended' : 'Warm enough for SMS + Email'} className={`pill ${isEmailOnly ? 'pill-info' : 'pill-success'}`} style={{ fontSize: '0.625rem', letterSpacing: '0.04em' }}>
                                             {isEmailOnly ? 'EMAIL' : 'SMS + EMAIL'}
                                         </span>
-                                    </div>
-                                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '8px' }}>{seg.desc}</div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{
-                                            fontSize: '0.6875rem', padding: '2px 8px', borderRadius: '4px',
-                                            background: seg.source === 'conversations' ? 'rgba(96,165,250,0.15)' : 'rgba(167,139,250,0.15)',
-                                            color: seg.source === 'conversations' ? '#60A5FA' : '#A78BFA',
-                                        }}>
+                                    </span>
+                                    <span className="seg-desc">{seg.desc}</span>
+                                    <span className="seg-foot">
+                                        <span className={`pill ${seg.source === 'conversations' ? 'pill-info' : 'pill-violet'}`} style={{ borderRadius: 4 }}>
                                             {seg.source}
                                         </span>
                                         {lastRun && (
-                                            <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                                            <span className="seg-last">
                                                 Last: {new Date(lastRun.runAt).toLocaleDateString()} ({lastRun.totalSent} sent)
                                             </span>
                                         )}
-                                    </div>
-                                </div>
+                                        <span className="seg-cta" aria-hidden="true">Set up →</span>
+                                    </span>
+                                </button>
                             );
                         })}
                     </div>
@@ -1026,35 +1019,44 @@ export default function LeadsPipelinePage() {
 
             {tab === 'campaigns' && isAdmin && (
                 <div className="section-card" style={{ marginTop: '20px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
-                        <h3 style={{ marginBottom: '4px' }}>Campaign Results — Who Came Back</h3>
+                    <div className="card-head" style={{ marginBottom: 8 }}>
+                        <h3>Campaign Results — Who Came Back</h3>
                         {conversions && (
-                            <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                            <span className="card-meta">
                                 {conversions.matchRate}% of sends matched to a patient · {conversions.totalSends?.toLocaleString()} sends tracked
                             </span>
                         )}
                     </div>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', marginBottom: '16px' }}>
+                    <p className="card-desc" style={{ marginTop: 0 }}>
                         Share of messaged patients who booked or attended an appointment within {conversions?.windowDays ?? 30} days of the send.
                         Lift (vs a not-messaged holdout) is shown only where a valid control group exists.
                     </p>
 
-                    {conversionsLoading && <div style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Computing conversions…</div>}
+                    {conversionsLoading && (
+                        <div aria-busy="true">
+                            <p className="loading-caption">Computing conversions…</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                {[0, 1, 2].map(i => <div key={i} className="skeleton-block" style={{ height: 36 }} />)}
+                            </div>
+                        </div>
+                    )}
                     {!conversionsLoading && (!conversions || !conversions.segments?.length) && (
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>No campaign sends logged yet.</div>
+                        <div className="empty-state" style={{ padding: '32px 16px' }}>
+                            <p>No campaign sends logged yet.</p>
+                        </div>
                     )}
 
                     {!conversionsLoading && conversions?.segments?.length > 0 && (
                         <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+                            <table className="data-table table-stack" style={{ fontSize: '0.8125rem' }}>
                                 <thead>
-                                    <tr style={{ textAlign: 'left', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}>
-                                        <th style={{ padding: '8px 10px' }}>Segment</th>
-                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Sent</th>
-                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Came back</th>
-                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Rate</th>
-                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Holdout rate</th>
-                                        <th style={{ padding: '8px 10px', textAlign: 'right' }}>Lift</th>
+                                    <tr>
+                                        <th>Segment</th>
+                                        <th className="num">Sent</th>
+                                        <th className="num">Came back</th>
+                                        <th className="num">Rate</th>
+                                        <th className="num">Holdout rate</th>
+                                        <th className="num">Lift</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -1062,26 +1064,26 @@ export default function LeadsPipelinePage() {
                                         const showVariants = conversions.hasVariantData && s.variants?.filter((v: any) => v.variantId !== '(untagged)').length > 0;
                                         return (
                                             <Fragment key={s.segment}>
-                                                <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                                                    <td style={{ padding: '8px 10px', fontWeight: 600 }}>{s.label}</td>
-                                                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{s.sent.toLocaleString()}</td>
-                                                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{s.sentConversions.toLocaleString()}</td>
-                                                    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{s.sentRate != null ? `${s.sentRate}%` : '—'}</td>
-                                                    <td style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--text-muted)' }}>
+                                                <tr>
+                                                    <td className="stack-title" style={{ fontWeight: 600 }}>{s.label}</td>
+                                                    <td className="num" data-label="Sent">{s.sent.toLocaleString()}</td>
+                                                    <td className="num" data-label="Came back">{s.sentConversions.toLocaleString()}</td>
+                                                    <td className="num" data-label="Rate" style={{ fontWeight: 600 }}>{s.sentRate != null ? `${s.sentRate}%` : '—'}</td>
+                                                    <td className="num" data-label="Holdout rate" style={{ color: 'var(--text-muted)' }}>
                                                         {s.holdout > 0 ? `${s.holdoutRate}% (n=${s.holdout.toLocaleString()})` : '—'}
                                                     </td>
-                                                    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: s.lift == null ? 'var(--text-muted)' : s.lift > 0 ? '#22c55e' : '#ef4444' }}>
+                                                    <td className="num" data-label="Lift" style={{ fontWeight: 600, color: s.lift == null ? 'var(--text-muted)' : s.lift > 0 ? 'var(--success)' : 'var(--danger)' }}>
                                                         {s.lift != null ? `${s.lift > 0 ? '+' : ''}${s.lift} pts` : '—'}
                                                     </td>
                                                 </tr>
                                                 {showVariants && s.variants.map((v: any) => (
-                                                    <tr key={`${s.segment}-${v.variantId}`} style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                                        <td style={{ padding: '4px 10px 4px 24px' }}>↳ {v.variantId}</td>
-                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>{v.sent.toLocaleString()}</td>
-                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>{v.sentConversions.toLocaleString()}</td>
-                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>{v.sentRate != null ? `${v.sentRate}%` : '—'}</td>
-                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>—</td>
-                                                        <td style={{ padding: '4px 10px', textAlign: 'right' }}>—</td>
+                                                    <tr key={`${s.segment}-${v.variantId}`} className="sub-row">
+                                                        <td className="stack-title">↳ {v.variantId}</td>
+                                                        <td className="num" data-label="Sent">{v.sent.toLocaleString()}</td>
+                                                        <td className="num" data-label="Came back">{v.sentConversions.toLocaleString()}</td>
+                                                        <td className="num" data-label="Rate">{v.sentRate != null ? `${v.sentRate}%` : '—'}</td>
+                                                        <td className="num" data-label="Holdout rate">—</td>
+                                                        <td className="num" data-label="Lift">—</td>
                                                     </tr>
                                                 ))}
                                             </Fragment>
@@ -1223,28 +1225,26 @@ export default function LeadsPipelinePage() {
             {/* Modal: SMS/Email Campaign Wizard */}
             {/* ═══════════════════════════════════════════════════ */}
             {smsOpen && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '24px' }}
+                <div className="modal-overlay"
                     onClick={(e) => { if (e.target === e.currentTarget) setSmsOpen(false); }}>
-                    <div style={{ background: '#1a2332', borderRadius: '16px', border: '1px solid var(--border-subtle)', maxWidth: '900px', width: '100%', maxHeight: '85vh', overflow: 'auto', padding: '32px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <h2 style={{ margin: 0 }}>
+                    <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="sms-wizard-title">
+                        <div className="modal-header">
+                            <h2 id="sms-wizard-title">
                                 {CAMPAIGN_SEGMENTS.find(s => s.id === smsSegment)?.label || smsSegment} Campaign
                             </h2>
-                            <button onClick={() => setSmsOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.25rem' }}>x</button>
+                            <button className="icon-btn" onClick={() => setSmsOpen(false)} aria-label="Close"><X size={20} aria-hidden="true" /></button>
                         </div>
+                        <div className="modal-body">
 
                         {/* Step indicator */}
-                        <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
-                            {[1, 2, 3].map(s => (
-                                <div key={s} style={{
-                                    flex: 1, height: '4px', borderRadius: '2px',
-                                    background: s <= smsStep ? 'var(--accent-primary)' : 'rgba(255,255,255,0.1)',
-                                }} />
+                        <div className="wizard-steps" aria-hidden="true">
+                            {['Audience', 'Message', 'Sent'].map((label, i) => (
+                                <div key={label} className={`wizard-step ${i + 1 <= smsStep ? 'done' : ''}`}>{label}</div>
                             ))}
                         </div>
 
                         {smsError && (
-                            <div style={{ padding: '12px', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: '8px', marginBottom: '16px', color: '#F87171', fontSize: '0.875rem' }}>
+                            <div className="callout is-error" role="alert">
                                 {smsError}
                             </div>
                         )}
@@ -1253,14 +1253,16 @@ export default function LeadsPipelinePage() {
                         {smsStep === 1 && (
                             <>
                                 {smsLoading ? (
-                                    <div className="empty-state">
+                                    <div className="empty-state" aria-busy="true">
                                         <h3>Loading eligible contacts...</h3>
                                         <p>Applying cooldowns, DND checks, and conversation filters</p>
+                                        <div className="loading-spinner" style={{ margin: '20px auto 0', width: 28, height: 28 }} />
                                     </div>
                                 ) : smsData ? (
                                     <>
                                         {/* Channel toggle */}
-                                        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                                        <div className="eyebrow">Channel</div>
+                                        <div className="period-selector" role="group" aria-label="Channel" style={{ marginBottom: '20px' }}>
                                             {(['sms', 'email'] as const).map(ch => (
                                                 <button
                                                     key={ch}
@@ -1290,7 +1292,7 @@ export default function LeadsPipelinePage() {
 
                                         {/* Forecast */}
                                         {smsData.forecast && (
-                                            <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: '16px' }}>
+                                            <div className="metrics-grid kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: '16px' }}>
                                                 <div className="metric-card">
                                                     <div className="label">Eligible</div>
                                                     <div className="value">{smsData.forecast.targetContacts}</div>
@@ -1307,26 +1309,28 @@ export default function LeadsPipelinePage() {
                                                 </div>
                                                 <div className="metric-card">
                                                     <div className="label">Est. Revenue</div>
-                                                    <div className="value" style={{ color: '#34D399' }}>{formatCurrency(smsData.forecast.projectedRevenue)}</div>
+                                                    <div className="value" style={{ color: 'var(--success)' }}>{formatCurrency(smsData.forecast.projectedRevenue)}</div>
                                                     <div className="change">estimate · {formatCurrency(smsData.forecast.assumedAvgValue)} avg per booking</div>
                                                 </div>
                                             </div>
                                         )}
 
                                         {/* Exclusion info */}
-                                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: 1.6 }}>
                                             {smsData.dndFiltered > 0 && <span>{smsData.dndFiltered} DND excluded | </span>}
                                             {smsData.cooldownExcluded > 0 && <span>{smsData.cooldownExcluded} cooldown excluded | </span>}
                                             {smsData.outboundExcluded > 0 && <span>{smsData.outboundExcluded} recently texted/active excluded (14d)</span>}
                                         </div>
 
+                                        <div className="wizard-actions">
                                         <button
-                                            className="period-btn active"
+                                            className="btn btn-primary"
                                             onClick={() => setSmsStep(2)}
                                             disabled={!smsData.contacts?.length}
                                         >
                                             Review Contacts & Message ({smsData.contacts?.length || 0})
                                         </button>
+                                        </div>
                                     </>
                                 ) : null}
                             </>
@@ -1336,7 +1340,8 @@ export default function LeadsPipelinePage() {
                         {smsStep === 2 && smsData && (
                             <>
                                 {/* Location filter */}
-                                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                                <div className="eyebrow">Audience</div>
+                                <div className="period-selector is-scroll" role="group" aria-label="Location" style={{ marginBottom: '20px' }}>
                                     {['all', 'decatur', 'smyrna', 'kennesaw'].map(loc => (
                                         <button
                                             key={loc}
@@ -1349,7 +1354,6 @@ export default function LeadsPipelinePage() {
                                                     : smsData.contacts.filter((c: any) => c.locationKey === loc);
                                                 setSmsSelected(new Set(matching.map((c: any) => c.contactId)));
                                             }}
-                                            style={{ fontSize: '0.75rem', padding: '4px 10px' }}
                                         >
                                             {loc === 'all' ? 'All Locations' : loc === 'smyrna' ? 'Smyrna' : loc.charAt(0).toUpperCase() + loc.slice(1)}
                                         </button>
@@ -1366,7 +1370,7 @@ export default function LeadsPipelinePage() {
                                     const activeVariant = variants.find((v: any) => v.id === smsVariantId);
                                     return (
                                         <div style={{ marginBottom: '16px' }}>
-                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
+                                            <div className="eyebrow">
                                                 Message Variant — pick a copy strategy
                                             </div>
                                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
@@ -1380,16 +1384,14 @@ export default function LeadsPipelinePage() {
                                                                 setSmsMessage(v.template);
                                                                 if (smsChannel === 'email' && v.subject) setSmsSubject(v.subject);
                                                             }}
+                                                            aria-pressed={isActive}
+                                                            className="btn"
                                                             style={{
-                                                                padding: '8px 14px',
-                                                                borderRadius: '8px',
-                                                                border: `1px solid ${isActive ? 'var(--accent-primary)' : 'rgba(255,255,255,0.1)'}`,
-                                                                background: isActive ? 'rgba(34,197,94,0.08)' : 'rgba(255,255,255,0.03)',
-                                                                color: isActive ? '#34D399' : 'var(--text-primary)',
-                                                                fontSize: '0.8125rem',
-                                                                fontWeight: isActive ? 600 : 400,
-                                                                cursor: 'pointer',
-                                                                transition: 'all 0.15s ease',
+                                                                minHeight: 40,
+                                                                fontWeight: isActive ? 600 : 500,
+                                                                borderColor: isActive ? 'var(--accent-primary)' : undefined,
+                                                                background: isActive ? 'var(--accent-bg)' : undefined,
+                                                                color: isActive ? 'var(--accent-primary)' : undefined,
                                                             }}
                                                         >
                                                             {v.label}
@@ -1398,15 +1400,7 @@ export default function LeadsPipelinePage() {
                                                 })}
                                             </div>
                                             {activeVariant && (
-                                                <div style={{
-                                                    fontSize: '0.75rem',
-                                                    color: 'var(--text-muted)',
-                                                    fontStyle: 'italic',
-                                                    padding: '8px 12px',
-                                                    background: 'rgba(255,255,255,0.02)',
-                                                    border: '1px solid rgba(255,255,255,0.05)',
-                                                    borderRadius: '6px',
-                                                }}>
+                                                <div className="callout is-info" style={{ fontSize: '0.75rem', marginBottom: 0 }}>
                                                     {activeVariant.strategy}
                                                 </div>
                                             )}
@@ -1415,32 +1409,28 @@ export default function LeadsPipelinePage() {
                                 })()}
 
                                 {/* Message editor */}
-                                <div style={{ marginBottom: '16px' }}>
+                                <div style={{ marginBottom: '20px' }}>
+                                    <div className="eyebrow">Message</div>
                                     {smsChannel === 'email' && (
                                         <input
                                             type="text"
                                             value={smsSubject}
                                             onChange={e => setSmsSubject(e.target.value)}
                                             placeholder="Email subject line"
-                                            style={{
-                                                width: '100%', padding: '10px 14px', marginBottom: '8px',
-                                                background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)',
-                                                borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.875rem',
-                                            }}
+                                            aria-label="Email subject line"
+                                            className="field-input"
+                                            style={{ marginBottom: '8px' }}
                                         />
                                     )}
                                     <textarea
                                         value={smsMessage}
                                         onChange={e => setSmsMessage(e.target.value)}
                                         rows={smsChannel === 'email' ? 8 : 4}
-                                        style={{
-                                            width: '100%', padding: '12px 14px',
-                                            background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)',
-                                            borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.875rem',
-                                            resize: 'vertical',
-                                        }}
+                                        aria-label="Message"
+                                        className="field-input"
+                                        style={{ resize: 'vertical' }}
                                     />
-                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                    <div className="field-hint">
                                         Use {'{{firstName}}'} and {'{{locationName}}'} for personalization.
                                         {smsChannel === 'sms' && (
                                             <span style={{ marginLeft: '8px', color: smsMessage.length > 160 ? '#FBBF24' : 'var(--text-muted)' }}>
@@ -1461,12 +1451,13 @@ export default function LeadsPipelinePage() {
 
                                     return (
                                         <>
-                                <div style={{ maxHeight: '200px', overflow: 'auto', marginBottom: '16px', border: '1px solid var(--border-subtle)', borderRadius: '8px' }}>
+                                <div className="table-scroll">
                                     <table className="data-table" style={{ fontSize: '0.8125rem' }}>
                                         <thead>
                                             <tr>
-                                                <th style={{ width: '30px' }}>
+                                                <th style={{ width: '36px' }}>
                                                     <input type="checkbox"
+                                                        aria-label="Select all contacts"
                                                         checked={allFilteredSelected}
                                                         onChange={e => {
                                                             const next = new Set(smsSelected);
@@ -1519,11 +1510,7 @@ export default function LeadsPipelinePage() {
                                     const batches = Math.ceil(filteredSelectedCount / batchSize);
                                     if (filteredSelectedCount > batchSize) {
                                         return (
-                                            <div style={{
-                                                fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '12px',
-                                                padding: '8px 12px', background: 'rgba(251,191,36,0.08)',
-                                                borderRadius: '6px', border: '1px solid rgba(251,191,36,0.2)',
-                                            }}>
+                                            <div className="callout is-warn" style={{ fontSize: '0.75rem' }}>
                                                 {filteredSelectedCount.toLocaleString()} contacts will be sent in {batches} batches of up to {batchSize} ({smsChannel === 'sms' ? '~40s' : '~50s'} each, ~1.5s between batches). Keep this tab open until complete.
                                             </div>
                                         );
@@ -1533,39 +1520,27 @@ export default function LeadsPipelinePage() {
 
                                 {/* Live progress while sending */}
                                 {smsSending && smsProgress && (
-                                    <div style={{
-                                        marginBottom: '12px', padding: '10px 14px',
-                                        background: 'rgba(52,211,153,0.08)',
-                                        border: '1px solid rgba(52,211,153,0.25)',
-                                        borderRadius: '8px',
-                                        fontSize: '0.8125rem', color: '#34D399',
-                                    }}>
+                                    <div className="callout is-success" aria-live="polite">
                                         Sending batch {smsProgress.current} of {smsProgress.total} ({smsProgress.locKey}) · {smsProgress.sentSoFar} delivered so far
-                                        <div style={{
-                                            marginTop: '6px', height: '4px', background: 'rgba(255,255,255,0.06)',
-                                            borderRadius: '2px', overflow: 'hidden',
-                                        }}>
-                                            <div style={{
-                                                width: `${(smsProgress.current / smsProgress.total) * 100}%`,
-                                                height: '100%', background: '#34D399', transition: 'width 0.3s',
-                                            }} />
+                                        <div className="progress-track">
+                                            <div className="progress-fill" style={{ width: `${(smsProgress.current / smsProgress.total) * 100}%` }} />
                                         </div>
                                     </div>
                                 )}
 
                                 {/* Action buttons */}
-                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                    <button className="period-btn" onClick={() => setSmsStep(1)} disabled={smsSending}>Back</button>
+                                <div className="wizard-actions">
+                                    <button className="btn" onClick={() => setSmsStep(1)} disabled={smsSending}>Back</button>
                                     <button
-                                        className="period-btn"
+                                        className="btn btn-warn"
                                         onClick={sendTestMessage}
                                         disabled={smsTestSending || smsSending}
-                                        style={{ borderColor: '#FBBF24', color: '#FBBF24' }}
                                     >
                                         {smsTestSending ? 'Sending...' : 'Send Test'}
                                     </button>
                                     <button
-                                        className="period-btn active"
+                                        className="btn btn-primary"
+                                        style={{ marginLeft: 'auto' }}
                                         onClick={sendSmsCampaign}
                                         disabled={smsSending || filteredSelectedCount === 0}
                                     >
@@ -1576,10 +1551,7 @@ export default function LeadsPipelinePage() {
                                     );
                                 })()}
                                 {smsTestResult && (
-                                    <div style={{
-                                        marginTop: '8px', fontSize: '0.8125rem',
-                                        color: smsTestResult.success ? '#34D399' : '#F87171',
-                                    }}>
+                                    <div className={`callout ${smsTestResult.success ? 'is-success' : 'is-error'}`} style={{ marginTop: '12px', marginBottom: 0 }}>
                                         {smsTestResult.message}
                                     </div>
                                 )}
@@ -1589,7 +1561,7 @@ export default function LeadsPipelinePage() {
                         {/* Step 3: Results */}
                         {smsStep === 3 && smsResults && (
                             <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                                <div style={{ fontSize: '2rem', fontWeight: 700, color: '#34D399', marginBottom: '8px' }}>
+                                <div style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--success)', marginBottom: '8px', fontVariantNumeric: 'tabular-nums' }}>
                                     {smsResults.sent} Sent
                                 </div>
                                 {smsResults.failed > 0 && (
@@ -1608,11 +1580,12 @@ export default function LeadsPipelinePage() {
                                         {smsResults.errors.map((e: string, i: number) => <div key={i}>{e}</div>)}
                                     </div>
                                 )}
-                                <button className="period-btn active" onClick={() => setSmsOpen(false)} style={{ marginTop: '24px' }}>
+                                <button className="btn btn-primary" onClick={() => setSmsOpen(false)} style={{ marginTop: '24px' }}>
                                     Close
                                 </button>
                             </div>
                         )}
+                        </div>
                     </div>
                 </div>
             )}
