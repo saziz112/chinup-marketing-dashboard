@@ -18,6 +18,7 @@ interface PlatformData {
     followerCount: number;
     engagement: string;
     configured: boolean;
+    handle?: string;
 }
 
 export default function OverviewPage() {
@@ -125,6 +126,7 @@ export default function OverviewPage() {
                         followerCount: igData.summary.followers,
                         engagement: `${igData.summary.engagementRate}%`,
                         configured: true,
+                        handle: igData.profile?.username ? `@${igData.profile.username}` : undefined,
                     };
                 } else if (igData) {
                     console.warn('[Overview] Instagram not usable:', igData.error || 'No summary data');
@@ -137,6 +139,7 @@ export default function OverviewPage() {
                         followerCount: fbData.summary.followers,
                         engagement: `${fbData.summary.engagementRate}%`,
                         configured: true,
+                        handle: fbData.page?.name,
                     };
                 } else if (fbData) {
                     console.warn('[Overview] Facebook not usable:', fbData.error || 'No summary data');
@@ -148,6 +151,7 @@ export default function OverviewPage() {
                         followerCount: ytData.summary.subscribers,
                         engagement: `${ytData.summary.engagementRate}%`,
                         configured: true,
+                        handle: ytData.channel?.customUrl,
                     };
                 } else if (ytData) {
                     console.warn('[Overview] YouTube not usable:', ytData.error || 'No summary data');
@@ -310,18 +314,18 @@ export default function OverviewPage() {
                                     <div>
                                         <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>{platform.name}</div>
                                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                            {data?.configured ? '@chinupaesthetics' : 'Not connected'}
+                                            {socialLoading ? 'Loading…' : data?.configured ? (data.handle || 'Connected') : 'Not connected'}
                                         </div>
                                     </div>
                                 </div>
                                 <div className="platform-card-stats">
                                     <div className="platform-stat">
                                         <div className="label">Followers</div>
-                                        <div className="value">{data?.followers || '--'}</div>
+                                        <div className="value">{socialLoading ? <Skeleton className="h-6 w-14" /> : (data?.followers || '--')}</div>
                                     </div>
                                     <div className="platform-stat">
                                         <div className="label" title="Each platform divides by something different, so don't compare these across platforms">Engagement ({platform.erBasis})</div>
-                                        <div className="value">{data?.engagement || '--%'}</div>
+                                        <div className="value">{socialLoading ? <Skeleton className="h-6 w-14" /> : (data?.engagement || '--%')}</div>
                                     </div>
                                 </div>
                             </a>

@@ -417,7 +417,7 @@ export default function AdsPage() {
                                 <KpiCard
                                     label="GHL Leads (Google)"
                                     value={fmtNum(googleData.ghlLeads)}
-                                    sub={googleData.ghlLeads ? `${googleData.ghlMatchedClients ?? 0} paying patients · click to view →` : 'no google-source opps'}
+                                    sub={googleData.ghlLeads ? `${googleData.ghlMatchedClients ?? 0} paying patient${googleData.ghlMatchedClients === 1 ? '' : 's'} · click to view →` : 'no google-source opps'}
                                     green
                                 />
                             </div>
