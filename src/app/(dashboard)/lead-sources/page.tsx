@@ -130,6 +130,7 @@ export default function LeadSourcesPage() {
                     <h1>Lead Sources</h1>
                     <p className="subtitle">
                         Where leads come from, and what each is worth within {data?.window.maturationDays ?? 30} days of the lead
+                        {location !== 'all' && '. Each person counts once, at the location of their first enquiry, with their spend at any location.'}
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>

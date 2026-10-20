@@ -380,7 +380,7 @@ export async function enrichGhlLeadsWithMindBody(
 
     // 1. Pull MindBody email→client map (with revenue summed for the window)
     const emailMap = await getClientEmailMapFromDB(mbStart, mbEnd);
-    const matchedClientIds: string[] = [];
+    const matchedClientIds: Array<{ clientId: string; leadDate: string }> = [];
 
     // 2. Match each GHL lead to a POS client (Zenoti or MindBody history) by email
     for (const lead of leads) {
@@ -391,13 +391,13 @@ export async function enrichGhlLeadsWithMindBody(
             const clientId = String(mb.client.Id);
             lead.mbClientId = clientId;
             lead.mbRevenue = mb.revenue;
-            matchedClientIds.push(clientId);
+            matchedClientIds.push({ clientId, leadDate: lead.createdAt.slice(0, 10) });
         }
     }
 
     // 3. Lookup booked/completed appointments for matched clients
     if (matchedClientIds.length > 0) {
-        const apptMap = await getAppointmentsByClientIds([...new Set(matchedClientIds)], mbStart, mbEnd);
+        const apptMap = await getAppointmentsByClientIds(matchedClientIds);
         for (const lead of leads) {
             if (!lead.mbClientId) continue;
             const appts = apptMap.get(lead.mbClientId);
@@ -410,12 +410,13 @@ export async function enrichGhlLeadsWithMindBody(
 
     // 4. Aggregate totals (no per-campaign breakdown — see function docstring).
     // Matched = the person bought in the window; a $0 client record is not a paying patient.
-    // Appointments count every lead with a client record, once per client.
+    // Bookings count PEOPLE, once per client: leads who booked (non-cancelled, on/after
+    // their earliest lead date) and leads who showed. Per-lead mbBooked stays a count.
     const matched = leads.filter(l => l.mbRevenue > 0);
     const totalRevenue = matched.reduce((s, l) => s + l.mbRevenue, 0);
     const withClient = [...new Map(leads.filter(l => l.mbClientId).map(l => [l.mbClientId, l])).values()];
-    const appointmentsBooked = withClient.reduce((s, l) => s + l.mbBooked, 0);
-    const appointmentsCompleted = withClient.reduce((s, l) => s + l.mbCompleted, 0);
+    const appointmentsBooked = withClient.filter(l => l.mbBooked > 0).length;
+    const appointmentsCompleted = withClient.filter(l => l.mbCompleted > 0).length;
     const totals = {
         totalLeads: leads.length,
         mbMatchedClients: matched.length,

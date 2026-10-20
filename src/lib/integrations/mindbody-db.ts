@@ -172,14 +172,20 @@ export async function getClientEmailMapFromDB(
 // ---------------------------------------------------------------------------
 
 export async function getAppointmentsByClientIds(
-    clientIds: string[],
-    startDate: string,
-    endDate: string,
+    leads: Array<{ clientId: string; leadDate: string }>,
 ): Promise<Map<string, { booked: number; completed: number; noShow: number }>> {
+    // One lead date per client: the earliest. Only appointments on or after it
+    // count, so a prior patient's routine visits before they ever filled in a
+    // form are not credited to the ad. There is deliberately no upper bound: a
+    // lead who books next week's consult has booked.
+    const leadDateByClient = new Map<string, string>();
+    for (const { clientId, leadDate } of leads) {
+        const d = leadDate.slice(0, 10);
+        const prev = leadDateByClient.get(clientId);
+        if (!prev || d < prev) leadDateByClient.set(clientId, d);
+    }
+    const clientIds = [...leadDateByClient.keys()];
     if (clientIds.length === 0) return new Map();
-
-    const start = startDate.split('T')[0];
-    const end = endDate.split('T')[0];
 
     // Count appointments across the requested client's full identity group, not just the
     // one client_id passed in. Post-Zenoti-cutover a lead's MindBody identity (numeric id)
@@ -188,28 +194,36 @@ export async function getAppointmentsByClientIds(
     // every client_id sharing its phone/email, then attributes counts back to the
     // requested id. DISTINCT prevents double-counting a peer matched on both phone+email.
     // Process in chunks to keep the ANY() arrays and joins bounded.
+    //
+    // '\\D' below is deliberate: in a template literal '\D' cooks to 'D', which strips
+    // the letter D rather than non-digits and silently breaks phone matching.
     const allRows: Array<{ client_id: string; status: string; cnt: number }> = [];
     const chunkSize = 50;
     for (let i = 0; i < clientIds.length; i += chunkSize) {
         const chunk = clientIds.slice(i, i + chunkSize);
+        const dates = chunk.map(id => leadDateByClient.get(id)!);
         const result = await sql`
             WITH requested AS (
-                SELECT client_id AS req_id,
-                       NULLIF(RIGHT(regexp_replace(COALESCE(phone,''),'\D','','g'),10),'') AS phone,
-                       NULLIF(LOWER(TRIM(email)),'') AS email
-                FROM mb_clients_cache WHERE client_id = ANY(${chunk})
+                SELECT r.req_id, r.lead_date,
+                       NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') AS phone,
+                       NULLIF(LOWER(TRIM(c.email)),'') AS email
+                FROM unnest(${chunk}::text[], ${dates}::date[]) AS r(req_id, lead_date)
+                JOIN mb_clients_cache c ON c.client_id = r.req_id
             ),
             peers AS (
-                SELECT DISTINCT r.req_id, c.client_id AS peer_id
+                SELECT DISTINCT r.req_id, r.lead_date, c.client_id AS peer_id
                 FROM requested r
                 JOIN mb_clients_cache c
-                  ON (r.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\D','','g'),10),'') = r.phone)
+                  ON c.client_id = r.req_id
+                  OR (r.phone IS NOT NULL AND NULLIF(RIGHT(regexp_replace(COALESCE(c.phone,''),'\\D','','g'),10),'') = r.phone)
                   OR (r.email IS NOT NULL AND NULLIF(LOWER(TRIM(c.email)),'') = r.email)
             )
             SELECT p.req_id AS client_id, a.status, COUNT(*)::int AS cnt
             FROM peers p
             JOIN mb_appointments_history a ON a.client_id = p.peer_id
-            WHERE a.start_date::date BETWEEN ${start} AND ${end}
+            WHERE a.start_date::date >= p.lead_date
+              -- A cancelled slot is not a booking (Zenoti 'Cancelled', MindBody 'LateCancelled').
+              AND COALESCE(a.status, '') NOT ILIKE '%cancel%'
             GROUP BY p.req_id, a.status
         `;
         allRows.push(...result.rows as any[]);
@@ -228,7 +242,8 @@ export async function getAppointmentsByClientIds(
         } else if (status === 'noshow' || status === 'no show') {
             entry.noShow += cnt;
         }
-        // All statuses count as "booked" (they had an appointment created)
+        // Every non-cancelled status counts as booked, no-shows included: they
+        // booked, which is what the show rate divides by.
         entry.booked += cnt;
 
         map.set(clientId, entry);
