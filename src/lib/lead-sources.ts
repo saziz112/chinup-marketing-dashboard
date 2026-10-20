@@ -115,6 +115,8 @@ interface RawLeadRow {
   revenue: string | null;
   revenue_to_date: string | null;
   contactable: boolean;
+  /** The person's one location: that of their earliest contact record. */
+  location_key: string;
 }
 
 /**
@@ -150,7 +152,13 @@ export interface LeadSourceParams {
   to?: string | null;
   /** Days each lead is given to convert. Spec default 30. */
   maturationDays?: number;
-  /** 'decatur' | 'kennesaw' | 'smyrna', or null for all (deduped). */
+  /**
+   * 'decatur' | 'kennesaw' | 'smyrna', or null for all (deduped). A person
+   * with records at several locations belongs to the location of their
+   * EARLIEST record (first touch) and counts there only, so the three
+   * locations always sum to All. Their revenue follows them, wherever they
+   * bought.
+   */
   location?: string | null;
 }
 
@@ -173,8 +181,15 @@ export async function getLeadSourceReport(
   const result = await sql<RawLeadRow>`
     WITH deduped AS (
       -- Rule 1: one row per PERSON, not per sub-account record.
+      --
+      -- The location filter must NOT run here. Filtering before the dedupe
+      -- counted a person once at every location holding a record for them,
+      -- so August's three locations summed to 1,015 leads against an All of
+      -- 702. Dedupe across every location, keep the first-touch record's
+      -- location_key, and filter on that afterwards (in TypeScript, below).
       SELECT DISTINCT ON (COALESCE(NULLIF(phone_normalized, ''), NULLIF(email, ''), contact_id))
              contact_id,
+             location_key,
              phone_normalized,
              email,
              source,
@@ -191,9 +206,11 @@ export async function getLeadSourceReport(
                      AND created_at >= now() - (${maxAge} || ' days')::interval
                END
              )
-         AND (${location}::text IS NULL OR location_key = ${location})
        ORDER BY COALESCE(NULLIF(phone_normalized, ''), NULLIF(email, ''), contact_id),
-                created_at ASC
+                created_at ASC,
+                -- "All Locations" forms create near-simultaneous records;
+                -- break exact ties the same way every time.
+                location_key ASC
     ),
     links AS (
       -- Rule 2: a lead resolves to a PERSON, who may hold several client
@@ -256,6 +273,7 @@ export async function getLeadSourceReport(
         LEFT JOIN ids i ON i.contact_id = d.contact_id
     )
     SELECT m.contact_id,
+           m.location_key,
            m.source,
            m.attribution_source,
            m.attribution_synced_at,
@@ -303,7 +321,10 @@ export async function getLeadSourceReport(
             OR (m.email IS NOT NULL AND m.email <> '')) AS contactable
       FROM matched m
   `;
-  const raw = result.rows;
+  // Each person carries exactly one location, so this partitions All.
+  const raw = location
+    ? result.rows.filter((r) => r.location_key === location)
+    : result.rows;
 
   const byChannel = new Map<Channel, LeadSourceRow>();
   let unbackfilled = 0;
