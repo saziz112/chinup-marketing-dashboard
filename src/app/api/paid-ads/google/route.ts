@@ -3,6 +3,10 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getGoogleAdsData, getGhlGoogleLeads, enrichGhlLeadsWithMindBody, isGoogleAdsConfigured } from '@/lib/integrations/google-ads';
 import { subDays, format } from 'date-fns';
+import { pgCached } from '@/lib/pg-cache';
+
+// The revenue match runs a heavy identity query; an hour matches the ROAS route.
+const ENRICH_CACHE_TTL_HOURS = 1;
 
 const today = new Date();
 const defaultUntil = format(today, 'yyyy-MM-dd');
@@ -28,10 +32,9 @@ export async function GET(request: NextRequest) {
         ]);
 
         // --- Enrich GHL leads with MindBody revenue (account-level totals only) ---
-        const enriched = await enrichGhlLeadsWithMindBody(
-            ghlLeadsResult.opportunities,
-            since,
-            until,
+        // Cached unredacted; role filtering below runs on every request.
+        const enriched = await pgCached(`google_enrich_v1_${since}_${until}`, { ttlHours: ENRICH_CACHE_TTL_HOURS }, () =>
+            enrichGhlLeadsWithMindBody(ghlLeadsResult.opportunities, since, until),
         );
 
         // --- Role-based filtering ---

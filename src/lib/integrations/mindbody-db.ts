@@ -101,7 +101,7 @@ export async function getClientEmailMapFromDB(
     // Zenoti row; a per-client_id GROUP BY would let one of them (with $0
     // window revenue) shadow the other's purchases. The representative row
     // per email is the earliest-created client (usually the original
-    // MindBody record). DISTINCT in peers prevents double-counting a peer
+    // MindBody record). UNION in peers prevents double-counting a peer
     // matched on both phone and email.
     const result = await sql`
         WITH clients AS (
@@ -114,12 +114,16 @@ export async function getClientEmailMapFromDB(
         emailed AS (
             SELECT * FROM clients WHERE norm_email IS NOT NULL
         ),
+        -- Two equi-joins, not one OR join: an OR join can't hash or use an
+        -- index, so it compared every client against every client.
         peers AS (
-            SELECT DISTINCT e.norm_email, c.client_id AS peer_id
+            SELECT e.norm_email, c.client_id AS peer_id
             FROM emailed e
-            JOIN clients c
-              ON c.norm_email = e.norm_email
-              OR (e.norm_phone IS NOT NULL AND c.norm_phone = e.norm_phone)
+            JOIN clients c ON c.norm_email = e.norm_email
+            UNION
+            SELECT e.norm_email, c.client_id
+            FROM emailed e
+            JOIN clients c ON c.norm_phone = e.norm_phone
         ),
         rev AS (
             SELECT p.norm_email, COALESCE(SUM(s.total_amount), 0) AS revenue
