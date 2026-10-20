@@ -1,7 +1,8 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { createLatestRequest } from '@/lib/latest-request';
 import {
     AreaChart, Area, BarChart, Bar,
     XAxis, YAxis, CartesianGrid, Tooltip,
@@ -114,7 +115,10 @@ export default function AdsPage() {
     const user = session?.user as Record<string, unknown> | undefined;
     const isAdmin = user?.isAdmin === true;
 
+    const latestRequest = useRef(createLatestRequest());
+
     const fetchData = useCallback(async () => {
+        const requestId = latestRequest.current.start();
         setLoading(true);
         setError(null);
         try {
@@ -130,6 +134,7 @@ export default function AdsPage() {
                 const res = await fetch(`/api/paid-ads/overview?${params}`);
                 if (!res.ok) throw new Error(`Overview API: HTTP ${res.status}`);
                 const mainJson = await res.json();
+                if (!latestRequest.current.isCurrent(requestId)) return;
                 if (mainJson.error) throw new Error(mainJson.error);
                 setOverviewData(mainJson as OverviewData);
             } else {
@@ -142,6 +147,7 @@ export default function AdsPage() {
                 }
 
                 const results = await Promise.all(requests);
+                if (!latestRequest.current.isCurrent(requestId)) return;
                 if (!results[0].ok) throw new Error(`${isGoogle ? 'Google' : 'Meta'} Ads API: HTTP ${results[0].status}`);
                 const mainJson = await results[0].json();
                 if (mainJson.error) throw new Error(mainJson.error);
@@ -154,14 +160,15 @@ export default function AdsPage() {
 
                 if (!isGoogle && results[1]) {
                     const roasJson = await results[1].json().catch(() => ({}));
+                    if (!latestRequest.current.isCurrent(requestId)) return;
                     if (results[1].ok && !roasJson.error) setRoasData(roasJson as RoasData);
                     else setRoasError(roasJson.error || `HTTP ${results[1].status}`);
                 }
             }
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to load data');
+            if (latestRequest.current.isCurrent(requestId)) setError(e instanceof Error ? e.message : 'Failed to load data');
         } finally {
-            setLoading(false);
+            if (latestRequest.current.isCurrent(requestId)) setLoading(false);
         }
     }, [since, until, isAdmin, activeTab]);
 
