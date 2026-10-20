@@ -4,8 +4,12 @@
  * Called by a GTM tag on form-submit on the chinupaesthetics.com landing pages.
  * Body: { email, gclid, wbraid?, gbraid?, landing_url? }
  *
- * Stores the gclid keyed by email so the nightly offline-conversions cron can
- * later join it to MindBody sales and upload them to Google Ads.
+ * Stores the gclid keyed by email so the daily offline-conversions cron can
+ * later join it to paid Zenoti visits and upload them to Google Ads. Capture runs
+ * whether or not the upload side is configured, so clicks aren't lost while it's off.
+ *
+ * The GTM tag should send the beacon as text/plain: Chrome refuses a cross-origin
+ * sendBeacon with an application/json Blob, and the tag's try/catch hides that.
  *
  * Public on purpose — gclid + email are non-sensitive submission data and the
  * call has to originate from the browser without auth. Use CORS to allow
@@ -44,24 +48,12 @@ export async function POST(req: NextRequest) {
     const origin = req.headers.get('origin');
     const headers = corsHeaders(origin);
 
-    // Parked (2026-07-15): the offline-conversions pipeline this feeds was never
-    // provisioned (gclid_captures table doesn't exist). Ack the beacon with 200 so
-    // site form-submits don't 500. Revive by creating the table + setting the action id.
-    if (!process.env.GOOGLE_ADS_OFFLINE_CONVERSION_ACTION_ID) {
-        return NextResponse.json({ ok: true, parked: true }, { headers });
-    }
-
+    // Read the raw text once: beacons arrive as text/plain or application/json.
     let body: { email?: string; gclid?: string; wbraid?: string; gbraid?: string; landing_url?: string };
     try {
-        body = await req.json();
+        body = JSON.parse(await req.text());
     } catch {
-        // sendBeacon serializes JSON inside a Blob — content type may vary
-        try {
-            const text = await req.text();
-            body = JSON.parse(text);
-        } catch {
-            return NextResponse.json({ ok: false, error: 'invalid json' }, { status: 400, headers });
-        }
+        return NextResponse.json({ ok: false, error: 'invalid json' }, { status: 400, headers });
     }
 
     const email = (body.email || '').toLowerCase().trim();
@@ -86,6 +78,9 @@ export async function POST(req: NextRequest) {
             INSERT INTO gclid_captures (email, gclid, wbraid, gbraid, landing_url, captured_at, updated_at)
             VALUES (${email}, ${gclid}, ${wbraid}, ${gbraid}, ${landingUrl}, NOW(), NOW())
             ON CONFLICT (email) DO UPDATE SET
+                -- captured_at stands in for the click time (90-day window, conversion
+                -- must follow the click), so a new gclid restarts it.
+                captured_at = CASE WHEN gclid_captures.gclid IS DISTINCT FROM EXCLUDED.gclid THEN NOW() ELSE gclid_captures.captured_at END,
                 gclid = EXCLUDED.gclid,
                 wbraid = COALESCE(EXCLUDED.wbraid, gclid_captures.wbraid),
                 gbraid = COALESCE(EXCLUDED.gbraid, gclid_captures.gbraid),
