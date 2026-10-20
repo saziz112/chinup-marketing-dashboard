@@ -1,5 +1,6 @@
 import { subDays, format } from 'date-fns';
 import { google } from 'googleapis';
+import { trackCall } from '@/lib/api-usage-tracker';
 
 export interface GscDailyMetric {
     date: string;
@@ -71,6 +72,7 @@ export async function getSearchConsoleData(periodDays: number = 30): Promise<Gsc
     const now = Date.now();
 
     if (cachedData && cachedData.period === `${periodDays}d` && (now - lastFetchTime) < CACHE_DURATION_MS) {
+        trackCall('googleSearchConsole', 'getSearchConsoleData', true);
         return cachedData;
     }
 
@@ -98,6 +100,7 @@ export async function getSearchConsoleData(periodDays: number = 30): Promise<Gsc
             rowLimit: 1000,
         },
     });
+    trackCall('googleSearchConsole', 'searchanalytics.query:date', false);
 
     const dailyRows = dailyReq.data.rows || [];
     let totalClicks = 0;
@@ -135,6 +138,7 @@ export async function getSearchConsoleData(periodDays: number = 30): Promise<Gsc
             rowLimit: 50,
         },
     });
+    trackCall('googleSearchConsole', 'searchanalytics.query:query', false);
 
     const topQueries: GscQuery[] = (queriesReq.data.rows || []).map(row => ({
         query: row.keys?.[0] || 'Unknown',
@@ -154,6 +158,7 @@ export async function getSearchConsoleData(periodDays: number = 30): Promise<Gsc
             rowLimit: 50,
         },
     });
+    trackCall('googleSearchConsole', 'searchanalytics.query:page', false);
 
     const topPages: GscPage[] = (pagesReq.data.rows || []).map(row => ({
         page: row.keys?.[0] || 'Unknown',

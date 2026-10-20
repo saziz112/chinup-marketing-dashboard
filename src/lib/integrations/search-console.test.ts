@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const query = vi.fn();
+const track = vi.fn();
+vi.mock('@/lib/api-usage-tracker', () => ({ trackCall: (...a: unknown[]) => track(...a) }));
 vi.mock('googleapis', () => ({
     google: {
         auth: { JWT: class {} },
@@ -20,6 +22,7 @@ describe('getSearchConsoleData', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-10-19T12:00:00Z'));
         query.mockReset();
+        track.mockReset();
         vi.spyOn(console, 'error').mockImplementation(() => {});
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -47,5 +50,14 @@ describe('getSearchConsoleData', () => {
         const { startDate, endDate } = query.mock.calls[0][0].requestBody;
         expect(endDate).toBe('2026-10-17');
         expect(startDate).toBe('2026-09-18'); // 9/18..10/17 inclusive = 30 days
+    });
+
+    it('records each Search Console query in API usage, and a cache hit as cached', async () => {
+        query.mockResolvedValue({ data: { rows: [] } });
+        const { getSearchConsoleData } = await load();
+        await getSearchConsoleData(30);
+        await getSearchConsoleData(30);
+        expect(track.mock.calls.filter(c => c[0] === 'googleSearchConsole' && c[2] === false)).toHaveLength(3);
+        expect(track.mock.calls.filter(c => c[0] === 'googleSearchConsole' && c[2] === true)).toHaveLength(1);
     });
 });
