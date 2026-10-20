@@ -402,9 +402,9 @@ export default function AdsPage() {
                         <KpiCard label="Impressions" value={fmtNum(acc?.totalImpressions)} sub={acc?.totalReach != null ? `${fmtNum(acc.totalReach)} reach` : 'Reach not combinable across platforms'} />
                         <KpiCard label="Clicks" value={fmtNum(acc?.totalClicks)} sub={`CTR ${fmtPct(overallCtr)}`} />
                         <KpiCard
-                            label="Leads (Results)"
+                            label={isGoogle ? 'Conversions' : 'Leads (Results)'}
                             value={fmtNum(acc?.totalResults)}
-                            sub={isAdmin && acc?.totalSpend != null && acc.totalResults ? `${fmt$(acc.totalSpend / acc.totalResults)}/lead` : 'conversions'}
+                            sub={`${isAdmin && acc?.totalSpend != null && acc.totalResults ? `${fmt$(acc.totalSpend / acc.totalResults)}/${isGoogle ? 'conv' : 'lead'}` : 'conversions'}${isGoogle ? ' · all actions, calls included' : isOverview ? ' · Google side includes calls' : ''}`}
                         />
                         {isGoogle && googleData?.ghlLeads != null && (
                             <div
@@ -424,7 +424,7 @@ export default function AdsPage() {
                             <KpiCard
                                 label="True ROAS (POS)"
                                 value={`${googleData.ghlTrueRoas.toFixed(2)}x`}
-                                sub={`${fmt$(googleData.ghlTotalRevenue ?? 0)} POS rev · ${googleData.ghlMatchRate ?? 0}% match`}
+                                sub={`${fmt$(googleData.ghlTotalRevenue ?? 0)} POS rev · ${googleData.ghlMatchRate ?? 0}% email match (Lead Sources adds phone)`}
                                 green
                             />
                         )}

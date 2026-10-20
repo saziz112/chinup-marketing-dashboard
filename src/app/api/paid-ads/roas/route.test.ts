@@ -93,4 +93,10 @@ describe('GET /api/paid-ads/roas', () => {
         expect(byId.c1).toMatchObject({ appointmentsBooked: 2, appointmentsCompleted: 1 });
         expect(byId.c2).toMatchObject({ appointmentsBooked: 0, appointmentsCompleted: 0 });
     });
+
+    it('says the match is email-only, so it reads as different from Lead Sources', async () => {
+        h.leads.mockResolvedValue({ leads: [], byCampaign: new Map(), totalLeads: 5, hasLeadForms: true });
+        const res = await GET(new NextRequest('http://x/api/paid-ads/roas?since=2026-09-20&until=2026-10-19'));
+        expect((await res.json()).attributionNote).toMatch(/Lead Sources.*phone/);
+    });
 });

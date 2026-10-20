@@ -290,7 +290,10 @@ export async function GET(request: NextRequest) {
             attributionMethod = 'lead_forms_empty';
             attributionNote = 'Lead forms found but no submissions in this period. Try a wider date range.';
         } else {
-            attributionNote = `${matchedCount} of ${metaLeadsTotal} Meta leads became paying patients in this window, matched by email (${matchRate ?? 0}%)`;
+            // Lead Sources matches on phone as well as email and gives each lead 30 days
+            // from its own date, so it finds more buyers; say so rather than let the two
+            // pages look like they disagree. (Audit H4: one shared matcher is the real fix.)
+            attributionNote = `${matchedCount} of ${metaLeadsTotal} Meta leads became paying patients in this window, matched by email only (${matchRate ?? 0}%). Lead Sources also matches by phone and counts 30 days from each lead, so its numbers run higher.`;
         }
 
         return NextResponse.json({
