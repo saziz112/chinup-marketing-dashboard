@@ -229,6 +229,15 @@ describe('runOfflineConversionUpload', () => {
         expect(h.queries.filter(q => q.text.includes('INSERT INTO google_offline_uploads'))).toHaveLength(0);
     });
 
+    it('also matches visits to the gclid GHL recorded on the lead, not only the website beacon', async () => {
+        h.candidates = [];
+        stubFetch({ body: {} });
+        await runOfflineConversionUpload({ env: ENV, now });
+        const q = h.queries.find(x => x.text.includes('FROM mb_sales_history'))!.text;
+        expect(q).toMatch(/FROM gclid_captures/);
+        expect(q).toMatch(/attribution_source->>'gclid'/);
+    });
+
     it('does not call Google when nothing is pending', async () => {
         h.candidates = [];
         stubFetch({ body: {} });

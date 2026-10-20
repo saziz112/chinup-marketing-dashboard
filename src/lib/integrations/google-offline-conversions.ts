@@ -2,7 +2,7 @@
  * Google Ads offline click conversions: paid Zenoti visits → uploadClickConversions.
  *
  * Path: landing-page form → /api/track/gclid stores (email, gclid, captured_at) in
- * gclid_captures → Zenoti sync fills mb_sales_history / mb_clients_cache → this job
+ * gclid_captures (or GHL records the gclid on the lead's attributionSource) → Zenoti sync fills mb_sales_history / mb_clients_cache → this job
  * joins them by email and uploads one conversion per paid visit-day.
  *
  * Event: a PAID visit (Zenoti Closed invoice lines for one guest on one day, summed;
@@ -322,7 +322,21 @@ export async function runOfflineConversionUpload(opts: {
                g.captured_at
         FROM mb_sales_history s
         JOIN mb_clients_cache c ON c.client_id = s.client_id
-        JOIN gclid_captures g ON g.email = LOWER(TRIM(c.email))
+        JOIN (
+            SELECT email, gclid, captured_at FROM gclid_captures
+            UNION ALL
+            -- GHL offer-page forms record the gclid themselves (first-touch
+            -- attributionSource); the contact's created_at is the form submit.
+            -- The website beacon wins when both exist.
+            SELECT * FROM (
+                SELECT DISTINCT ON (LOWER(TRIM(m.email)))
+                       LOWER(TRIM(m.email)) AS email, m.attribution_source->>'gclid' AS gclid, m.created_at AS captured_at
+                FROM ghl_contacts_map m
+                WHERE m.attribution_source->>'gclid' <> '' AND m.email <> ''
+                  AND NOT EXISTS (SELECT 1 FROM gclid_captures x WHERE x.email = LOWER(TRIM(m.email)))
+                ORDER BY LOWER(TRIM(m.email)), m.created_at DESC
+            ) ghl
+        ) g ON g.email = LOWER(TRIM(c.email))
         WHERE s.sale_date >= ${since}
           AND c.email IS NOT NULL AND c.email <> ''
           AND NOT EXISTS (
