@@ -23,7 +23,8 @@ export async function claudeJson<T>(opts: {
         },
         body: JSON.stringify({
             model: RESEARCH_MODEL,
-            max_tokens: opts.maxTokens ?? 4000,
+            // Sonnet 5.5 thinks by default and thinking counts against max_tokens; a tight cap truncates the JSON.
+            max_tokens: opts.maxTokens ?? 16000,
             system: opts.system,
             messages: [{ role: 'user', content: opts.prompt }],
             output_config: { effort: 'medium', format: { type: 'json_schema', schema: opts.schema } },

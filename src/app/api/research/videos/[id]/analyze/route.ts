@@ -64,7 +64,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 durationSec: v.duration_sec,
             }),
             schema: ANALYSIS_SCHEMA,
-            maxTokens: 2000,
         });
 
         await sql`

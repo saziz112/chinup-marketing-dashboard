@@ -55,7 +55,6 @@ export async function POST(req: NextRequest) {
             system: HOOK_SYSTEM,
             prompt: buildHookPrompt(offer, count, inspiration),
             schema: HOOK_SCHEMA,
-            maxTokens: 3000,
         });
 
         const hooks = draft.hooks
