@@ -27,7 +27,7 @@ export async function pgCacheGet<T>(key: string): Promise<T | null> {
     // Tier 2: Postgres
     try {
         const result = await sql`
-            SELECT cache_data FROM sms_data_cache
+            SELECT cache_data, expires_at FROM sms_data_cache
             WHERE cache_key = ${key} AND expires_at > NOW()
         `;
         if (result.rows.length > 0) {
@@ -38,8 +38,9 @@ export async function pgCacheGet<T>(key: string): Promise<T | null> {
             if (typeof data === 'string') {
                 try { data = JSON.parse(data) as T; } catch { /* not double-encoded — leave as-is */ }
             }
-            // Promote to memory
-            memCache.set(key, { data, expiresAt: Date.now() + MEM_TTL_MS });
+            // Promote to memory, never past the Postgres expiry
+            const pgExpiry = new Date(result.rows[0].expires_at).getTime();
+            memCache.set(key, { data, expiresAt: Math.min(Date.now() + MEM_TTL_MS, pgExpiry || Infinity) });
             return data;
         }
     } catch {
@@ -60,8 +61,8 @@ export async function pgCacheSet(
 ): Promise<void> {
     const ttlHours = opts.ttlHours ?? (opts.ttlDays ?? 3) * 24;
 
-    // Tier 1: memory
-    memCache.set(key, { data, expiresAt: Date.now() + MEM_TTL_MS });
+    // Tier 1: memory (a short TTL like 15 min must not be held for the full 30)
+    memCache.set(key, { data, expiresAt: Date.now() + Math.min(MEM_TTL_MS, ttlHours * 3600_000) });
 
     // Tier 2: Postgres (upsert)
     try {
@@ -78,6 +79,22 @@ export async function pgCacheSet(
     } catch {
         // Silently ignore if table doesn't exist yet
     }
+}
+
+/**
+ * Read-through cache shared across serverless instances: return the cached value,
+ * or run `load`, store its result, and return it. A throwing `load` caches nothing.
+ */
+export async function pgCached<T>(
+    key: string,
+    opts: { ttlHours?: number; ttlDays?: number },
+    load: () => Promise<T>,
+): Promise<T> {
+    const hit = await pgCacheGet<T>(key);
+    if (hit !== null) return hit;
+    const data = await load();
+    await pgCacheSet(key, data, opts);
+    return data;
 }
 
 /**
