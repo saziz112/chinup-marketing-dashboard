@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/api-usage-tracker', () => ({ trackCall: () => {} }));
+const store = vi.hoisted(() => new Map<string, unknown>());
+vi.mock('@/lib/pg-cache', () => ({
+    pgCacheGet: async (k: string) => (store.has(k) ? JSON.parse(JSON.stringify(store.get(k))) : null),
+    pgCacheSet: async (k: string, v: unknown) => { store.set(k, JSON.parse(JSON.stringify(v))); },
+}));
 
 const opp = (id: string, value: number, source: string) => ({
     id, monetaryValue: value, source, pipelineId: 'p1', pipelineStageId: 's1', status: 'open',
@@ -31,6 +36,7 @@ async function load() {
 
 describe('getFullPipelineData', () => {
     beforeEach(() => {
+        store.clear();
         vi.stubEnv('GHL_LOCATION_ID_DECATUR', 'L-d'); vi.stubEnv('GHL_API_KEY_DECATUR', 'k-decatur');
         vi.stubEnv('GHL_LOCATION_ID_SMYRNA', 'L-s'); vi.stubEnv('GHL_API_KEY_SMYRNA', 'k-smyrna');
         vi.stubEnv('GHL_LOCATION_ID_KENNESAW', ''); vi.stubEnv('GHL_API_KEY_KENNESAW', '');

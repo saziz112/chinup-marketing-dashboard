@@ -88,6 +88,30 @@ describe('getFullPipelineData output is unchanged by the parallel + shared-cache
         expect(fingerprint(oneRest)).toMatchSnapshot();
     });
 
+    it('shares one fetch between concurrent cold callers, and a new instance reads the shared cache', async () => {
+        const { getFullPipelineData, getStaleLeads } = await load();
+        await Promise.all([getFullPipelineData(), getStaleLeads()]);
+        const firstRun = calls;
+        // A different serverless instance (fresh module) must not refetch.
+        const fresh = await load();
+        await fresh.getFullPipelineData({ locationFilter: 'decatur' });
+        expect(calls).toBe(firstRun);
+        // 3 locations x (1 pipelines call + 2 pipelines x (3 open pages + 3 counts))
+        expect(firstRun).toBe(3 * (1 + 2 * 6));
+    });
+
+    it('retries a 429 instead of failing the whole pipeline', async () => {
+        const realFetch = globalThis.fetch as unknown as (...a: unknown[]) => Promise<unknown>;
+        let throttled = false;
+        vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0; });
+        vi.stubGlobal('fetch', vi.fn(async (...args: unknown[]) => {
+            if (!throttled) { throttled = true; return { ok: false, status: 429, json: async () => ({}), text: async () => 'slow down' }; }
+            return realFetch(...args);
+        }));
+        const { getFullPipelineData } = await load();
+        await expect(getFullPipelineData()).resolves.toMatchObject({ totals: expect.objectContaining({ totalOpen: 3 * 2 * 207 }) });
+    });
+
     it('matches the recorded stale-lead list', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date('2026-10-19T12:00:00Z'));
