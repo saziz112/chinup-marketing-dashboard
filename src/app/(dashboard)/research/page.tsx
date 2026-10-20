@@ -1,14 +1,14 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     ResearchTab, TABS, MONTH_NAMES,
-    TrendTopic, FeedbackSummary, CalendarDay,
+    TrendTopic, FeedbackSummary,
     SocialTrendIG, SocialTrendYT, MarketData,
     CompetitorWatchData, ContentAnalysisData, TrafficSourceData,
-    TrendScoutTab, ContentCalendarTab, MarketIntelTab,
+    TrendScoutTab, MarketIntelTab,
 } from '@/components/research/ResearchHelpers';
 
 export default function ResearchPage() {
@@ -29,14 +29,6 @@ export default function ResearchPage() {
     const [trendError, setTrendError] = useState<string | null>(null);
     const [feedback, setFeedback] = useState<FeedbackSummary | null>(null);
 
-    // --- Content Calendar state ---
-    const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
-    const [calendarLoading, setCalendarLoading] = useState(false);
-    const [calendarLastGenerated, setCalendarLastGenerated] = useState<string | null>(null);
-    const [calendarError, setCalendarError] = useState<string | null>(null);
-    const [expandedDay, setExpandedDay] = useState<string | null>(null);
-    const [calendarLoadingFromDB, setCalendarLoadingFromDB] = useState(false);
-
     // --- Market Intel state ---
     const [igTrends, setIgTrends] = useState<SocialTrendIG[]>([]);
     const [ytTrends, setYtTrends] = useState<SocialTrendYT[]>([]);
@@ -53,27 +45,6 @@ export default function ResearchPage() {
     const [trafficLoading, setTrafficLoading] = useState(false);
     const [trafficError, setTrafficError] = useState<string | null>(null);
     const [competitorError, setCompetitorError] = useState<string | null>(null);
-
-    // --- Calendar Persistence ---
-    const loadSavedCalendar = useCallback(async (m: number, y: number) => {
-        setCalendarLoadingFromDB(true);
-        try {
-            const res = await fetch(`/api/research/calendar?month=${m}&year=${y}`);
-            const data = await res.json();
-            if (data.saved && data.days?.length) {
-                setCalendarDays(data.days);
-                const dt = new Date(data.createdAt);
-                setCalendarLastGenerated(dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString());
-            }
-        } catch { /* no saved calendar */ }
-        setCalendarLoadingFromDB(false);
-    }, []);
-
-    useEffect(() => {
-        if (activeTab === 'Content Calendar' && calendarDays.length === 0) {
-            loadSavedCalendar(selectedMonth, selectedYear);
-        }
-    }, [activeTab, selectedMonth, selectedYear, loadSavedCalendar]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // --- Trend Scout ---
     const generateTrends = async () => {
@@ -96,33 +67,6 @@ export default function ResearchPage() {
             setTrendError(e.message);
         } finally {
             setTrendLoading(false);
-        }
-    };
-
-    // --- Content Calendar ---
-    const generateCalendar = async () => {
-        setCalendarLoading(true);
-        setCalendarError(null);
-        try {
-            const res = await fetch('/api/research/calendar', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    month: selectedMonth,
-                    year: selectedYear,
-                    savedTopics: trends.length > 0 ? trends : undefined,
-                }),
-            });
-            const text = await res.text();
-            let data: any = {};
-            try { data = text ? JSON.parse(text) : {}; } catch { /* non-JSON body (e.g. Vercel timeout page) */ }
-            if (!res.ok) throw new Error(data.error || text.slice(0, 200) || `Failed to generate calendar (${res.status})`);
-            setCalendarDays(data.days || []);
-            setCalendarLastGenerated(new Date().toLocaleTimeString());
-        } catch (e: any) {
-            setCalendarError(e.message);
-        } finally {
-            setCalendarLoading(false);
         }
     };
 
@@ -189,42 +133,6 @@ export default function ResearchPage() {
             .finally(() => setMarketLoading(false));
     };
 
-    // --- Month Navigation ---
-    const goMonth = (delta: number) => {
-        let m = selectedMonth + delta;
-        let y = selectedYear;
-        if (m > 12) { m = 1; y++; }
-        if (m < 1) { m = 12; y--; }
-        setSelectedMonth(m);
-        setSelectedYear(y);
-    };
-
-    // --- Calendar Grid Helpers ---
-    const calendarGrid = useMemo(() => {
-        if (calendarDays.length === 0) return [];
-        const firstDay = new Date(selectedYear, selectedMonth - 1, 1).getDay();
-        const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
-        const grid: (CalendarDay | null)[] = [];
-        for (let i = 0; i < firstDay; i++) grid.push(null);
-        for (let d = 1; d <= daysInMonth; d++) {
-            const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const dayData = calendarDays.find(cd => cd.date === dateStr);
-            grid.push(dayData || null);
-        }
-        return grid;
-    }, [calendarDays, selectedMonth, selectedYear]);
-
-    const calendarSummary = useMemo(() => {
-        if (calendarDays.length === 0) return null;
-        const byPlatform: Record<string, number> = {};
-        const byCategory: Record<string, number> = {};
-        for (const d of calendarDays) {
-            byPlatform[d.platform] = (byPlatform[d.platform] || 0) + 1;
-            byCategory[d.category] = (byCategory[d.category] || 0) + 1;
-        }
-        return { byPlatform, byCategory, total: calendarDays.length };
-    }, [calendarDays]);
-
     if (!session) return null;
 
     // ================================================================
@@ -258,25 +166,6 @@ export default function ResearchPage() {
                     trendLoading={trendLoading}
                     trendLastGenerated={trendLastGenerated}
                     trendError={trendError}
-                    trends={trends}
-                />
-            )}
-            {activeTab === 'Content Calendar' && (
-                <ContentCalendarTab
-                    selectedMonth={selectedMonth}
-                    selectedYear={selectedYear}
-                    goMonth={goMonth}
-                    generateCalendar={generateCalendar}
-                    calendarLoading={calendarLoading}
-                    calendarLoadingFromDB={calendarLoadingFromDB}
-                    calendarDays={calendarDays}
-                    calendarError={calendarError}
-                    calendarLastGenerated={calendarLastGenerated}
-                    expandedDay={expandedDay}
-                    setExpandedDay={setExpandedDay}
-                    setCalendarError={setCalendarError}
-                    calendarGrid={calendarGrid}
-                    calendarSummary={calendarSummary}
                     trends={trends}
                 />
             )}

@@ -147,7 +147,7 @@ export default function KnowledgeBasePage() {
                                     { icon: 'Organic', route: '/organic', desc: 'Instagram, Facebook, YouTube, and TikTok organic performance' },
                                     { icon: 'Paid Ads', route: '/ads', desc: 'Meta Ads and Google Ads campaign performance + ROAS' },
                                     { icon: 'Leads & Pipeline', route: '/attribution', desc: 'GHL pipeline summary, conversation-based lead outreach, campaigns' },
-                                    { icon: 'Research', route: '/research', desc: 'Social trends, competitor analysis, content calendar, market intel' },
+                                    { icon: 'Research', route: '/research', desc: 'Social trends, competitor analysis, market intel' },
                                     { icon: 'Knowledge', route: '/knowledge', desc: 'This page — documentation for all dashboard features' },
                                     { icon: 'Settings', route: '/settings', desc: 'Admin: manage users, connect accounts, monitor API usage, trigger syncs' },
                                 ].map(item => (
@@ -424,17 +424,6 @@ export default function KnowledgeBasePage() {
                                 'Focus filters: seasonal, competitor gap, trending, evergreen, local',
                                 'Actionable content briefs with suggested formats, hooks, and CTAs',
                                 'Copy-to-clipboard for quick content creation',
-                            ]}
-                        />
-                        <Feature
-                            name="Content Calendar"
-                            source="Claude AI + real business data context"
-                            features={[
-                                'AI-generated monthly content calendar tailored to your business',
-                                'Incorporates real data: top-performing posts, audience insights, seasonal trends',
-                                'Calendar grid with day-by-day content suggestions',
-                                'Queue button to add calendar items directly to publishing queue',
-                                'Month navigation with regeneration on demand',
                             ]}
                         />
                         <Feature
