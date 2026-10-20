@@ -76,12 +76,24 @@ interface ApifyRunResult {
  * Polls every 5 seconds, times out after 55 seconds (within Vercel's 60s limit).
  */
 async function runActor(input: Record<string, unknown>): Promise<any[]> {
+    return runApifyActor(ACTOR_ID, input);
+}
+
+/**
+ * Run any Apify actor and return its dataset items. `timeoutMs` defaults to 55s;
+ * routes with a longer maxDuration can pass more.
+ */
+export async function runApifyActor(
+    actorId: string,
+    input: Record<string, unknown>,
+    { timeoutMs = 55_000 }: { timeoutMs?: number } = {},
+): Promise<any[]> {
     const token = getToken();
     trackCall('apify', 'runActor', false);
 
     // Start the actor run
     const startRes = await fetch(
-        `${APIFY_BASE}/acts/${ACTOR_ID}/runs?token=${token}`,
+        `${APIFY_BASE}/acts/${actorId}/runs?token=${token}`,
         {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -100,7 +112,7 @@ async function runActor(input: Record<string, unknown>): Promise<any[]> {
 
     // Poll for completion (max 55 seconds to stay within Vercel's 60s timeout)
     const startTime = Date.now();
-    const TIMEOUT_MS = 55_000;
+    const TIMEOUT_MS = timeoutMs;
     const POLL_INTERVAL = 5_000;
 
     while (Date.now() - startTime < TIMEOUT_MS) {

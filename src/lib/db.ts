@@ -39,6 +39,7 @@ export async function initAllTables() {
     ]);
     // Phase 2: tables with FK dependencies
     await initCampaignContactsTable();
+    await initContentResearchTables();
 }
 
 async function initUsersTable() {
@@ -591,4 +592,96 @@ async function initGoogleOfflineUploadsTable() {
         )
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_google_uploads_uploaded ON google_offline_uploads(uploaded_at DESC)`;
+}
+
+// --- Content research (viral outliers): watchlist, scraped videos, analyses, saved ideas ---
+
+export async function initContentResearchTables() {
+    await sql`
+        CREATE TABLE IF NOT EXISTS research_watchlist (
+            id SERIAL PRIMARY KEY,
+            platform VARCHAR(20) NOT NULL,
+            handle VARCHAR(100) NOT NULL,
+            display_name VARCHAR(200),
+            category VARCHAR(30) DEFAULT 'other',
+            active BOOLEAN DEFAULT TRUE,
+            median_views BIGINT,
+            video_count INT DEFAULT 0,
+            last_scraped_at TIMESTAMPTZ,
+            last_error TEXT,
+            added_by VARCHAR(255),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE (platform, handle)
+        )
+    `;
+    await sql`
+        CREATE TABLE IF NOT EXISTS research_videos (
+            id SERIAL PRIMARY KEY,
+            platform VARCHAR(20) NOT NULL,
+            external_id VARCHAR(100) NOT NULL,
+            account_id INT REFERENCES research_watchlist(id) ON DELETE CASCADE,
+            url TEXT NOT NULL,
+            caption TEXT,
+            views BIGINT,
+            likes BIGINT,
+            comments BIGINT,
+            shares BIGINT,
+            duration_sec INT,
+            posted_at TIMESTAMPTZ,
+            thumbnail_url TEXT,
+            transcript TEXT,
+            transcript_source VARCHAR(30),
+            scraped_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE (platform, external_id)
+        )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_research_videos_account ON research_videos(account_id)`;
+    await sql`
+        CREATE TABLE IF NOT EXISTS research_video_analyses (
+            video_id INT PRIMARY KEY REFERENCES research_videos(id) ON DELETE CASCADE,
+            model VARCHAR(60) NOT NULL,
+            analysis JSONB NOT NULL,
+            transcript_used BOOLEAN DEFAULT FALSE,
+            created_by VARCHAR(255),
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`
+        CREATE TABLE IF NOT EXISTS research_saved_ideas (
+            id SERIAL PRIMARY KEY,
+            collection VARCHAR(100) NOT NULL DEFAULT 'Winners',
+            kind VARCHAR(20) NOT NULL,
+            video_id INT REFERENCES research_videos(id) ON DELETE SET NULL,
+            title TEXT NOT NULL,
+            body JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_by VARCHAR(255),
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+    await sql`
+        CREATE TABLE IF NOT EXISTS research_scrape_runs (
+            id SERIAL PRIMARY KEY,
+            platform VARCHAR(20) NOT NULL,
+            account_count INT NOT NULL DEFAULT 0,
+            item_count INT NOT NULL DEFAULT 0,
+            est_cost_usd NUMERIC(8,3) NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'running',
+            error TEXT,
+            started_by VARCHAR(255),
+            started_at TIMESTAMPTZ DEFAULT NOW(),
+            finished_at TIMESTAMPTZ
+        )
+    `;
+}
+
+// The global init only runs via the admin endpoint, so routes self-migrate once per instance.
+let contentResearchReady: Promise<void> | null = null;
+export function ensureContentResearchTables(): Promise<void> {
+    if (!contentResearchReady) {
+        contentResearchReady = initContentResearchTables().catch(err => {
+            contentResearchReady = null;
+            throw err;
+        });
+    }
+    return contentResearchReady;
 }
