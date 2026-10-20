@@ -1,7 +1,7 @@
 /**
  * GET /api/research/market?month=4&year=2026
  * Internal data aggregation for Market Intel tab.
- * Pulls from: social_posts, search_console_daily, mb_appointments_history, ghl_contacts_map
+ * Pulls from: social_posts, search_console_daily, mb_appointments_history, lead-sources report
  * + Claude AI for promotion ideas based on collected data.
  */
 
@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { sql } from '@/lib/db/sql';
+import { getLeadSourceReport } from '@/lib/lead-sources';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
@@ -79,21 +80,8 @@ export async function GET(req: NextRequest) {
                 ORDER BY count DESC
                 LIMIT 10
             `,
-            // Lead sources from GHL contacts
-            sql`
-                SELECT
-                    COALESCE(
-                        NULLIF(TRIM(BOTH '"' FROM (tags->0)::text), ''),
-                        source,
-                        'Untagged'
-                    ) AS source,
-                    COUNT(*)::int AS count
-                FROM ghl_contacts_map
-                WHERE created_at > NOW() - INTERVAL '90 days'
-                GROUP BY source
-                ORDER BY count DESC
-                LIMIT 10
-            `,
+            // Same channels and dedup as the Lead Sources page, so the two can't disagree.
+            getLeadSourceReport({ minAgeDays: 0, maxAgeDays: 90 }),
         ]);
 
         const topPosts = topPostsRes.status === 'fulfilled'
@@ -127,11 +115,9 @@ export async function GET(req: NextRequest) {
             : [];
 
         const topSources = sourcesRes.status === 'fulfilled'
-            ? sourcesRes.value.rows.map(s => ({
-                source: String(s.source).replace(/"/g, ''),
-                count: Number(s.count) || 0,
-                trend: 'flat' as const,
-            }))
+            ? [...sourcesRes.value.rows]
+                .sort((a, b) => b.leads - a.leads)
+                .map(r => ({ source: r.channel, count: r.leads, trend: 'flat' as const }))
             : [];
 
         // Generate promotion ideas using Claude (if API key available)
