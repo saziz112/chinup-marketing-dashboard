@@ -83,7 +83,8 @@ export async function GET(request: NextRequest) {
                 isShort: v.isShort,
             }));
 
-        const aiCoachingPlan = await generateAIYTCoachingPlan({
+        // coaching=0: the caller (Overview) only shows the numbers; skip the slow Claude call
+        const aiCoachingPlan = searchParams.get('coaching') === '0' ? null : await generateAIYTCoachingPlan({
             period: periodParam as '7d' | '30d' | '90d',
             channelTitle: channel.title,
             metrics: {

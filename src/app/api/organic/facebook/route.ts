@@ -100,7 +100,8 @@ export async function GET(request: NextRequest) {
             : 0;
 
         // AI coaching — cached 12h, returns null on failure
-        const aiCoachingPlan = await generateAIFBCoachingPlan({
+        // coaching=0: the caller (Overview) only shows the numbers; skip the slow Claude call
+        const aiCoachingPlan = searchParams.get('coaching') === '0' ? null : await generateAIFBCoachingPlan({
             period: periodParam as '7d' | '30d' | '90d',
             pageName: pageInfo.name,
             metrics: {

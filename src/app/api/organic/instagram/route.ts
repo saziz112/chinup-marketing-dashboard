@@ -171,7 +171,8 @@ export async function GET(request: NextRequest) {
                 const bER = ((b.likeCount + b.commentsCount + (b.shares || 0) + (b.saved || 0)) / (b.reach || 1)) * 100;
                 return bER - aER;
             });
-        const aiCoachingPlan = await generateAICoachingPlan({
+        // coaching=0: the caller (Overview) only shows the numbers; skip the slow Claude call
+        const aiCoachingPlan = searchParams.get('coaching') === '0' ? null : await generateAICoachingPlan({
             period: periodParam as '7d' | '30d' | '90d',
             metrics: {
                 reelsPerWeek,

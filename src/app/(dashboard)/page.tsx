@@ -111,9 +111,9 @@ export default function OverviewPage() {
             setSocialLoading(true);
 
             const [igData, fbData, ytData] = await Promise.all([
-                safeFetch(`/api/organic/instagram?period=${period}`, 'Instagram'),
-                safeFetch(`/api/organic/facebook?period=${period}`, 'Facebook'),
-                safeFetch(`/api/organic/youtube?period=${period}`, 'YouTube'),
+                safeFetch(`/api/organic/instagram?period=${period}&coaching=0`, 'Instagram'),
+                safeFetch(`/api/organic/facebook?period=${period}&coaching=0`, 'Facebook'),
+                safeFetch(`/api/organic/youtube?period=${period}&coaching=0`, 'YouTube'),
             ]);
 
             setPlatforms(prev => {
