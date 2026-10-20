@@ -12,6 +12,9 @@ import { format, parseISO, subDays } from 'date-fns';
 import { DateRangePicker } from '@/components/DateRangePicker';
 import { SkeletonKpiCard, SkeletonChart, SkeletonTable } from '@/components/Skeleton';
 import MetaTokenBanner from '@/components/MetaTokenBanner';
+import { AlertTriangle, X } from 'lucide-react';
+import { AXIS_PROPS, GRID_PROPS, TOOLTIP_STYLE } from '@/lib/constants';
+import { useIsNarrow } from '@/lib/use-is-narrow';
 import { fmt$, fmtNum, fmtPct } from '@/lib/format';
 import { gradeAllMetrics } from '@/lib/ads-benchmarks';
 import {
@@ -94,6 +97,8 @@ type Tab = typeof TABS[number];
 
 export default function AdsPage() {
     const { data: session } = useSession();
+    const isNarrow = useIsNarrow();
+    const nameMax = isNarrow ? 16 : 30;
     const [activeTab, setActiveTab] = useState<Tab>('Overview');
     const [since, setSince] = useState(() => format(subDays(new Date(), 29), 'yyyy-MM-dd'));
     const [until, setUntil] = useState(() => format(new Date(), 'yyyy-MM-dd'));
@@ -286,13 +291,13 @@ export default function AdsPage() {
     return (
         <>
             <div className="page-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="title-row">
                     <h1>Paid Ads</h1>
                     {data?.isMock && (
-                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: '#f59e0b22', color: '#f59e0b', border: '1px solid #f59e0b44' }}>Demo Data</span>
+                        <span className="pill pill-warning">Demo Data</span>
                     )}
                     {data?.isConfigured && !data.isMock && (
-                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}>Live</span>
+                        <span className="pill pill-success pill-dot">Live</span>
                     )}
                 </div>
                 <p className="subtitle">Campaign performance and ROI across ad platforms</p>
@@ -301,13 +306,13 @@ export default function AdsPage() {
             <MetaTokenBanner />
 
             {/* Tab + Period Controls */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+            <div className="page-toolbar">
                 <div className="sub-tabs">
                     {TABS.map(tab => (
-                        <button key={tab} className={`sub-tab ${activeTab === tab ? 'active' : ''}`} onClick={() => setActiveTab(tab)}>{tab}</button>
+                        <button key={tab} aria-pressed={activeTab === tab} className={`sub-tab ${activeTab === tab ? 'active' : ''}`} onClick={() => setActiveTab(tab)}>{tab}</button>
                     ))}
                 </div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <div>
                     <DateRangePicker
                         since={since}
                         until={until}
@@ -321,7 +326,7 @@ export default function AdsPage() {
 
             {loading && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-                    <div className="metrics-grid">
+                    <div className="metrics-grid kpi-grid" style={{ marginBottom: 0 }}>
                         <SkeletonKpiCard />
                         <SkeletonKpiCard />
                         <SkeletonKpiCard />
@@ -333,14 +338,12 @@ export default function AdsPage() {
             )}
 
             {error && !loading && (
-                <div className="section-card" style={{ border: '1px solid #ef444444', background: 'rgba(239, 68, 68, 0.05)' }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                        <span style={{ fontSize: 20 }}>⚠️</span>
-                        <div>
-                            <strong style={{ color: '#ef4444' }}>Error loading data</strong>
-                            <p style={{ color: 'var(--text-muted)', marginTop: 4, fontSize: 14 }}>{error}</p>
-                            <button className="btn-primary" style={{ marginTop: 12 }} onClick={fetchData}>Retry</button>
-                        </div>
+                <div className="state-card is-error" role="alert">
+                    <div className="state-icon"><AlertTriangle size={18} aria-hidden="true" /></div>
+                    <div>
+                        <div className="state-title">Error loading data</div>
+                        <p className="state-msg">{error}</p>
+                        <button className="btn" onClick={fetchData}>Retry</button>
                     </div>
                 </div>
             )}
@@ -349,37 +352,33 @@ export default function AdsPage() {
                 <>
                     {/* Setup prompt for Meta Ads */}
                     {isAdmin && (isMeta ? !metaData?.isConfigured : isOverview ? !overviewData?.isConfigured.meta : false) && (
-                        <div className="section-card" style={{ borderColor: '#f59e0b44', marginBottom: 20 }}>
-                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                                <span style={{ fontSize: 20 }}>⚠️</span>
-                                <div>
-                                    <strong style={{ color: '#f59e0b' }}>Connect your Meta Ads account</strong>
-                                    <p style={{ color: 'var(--text-muted)', marginTop: 4, fontSize: 13 }}>
-                                        Add <code style={{ color: 'var(--accent)' }}>META_ADS_ACCESS_TOKEN</code> to <code>.env.local</code> with <code>ads_read</code> permission.
-                                    </p>
-                                </div>
+                        <div className="state-card is-warn">
+                            <div className="state-icon"><AlertTriangle size={18} aria-hidden="true" /></div>
+                            <div>
+                                <div className="state-title">Connect your Meta Ads account</div>
+                                <p className="state-msg">
+                                    Add <code>META_ADS_ACCESS_TOKEN</code> to <code>.env.local</code> with <code>ads_read</code> permission.
+                                </p>
                             </div>
                         </div>
                     )}
 
                     {/* Setup prompt for Google Ads */}
                     {isAdmin && (isGoogle ? !googleData?.isConfigured : isOverview ? !overviewData?.isConfigured.google : false) && (
-                        <div className="section-card" style={{ borderColor: '#f59e0b44', marginBottom: 20 }}>
-                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                                <span style={{ fontSize: 20 }}>⚠️</span>
-                                <div>
-                                    <strong style={{ color: '#f59e0b' }}>Connect your Google Ads account</strong>
-                                    <p style={{ color: 'var(--text-muted)', marginTop: 4, fontSize: 13 }}>
-                                        Add Developer Token and OAuth credentials to <code>.env.local</code>.
-                                    </p>
-                                </div>
+                        <div className="state-card is-warn">
+                            <div className="state-icon"><AlertTriangle size={18} aria-hidden="true" /></div>
+                            <div>
+                                <div className="state-title">Connect your Google Ads account</div>
+                                <p className="state-msg">
+                                    Add Developer Token and OAuth credentials to <code>.env.local</code>.
+                                </p>
                             </div>
                         </div>
                     )}
 
                     {/* True ROAS Banner (Admin) - Only on Meta Ads for now */}
                     {isAdmin && roasError && isMeta && (
-                        <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: 16 }}>True ROAS unavailable: {roasError}</div>
+                        <div className="callout is-warn">True ROAS unavailable: {roasError}</div>
                     )}
                     {isAdmin && roasData && isMeta && (
                         <TrueRoasBanner roas={roasData} isMock={roasData.isMock} onOpenDetails={() => setShowRoasModal(true)} />
@@ -395,7 +394,7 @@ export default function AdsPage() {
                     )}
 
                     {/* KPI Cards */}
-                    <div className="metrics-grid" style={{ marginBottom: 24 }}>
+                    <div className="metrics-grid kpi-grid" style={{ marginBottom: 24 }}>
                         {isAdmin && (
                             <KpiCard label="Total Spend" value={fmt$(acc?.totalSpend)} sub={`${acc?.currency || 'USD'} • ${periodLabel}`} gold />
                         )}
@@ -408,8 +407,11 @@ export default function AdsPage() {
                         />
                         {isGoogle && googleData?.ghlLeads != null && (
                             <div
+                                className={googleData.ghlLeads ? 'kpi-click' : undefined}
                                 onClick={() => googleData.ghlLeads && setShowGhlModal(true)}
-                                style={{ cursor: googleData.ghlLeads ? 'pointer' : 'default' }}
+                                onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && googleData.ghlLeads) { e.preventDefault(); setShowGhlModal(true); } }}
+                                role={googleData.ghlLeads ? 'button' : undefined}
+                                tabIndex={googleData.ghlLeads ? 0 : undefined}
                                 title={googleData.ghlLeads ? 'Click to see lead details' : ''}
                             >
                                 <KpiCard
@@ -458,42 +460,43 @@ export default function AdsPage() {
 
                     {/* Trend Chart */}
                     {chartData.length > 1 && (
-                        <div className="section-card" style={{ marginBottom: 24 }}>
-                            <h3 style={{ marginBottom: 16 }}>
-                                {isAdmin ? 'Spend, Clicks & Leads' : 'Clicks & Leads'} — {periodLabel}
-                            </h3>
-                            <ResponsiveContainer width="100%" height={240}>
-                                <AreaChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                        <div className="chart-container">
+                            <div className="card-head">
+                                <h3>{isAdmin ? 'Spend, Clicks & Leads' : 'Clicks & Leads'}</h3>
+                                <span className="card-meta">{periodLabel}</span>
+                            </div>
+                            <ResponsiveContainer width="100%" height={isNarrow ? 220 : 260}>
+                                <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                                     <defs>
                                         <linearGradient id="spendGrad" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.3} />
-                                            <stop offset="95%" stopColor="var(--accent)" stopOpacity={0} />
+                                            <stop offset="5%" stopColor="var(--chart-spend)" stopOpacity={0.28} />
+                                            <stop offset="95%" stopColor="var(--chart-spend)" stopOpacity={0} />
                                         </linearGradient>
                                         <linearGradient id="clickGrad" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
-                                            <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
+                                            <stop offset="5%" stopColor="var(--chart-clicks)" stopOpacity={0.22} />
+                                            <stop offset="95%" stopColor="var(--chart-clicks)" stopOpacity={0} />
                                         </linearGradient>
                                         <linearGradient id="leadGrad" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
-                                            <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                                            <stop offset="5%" stopColor="var(--chart-leads)" stopOpacity={0.22} />
+                                            <stop offset="95%" stopColor="var(--chart-leads)" stopOpacity={0} />
                                         </linearGradient>
                                     </defs>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} interval="preserveStartEnd" />
-                                    <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
-                                    <Tooltip content={<CustomTooltip isAdmin={isAdmin} />} />
-                                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                                    <CartesianGrid {...GRID_PROPS} />
+                                    <XAxis dataKey="date" {...AXIS_PROPS} interval="preserveStartEnd" minTickGap={24} />
+                                    <YAxis {...AXIS_PROPS} width={40} />
+                                    <Tooltip content={<CustomTooltip isAdmin={isAdmin} />} cursor={{ stroke: 'rgba(255,255,255,0.15)' }} />
+                                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
                                     {isAdmin && !isOverview && (
-                                        <Area type="monotone" dataKey="Spend" stroke={isGoogle ? '#EA4335' : 'var(--accent)'} fill="url(#spendGrad)" strokeWidth={2} dot={false} />
+                                        <Area type="monotone" dataKey="Spend" stroke={isGoogle ? 'var(--chart-google)' : 'var(--chart-spend)'} fill="url(#spendGrad)" strokeWidth={2} dot={false} />
                                     )}
                                     {isAdmin && isOverview && (
                                         <>
-                                            <Area type="monotone" dataKey="Meta Spend" stackId="1" stroke="var(--accent)" fill="url(#spendGrad)" strokeWidth={2} dot={false} />
-                                            <Area type="monotone" dataKey="Google Spend" stackId="1" stroke="#EA4335" fill="url(#spendGrad)" strokeWidth={2} dot={false} />
+                                            <Area type="monotone" dataKey="Meta Spend" stackId="1" stroke="var(--chart-spend)" fill="url(#spendGrad)" strokeWidth={2} dot={false} />
+                                            <Area type="monotone" dataKey="Google Spend" stackId="1" stroke="var(--chart-google)" fill="url(#spendGrad)" strokeWidth={2} dot={false} />
                                         </>
                                     )}
-                                    <Area type="monotone" dataKey="Clicks" stroke="#60a5fa" fill="url(#clickGrad)" strokeWidth={2} dot={false} />
-                                    <Area type="monotone" dataKey="Leads" stroke="#22c55e" fill="url(#leadGrad)" strokeWidth={2} dot={false} />
+                                    <Area type="monotone" dataKey="Clicks" stroke="var(--chart-clicks)" fill="url(#clickGrad)" strokeWidth={2} dot={false} />
+                                    <Area type="monotone" dataKey="Leads" stroke="var(--chart-leads)" fill="url(#leadGrad)" strokeWidth={2} dot={false} />
                                 </AreaChart>
                             </ResponsiveContainer>
                         </div>
@@ -501,27 +504,27 @@ export default function AdsPage() {
 
                     {/* Leads by Campaign Bar Chart */}
                     {filteredForChart.length > 0 && (
-                        <div className="section-card" style={{ marginBottom: 24 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                        <div className="chart-container">
+                            <div className="card-head">
                                 <h3>Leads by Campaign</h3>
-                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                <span className="card-meta">
                                     {statusFilter !== 'ALL' ? `${statusFilter.charAt(0) + statusFilter.slice(1).toLowerCase()} only` : 'All campaigns'}
                                 </span>
                             </div>
                             <ResponsiveContainer width="100%" height={Math.max(80, filteredForChart.length * 48)}>
                                 <BarChart
                                     data={filteredForChart.map(c => ({
-                                        name: c.name.length > 30 ? c.name.slice(0, 30) + '…' : c.name,
+                                        name: c.name.length > nameMax ? c.name.slice(0, nameMax) + '…' : c.name,
                                         Leads: c.results,
                                     }))}
                                     layout="vertical"
-                                    margin={{ left: 0, right: 40, top: 0, bottom: 0 }}
+                                    margin={{ left: 0, right: 16, top: 0, bottom: 0 }}
                                 >
-                                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-                                    <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
-                                    <YAxis dataKey="name" type="category" width={200} tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} />
-                                    <Tooltip contentStyle={{ background: '#1a2332', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
-                                    <Bar dataKey="Leads" fill="var(--accent)" radius={[0, 4, 4, 0]} maxBarSize={24} />
+                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" horizontal={false} />
+                                    <XAxis type="number" {...AXIS_PROPS} allowDecimals={false} />
+                                    <YAxis dataKey="name" type="category" width={isNarrow ? 116 : 220} stroke="transparent" tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} />
+                                    <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                                    <Bar dataKey="Leads" fill="var(--chart-spend)" radius={[0, 4, 4, 0]} maxBarSize={22} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
@@ -529,9 +532,9 @@ export default function AdsPage() {
 
                     {/* Campaigns Table */}
                     <div className="section-card">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <div className="card-head">
                             <h3>Campaigns</h3>
-                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{campaigns.length} total</span>
+                            <span className="card-meta">{campaigns.length} total</span>
                         </div>
                         <CampaignsTable
                             campaigns={campaigns}
@@ -557,26 +560,18 @@ export default function AdsPage() {
 
             {/* ROAS Details Modal */}
             {showRoasModal && roasData && (
-                <div style={{
-                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100,
-                    background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24
-                }}>
-                    <div style={{
-                        background: '#1a2332', border: '1px solid var(--border)', borderRadius: 16,
-                        width: '100%', maxWidth: 900, maxHeight: '90vh', display: 'flex', flexDirection: 'column',
-                        boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
-                    }}>
-                        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="modal-overlay" onClick={() => setShowRoasModal(false)}>
+                    <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="roas-modal-title" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
                             <div>
-                                <h2 style={{ margin: 0 }}>ROAS Reconciliation Details</h2>
-                                <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: 13 }}>
+                                <h2 id="roas-modal-title">ROAS Reconciliation Details</h2>
+                                <p>
                                     Matching Meta Leads to purchasing patients (Zenoti + MindBody history) by email address.
                                 </p>
                             </div>
-                            <button onClick={() => setShowRoasModal(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 24 }}>&times;</button>
+                            <button className="icon-btn" onClick={() => setShowRoasModal(false)} aria-label="Close"><X size={20} aria-hidden="true" /></button>
                         </div>
-                        <div style={{ padding: 24, overflowY: 'auto' }}>
+                        <div className="modal-body">
                             {roasData.matchedClientsDetails && roasData.matchedClientsDetails.length > 0 ? (
                                 <div className="data-table-wrapper"><table className="data-table">
                                     <thead>
@@ -596,7 +591,7 @@ export default function AdsPage() {
                                                 <td style={{ fontWeight: 500 }}>{m.clientName || 'Unknown'}</td>
                                                 <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{m.email}</td>
                                                 <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{m.campaignName || m.campaignId}</td>
-                                                <td style={{ color: '#22c55e', fontWeight: 600 }}>
+                                                <td style={{ color: 'var(--success)', fontWeight: 600 }}>
                                                     {fmt$(m.revenue)}
                                                     {m.isSplit && <span style={{ fontSize: 10, padding: '2px 4px', borderRadius: 4, background: '#f59e0b22', color: '#f59e0b', marginLeft: 6, fontWeight: 500 }} title="Revenue split equally across multiple lead forms from this patient">Split</span>}
                                                 </td>
@@ -633,26 +628,18 @@ export default function AdsPage() {
             )}
 
             {showGhlModal && googleData?.ghlLeadsDetails && (
-                <div style={{
-                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100,
-                    background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24
-                }} onClick={() => setShowGhlModal(false)}>
-                    <div onClick={e => e.stopPropagation()} style={{
-                        background: '#1a2332', border: '1px solid var(--border)', borderRadius: 16,
-                        width: '100%', maxWidth: 1000, maxHeight: '90vh', display: 'flex', flexDirection: 'column',
-                        boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
-                    }}>
-                        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="modal-overlay" onClick={() => setShowGhlModal(false)}>
+                    <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="ghl-modal-title" style={{ maxWidth: 1000 }} onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
                             <div>
-                                <h2 style={{ margin: 0 }}>GHL Leads from Google Ads</h2>
-                                <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: 13 }}>
+                                <h2 id="ghl-modal-title">GHL Leads from Google Ads</h2>
+                                <p>
                                     GHL opportunities with a Google source, created between {periodLabel}
                                 </p>
                             </div>
-                            <button onClick={() => setShowGhlModal(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 24 }}>&times;</button>
+                            <button className="icon-btn" onClick={() => setShowGhlModal(false)} aria-label="Close"><X size={20} aria-hidden="true" /></button>
                         </div>
-                        <div style={{ padding: 24, overflowY: 'auto' }}>
+                        <div className="modal-body">
                             {googleData.ghlLeadsDetails.length > 0 ? (
                                 <div className="data-table-wrapper"><table className="data-table">
                                     <thead>

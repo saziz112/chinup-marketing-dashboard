@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
+import { ChevronDown, Sparkles } from 'lucide-react';
 import { fmt$, fmtNum, fmtPct } from '@/lib/format';
+import { TOOLTIP_STYLE } from '@/lib/constants';
 import { gradeMetric, gradeAllMetrics, overallGrade, getBenchmarkInfo, type MetricGrade } from '@/lib/ads-benchmarks';
 
 // --- Types (shared with ads/page.tsx) ---
@@ -165,29 +167,27 @@ export function PerformanceSummary({ campaigns, platform, isAdmin }: {
     ].filter(m => m.show);
 
     return (
-        <div className="section-card" style={{
-            marginBottom: 24, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap',
-            background: 'linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(34,197,94,0.04) 100%)',
-            border: `1px solid ${overall.color}33`,
-        }}>
-            <div style={{ textAlign: 'center', minWidth: 70 }}>
-                <div style={{ fontSize: 36, fontWeight: 700, color: overall.color, lineHeight: 1 }}>{overall.letter}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Overall</div>
+        <div className="section-card bench-card" style={{ borderColor: `${overall.color}40` }}>
+            <div className="bench-grade">
+                <div className="letter" style={{ color: overall.color }}>{overall.letter}</div>
+                <div className="cap">Overall</div>
             </div>
-            <div style={{ width: 1, height: 48, background: 'var(--border)' }} />
-            {metrics.map(m => (
-                <div key={m.key} style={{ textAlign: 'center', minWidth: 80 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>{m.value}</span>
-                        <GradeDot grade={m.grade} />
+            <div className="bench-divider" />
+            <div className="bench-metrics">
+                {metrics.map(m => (
+                    <div key={m.key} className="bench-metric">
+                        <div className="v">
+                            <span>{m.value}</span>
+                            <GradeDot grade={m.grade} />
+                        </div>
+                        <div className="cap">{m.label}</div>
+                        {m.grade && (
+                            <div style={{ fontSize: 10, color: m.grade.color, fontWeight: 500 }}>{m.grade.label}</div>
+                        )}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{m.label}</div>
-                    {m.grade && (
-                        <div style={{ fontSize: 10, color: m.grade.color, fontWeight: 500 }}>{m.grade.label}</div>
-                    )}
-                </div>
-            ))}
-            <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', textAlign: 'right' }}>
+                ))}
+            </div>
+            <div className="bench-note">
                 <div>vs. Med Spa Industry Avg</div>
                 <div>{activeCampaigns.length} active campaign{activeCampaigns.length !== 1 ? 's' : ''}</div>
             </div>
@@ -200,12 +200,12 @@ export function PerformanceSummary({ campaigns, platform, isAdmin }: {
 export function KpiCard({ label, value, sub, gold, green }: {
     label: string; value: string; sub?: string; gold?: boolean; green?: boolean;
 }) {
-    const accent = gold ? 'var(--accent)' : green ? '#22c55e' : undefined;
+    const tone = gold ? ' is-gold' : green ? ' is-green' : '';
     return (
-        <div className="metric-card" style={accent ? { borderColor: accent, boxShadow: `0 0 0 1px ${accent}33` } : {}}>
+        <div className={`metric-card${tone}`}>
             <div className="label">{label}</div>
-            <div className="value" style={accent ? { color: accent } : {}}>{value}</div>
-            {sub && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{sub}</div>}
+            <div className="value">{value}</div>
+            {sub && <div className="sub">{sub}</div>}
         </div>
     );
 }
@@ -218,28 +218,22 @@ export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData
     const hasData = roas.trueRoas !== null;
 
     return (
-        <div className="section-card"
-            style={{
-                background: 'linear-gradient(135deg, rgba(216,180,29,0.08) 0%, rgba(34,197,94,0.06) 100%)',
-                border: '1px solid rgba(216,180,29,0.25)',
-                marginBottom: 24,
-                cursor: hasData ? 'pointer' : 'default',
-                transition: 'all 0.2s ease'
-            }}
+        <div className={`section-card roas-banner${hasData ? ' is-clickable' : ''}`}
             onClick={hasData ? onOpenDetails : undefined}
-            onMouseEnter={(e) => { if (hasData) e.currentTarget.style.transform = 'translateY(-2px)'; }}
-            onMouseLeave={(e) => { if (hasData) e.currentTarget.style.transform = 'translateY(0)'; }}
+            onKeyDown={hasData ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenDetails(); } } : undefined}
+            role={hasData ? 'button' : undefined}
+            tabIndex={hasData ? 0 : undefined}
         >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
-                <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <div className="roas-layout">
+                <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                         <h3 style={{ margin: 0 }}>ROAS Reconciliation</h3>
-                        {isMock && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: '#f59e0b22', color: '#f59e0b', border: '1px solid #f59e0b44' }}>Demo</span>}
-                        {!isMock && !noLeadForms && !outsideRetention && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}>Email-matched</span>}
+                        {isMock && <span className="pill pill-warning">Demo</span>}
+                        {!isMock && !noLeadForms && !outsideRetention && <span className="pill pill-success">Email-matched</span>}
                     </div>
-                    <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
+                    <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0, lineHeight: 1.5, maxWidth: '60ch' }}>
                         {roas.attributionNote}
-                        {hasData && <span style={{ color: 'var(--accent)', marginLeft: 8, fontWeight: 500 }}>View Details →</span>}
+                        {hasData && <span style={{ color: 'var(--accent)', marginLeft: 8, fontWeight: 600, whiteSpace: 'nowrap' }}>View Details →</span>}
                     </p>
                 </div>
 
@@ -248,14 +242,14 @@ export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData
                         Set up a <strong>Lead Generation</strong> campaign with a native Facebook form to enable email-level attribution.
                     </div>
                 ) : outsideRetention ? null : (
-                    <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-                        <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>True ROAS</div>
-                            <div style={{ fontSize: 28, fontWeight: 700, color: roas.trueRoas !== null && roas.trueRoas > 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
+                    <div className="roas-stats">
+                        <div className="roas-col">
+                            <div className="stat-label">True ROAS</div>
+                            <div className="roas-big" style={{ color: roas.trueRoas !== null && roas.trueRoas > 0 ? 'var(--accent)' : 'var(--text-muted)' }}>
                                 {roas.trueRoas !== null ? `${roas.trueRoas.toFixed(2)}x` : '\u2014'}
                             </div>
                             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                {fmt$(roas.matchedRevenue)} rev \u00f7 {fmt$(roas.metaSpend)} spend
+                                {fmt$(roas.matchedRevenue)} rev {'\u00f7'} {fmt$(roas.metaSpend)} spend
                             </div>
                             {roas.matchedRevenue > 0 && (
                                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
@@ -266,26 +260,26 @@ export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData
                             )}
                         </div>
 
-                        <div style={{ width: 1, background: 'var(--border)' }} />
+                        <div className="roas-rule" />
 
-                        <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Meta ROAS</div>
-                            <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                        <div className="roas-col">
+                            <div className="stat-label">Meta ROAS</div>
+                            <div className="roas-big" style={{ color: 'var(--text-secondary)' }}>
                                 {roas.metaPlatformRoas !== null && roas.metaPlatformRoas > 0 ? `${roas.metaPlatformRoas.toFixed(2)}x` : '0.00x'}
                             </div>
                             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Platform reported</div>
                         </div>
 
-                        <div style={{ width: 1, background: 'var(--border)' }} />
+                        <div className="roas-rule" />
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center' }}>
+                        <div className="roas-facts">
                             <div style={{ fontSize: 12 }}>
                                 <span style={{ color: 'var(--text-muted)' }}>Meta Leads: </span>
                                 <span style={{ fontWeight: 600 }}>{roas.metaLeads}</span>
                             </div>
                             <div style={{ fontSize: 12 }}>
                                 <span style={{ color: 'var(--text-muted)' }}>Paying patients: </span>
-                                <span style={{ fontWeight: 600, color: '#22c55e' }}>{roas.matchedClients}</span>
+                                <span style={{ fontWeight: 600, color: 'var(--success)' }}>{roas.matchedClients}</span>
                             </div>
                             <div style={{ fontSize: 12 }}>
                                 <span style={{ color: 'var(--text-muted)' }}>Match Rate: </span>
@@ -362,16 +356,10 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
 
     return (
         <>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            <div className="chip-row" role="group" aria-label="Filter campaigns by status">
                 {(['ACTIVE', 'PAUSED', 'ALL'] as StatusFilter[]).map(f => (
-                    <button key={f} onClick={() => onStatusFilter(f)}
-                        style={{
-                            padding: '4px 12px', borderRadius: 999, fontSize: 12, fontWeight: 500,
-                            background: statusFilter === f ? (f === 'ACTIVE' ? '#22c55e22' : f === 'PAUSED' ? '#f59e0b22' : 'rgba(255,255,255,0.1)') : 'transparent',
-                            color: statusFilter === f ? (f === 'ACTIVE' ? '#22c55e' : f === 'PAUSED' ? '#f59e0b' : '#fff') : 'var(--text-muted)',
-                            border: `1px solid ${statusFilter === f ? (f === 'ACTIVE' ? '#22c55e44' : f === 'PAUSED' ? '#f59e0b44' : 'rgba(255,255,255,0.2)') : 'var(--border)'}`,
-                            cursor: 'pointer',
-                        }}>
+                    <button key={f} onClick={() => onStatusFilter(f)} aria-pressed={statusFilter === f}
+                        className={`chip${statusFilter === f ? ` on-${f.toLowerCase()}` : ''}`}>
                         {f === 'ALL' ? 'All' : f.charAt(0) + f.slice(1).toLowerCase()} ({counts[f]})
                     </button>
                 ))}
@@ -384,7 +372,7 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
                 </div>
             ) : (
                 <div style={{ overflowX: 'auto' }}>
-                    <div className="data-table-wrapper"><table className="data-table">
+                    <div className="data-table-wrapper"><table className="data-table sticky-first">
                         <thead>
                             <tr>
                                 <Th label="Campaign" col="name" />
@@ -421,7 +409,7 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
                                 return (
                                     <React.Fragment key={c.id}>
                                     <tr>
-                                        <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</td>
+                                        <td title={c.name} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>{c.name}</td>
                                         {isOverview && (
                                             <td>
                                                 <span style={{ fontSize: 11, fontWeight: 600, color: c.platform === 'Google Ads' ? '#EA4335' : 'var(--accent)', padding: '2px 6px', borderRadius: 4, background: c.platform === 'Google Ads' ? '#EA433522' : 'var(--accent-bg)' }}>
@@ -471,15 +459,17 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
                                                     }}
                                                     disabled={aiLoading === c.id}
                                                     title={aiAnalysis?.[c.id] ? (aiExpanded?.has(c.id) ? 'Collapse analysis' : 'Show analysis') : 'AI Campaign Analysis'}
+                                                    aria-label={aiAnalysis?.[c.id] ? (aiExpanded?.has(c.id) ? 'Collapse analysis' : 'Show analysis') : 'AI Campaign Analysis'}
                                                     style={{
-                                                        background: aiExpanded?.has(c.id) ? '#6366f122' : 'transparent',
-                                                        border: `1px solid ${aiAnalysis?.[c.id] ? '#6366f144' : 'var(--border)'}`,
-                                                        borderRadius: 6, padding: '4px 8px', cursor: 'pointer',
-                                                        color: aiAnalysis?.[c.id] ? '#a5b4fc' : 'var(--text-muted)',
-                                                        fontSize: 14, lineHeight: 1,
+                                                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                                        width: 36, height: 36,
+                                                        background: aiExpanded?.has(c.id) ? 'var(--accent-bg)' : 'transparent',
+                                                        border: `1px solid ${aiAnalysis?.[c.id] ? 'rgba(216,180,29,0.4)' : 'var(--border)'}`,
+                                                        borderRadius: 8, cursor: 'pointer',
+                                                        color: aiAnalysis?.[c.id] ? 'var(--accent)' : 'var(--text-muted)',
                                                     }}
                                                 >
-                                                    {aiLoading === c.id ? '...' : aiExpanded?.has(c.id) ? '\u25bc' : '\u2728'}
+                                                    {aiLoading === c.id ? <span className="loading-caption" style={{ margin: 0 }} /> : aiExpanded?.has(c.id) ? <ChevronDown size={16} aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
                                                 </button>
                                             </td>
                                         )}
@@ -488,9 +478,10 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
                                         <tr>
                                             <td colSpan={20} style={{ padding: 0, border: 'none' }}>
                                                 <div style={{
-                                                    background: 'linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(34,197,94,0.04) 100%)',
-                                                    borderTop: '1px solid #6366f133',
-                                                    padding: '12px 16px', fontSize: 13,
+                                                    background: 'rgba(216,180,29,0.04)',
+                                                    borderTop: '1px solid rgba(216,180,29,0.2)',
+                                                    borderBottom: '1px solid var(--border-subtle)',
+                                                    padding: '14px 16px', fontSize: 13,
                                                 }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                                                         <span style={{
@@ -502,7 +493,7 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
                                                         <span style={{ color: 'var(--text-secondary)' }}>{aiAnalysis[c.id].summary}</span>
                                                     </div>
                                                     <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-                                                        <div style={{ flex: 1, minWidth: 250 }}>
+                                                        <div style={{ flex: 1, minWidth: 'min(250px, 100%)' }}>
                                                             <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Priority Actions</div>
                                                             <ul style={{ margin: 0, paddingLeft: 16, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
                                                                 {aiAnalysis[c.id].priorityActions.map((a, i) => (
@@ -511,7 +502,7 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
                                                             </ul>
                                                         </div>
                                                         {aiAnalysis[c.id].creativeSuggestion && (
-                                                            <div style={{ flex: 1, minWidth: 250 }}>
+                                                            <div style={{ flex: 1, minWidth: 'min(250px, 100%)' }}>
                                                                 <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Creative Suggestion</div>
                                                                 <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{aiAnalysis[c.id].creativeSuggestion}</p>
                                                             </div>
@@ -539,7 +530,7 @@ export function CustomTooltip({ active, payload, label, isAdmin }: {
 }) {
     if (!active || !payload?.length) return null;
     return (
-        <div style={{ background: '#1a2332', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
+        <div style={{ ...TOOLTIP_STYLE, fontSize: 12, padding: '10px 14px' }}>
             <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>{label}</p>
             {payload.map(p => (
                 <p key={p.name} style={{ color: p.color }}>
