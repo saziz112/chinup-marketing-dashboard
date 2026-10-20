@@ -126,7 +126,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {/* Mobile Header */}
             <div className="mobile-header">
                 <button className="hamburger-btn" onClick={() => setSidebarOpen(!sidebarOpen)} aria-label={sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'} aria-expanded={sidebarOpen}>
-                    {sidebarOpen ? '\u2715' : '\u2630'}
+                    {sidebarOpen ? (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                        </svg>
+                    ) : (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                            <line x1="4" y1="7" x2="20" y2="7" />
+                            <line x1="4" y1="12" x2="20" y2="12" />
+                            <line x1="4" y1="17" x2="20" y2="17" />
+                        </svg>
+                    )}
                 </button>
                 <span style={{ fontFamily: 'var(--font-heading)', fontSize: '1.125rem', color: 'var(--text-secondary)' }}>
                     Chin Up!
@@ -188,7 +199,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
                 {/* Main Content */}
                 <main className="main-content" role="main">
-                    {children}
+                    <div className="main-inner">{children}</div>
                 </main>
             </div>
         </>
