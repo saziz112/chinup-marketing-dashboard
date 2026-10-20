@@ -1,0 +1,51 @@
+[
+  {
+    "inputUrl": "https://www.instagram.com/exampleinjector",
+    "id": "3456789012345678901",
+    "type": "Video",
+    "shortCode": "DAbc123XyZ",
+    "caption": "POV: you finally fixed your 11s #botox #medspa",
+    "hashtags": ["botox", "medspa"],
+    "url": "https://www.instagram.com/p/DAbc123XyZ/",
+    "commentsCount": 212,
+    "displayUrl": "https://scontent.cdninstagram.com/v/t51/thumb1.jpg",
+    "likesCount": 8450,
+    "videoViewCount": 98000,
+    "videoPlayCount": 251000,
+    "videoDuration": 14.6,
+    "timestamp": "2026-09-30T17:02:11.000Z",
+    "ownerUsername": "exampleinjector",
+    "ownerFullName": "Example Injector RN",
+    "productType": "clips"
+  },
+  {
+    "id": "3456789012345678902",
+    "type": "Video",
+    "shortCode": "DAdef456",
+    "caption": "Lip filler healing day 1 vs day 14",
+    "url": "https://www.instagram.com/p/DAdef456/",
+    "commentsCount": 18,
+    "likesCount": -1,
+    "videoViewCount": 4100,
+    "videoDuration": 22,
+    "timestamp": "2026-10-03T12:00:00.000Z",
+    "ownerUsername": "ExampleInjector",
+    "transcript": "So this is day one. A little swelling is normal."
+  },
+  {
+    "id": "3456789012345678903",
+    "type": "Video",
+    "shortCode": "DAnoviews",
+    "caption": "Views hidden",
+    "url": "https://www.instagram.com/p/DAnoviews/",
+    "likesCount": 40,
+    "commentsCount": 2,
+    "timestamp": "2026-10-04T12:00:00.000Z",
+    "ownerUsername": "exampleinjector"
+  },
+  {
+    "url": "https://www.instagram.com/privateaccount",
+    "error": "not_found",
+    "errorDescription": "Profile does not exist or is private"
+  }
+]

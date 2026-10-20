@@ -1,0 +1,39 @@
+[
+  {
+    "id": "7421234567890123456",
+    "text": "Asking my injector what $650 of Dysport actually gets you #dysport #medspa",
+    "createTime": 1727900000,
+    "createTimeISO": "2026-10-02T20:13:20.000Z",
+    "authorMeta": { "name": "exampleinjector", "nickName": "Example Injector", "fans": 120000 },
+    "videoMeta": {
+      "duration": 31,
+      "coverUrl": "https://p16-sign.tiktokcdn.com/cover1.jpeg",
+      "subtitleLinks": [
+        { "language": "eng-US", "downloadLink": "https://v16-webapp.tiktok.com/sub1.vtt", "tiktokLink": "https://v16-webapp.tiktok.com/sub1-tt" }
+      ]
+    },
+    "diggCount": 15200,
+    "shareCount": 820,
+    "playCount": 412000,
+    "collectCount": 2100,
+    "commentCount": 310,
+    "webVideoUrl": "https://www.tiktok.com/@exampleinjector/video/7421234567890123456",
+    "hashtags": [{ "name": "dysport" }, { "name": "medspa" }]
+  },
+  {
+    "id": "7421234567890123457",
+    "text": "",
+    "createTimeISO": "2026-10-05T10:00:00.000Z",
+    "authorMeta": { "name": "exampleinjector" },
+    "videoMeta": { "duration": 9 },
+    "diggCount": 50,
+    "playCount": 0,
+    "commentCount": 1,
+    "shareCount": 0,
+    "webVideoUrl": "https://www.tiktok.com/@exampleinjector/video/7421234567890123457"
+  },
+  {
+    "url": "https://www.tiktok.com/@doesnotexist",
+    "error": "This profile does not exist"
+  }
+]

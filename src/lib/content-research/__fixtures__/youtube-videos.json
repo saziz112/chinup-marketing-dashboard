@@ -1,0 +1,29 @@
+{
+  "items": [
+    {
+      "id": "abcDEF12345",
+      "snippet": {
+        "publishedAt": "2026-10-01T15:00:00Z",
+        "channelId": "UCexampleChannel01",
+        "title": "Botox in 30 seconds #shorts",
+        "description": "What 20 units does.",
+        "channelTitle": "Example Derm",
+        "thumbnails": { "high": { "url": "https://i.ytimg.com/vi/abcDEF12345/hqdefault.jpg" } }
+      },
+      "contentDetails": { "duration": "PT32S" },
+      "statistics": { "viewCount": "1500000", "likeCount": "42000", "commentCount": "900" }
+    },
+    {
+      "id": "longVideo001",
+      "snippet": { "publishedAt": "2026-09-01T15:00:00Z", "title": "Full consult walkthrough", "description": "", "channelTitle": "Example Derm", "thumbnails": {} },
+      "contentDetails": { "duration": "PT14M2S" },
+      "statistics": { "viewCount": "80000" }
+    },
+    {
+      "id": "hiddenStats1",
+      "snippet": { "publishedAt": "2026-09-15T15:00:00Z", "title": "Lip flip #shorts", "description": "", "channelTitle": "Example Derm", "thumbnails": {} },
+      "contentDetails": { "duration": "PT1M5S" },
+      "statistics": {}
+    }
+  ]
+}
