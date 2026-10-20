@@ -1,0 +1,89 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`getConversationsIntelligence > matches the recorded output (parallel rewrite must not change any number) 1`] = `
+{
+  "ghostAnalytics": {
+    "avgDaysToGhost": 8,
+    "avgMessagesBeforeGhosting": 4,
+    "ghostRateByLocation": [
+      {
+        "ghostRate": 42,
+        "location": "kennesaw",
+        "total": 48,
+      },
+      {
+        "ghostRate": 41,
+        "location": "smyrna",
+        "total": 51,
+      },
+      {
+        "ghostRate": 37,
+        "location": "decatur",
+        "total": 51,
+      },
+    ],
+    "ghostRateBySource": [
+      {
+        "ghostRate": 42,
+        "source": "Website",
+        "total": 48,
+      },
+      {
+        "ghostRate": 41,
+        "source": "Google Ads",
+        "total": 51,
+      },
+      {
+        "ghostRate": 37,
+        "source": "Facebook",
+        "total": 51,
+      },
+    ],
+  },
+  "lifecycleCounts": {
+    "attempted": 20,
+    "converted": 8,
+    "engaged": 19,
+    "ghost": 60,
+    "quoted": 0,
+    "untouched": 43,
+  },
+  "summary": {
+    "abandoned": 95,
+    "dndFiltered": 11,
+    "falsePositives": 0,
+    "goingCold": 0,
+    "lostRevenuePotential": 15424,
+    "mindbodyActiveFiltered": 0,
+    "needsOutreach": 0,
+    "totalAnalyzed": 150,
+    "unrepliedInbound": 41,
+    "withConversations": 128,
+  },
+}
+`;
+
+exports[`getConversationsIntelligence > matches the recorded output (parallel rewrite must not change any number) 2`] = `
+[
+  [
+    "o26",
+    145,
+    "abandoned",
+    61,
+  ],
+  [
+    "o134",
+    157,
+    "abandoned",
+    60,
+  ],
+  [
+    "o92",
+    139,
+    "abandoned",
+    58,
+  ],
+]
+`;
+
+exports[`getConversationsIntelligence > matches the recorded output (parallel rewrite must not change any number) 3`] = `"67465f8aee487f76c977104d73dd0d127ebfd33af4d5ce210efcfd9339b5d39e"`;

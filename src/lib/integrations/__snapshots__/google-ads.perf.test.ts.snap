@@ -1,0 +1,104 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Google Ads output is unchanged by the parallel + shared-cache rewrite > getGhlGoogleLeads matches the recorded output, in order 1`] = `88`;
+
+exports[`Google Ads output is unchanged by the parallel + shared-cache rewrite > getGhlGoogleLeads matches the recorded output, in order 2`] = `
+[
+  [
+    "decatur-pa-open-1",
+    "decatur",
+    "google organic",
+    "https://app.gohighlevel.com/v2/location/L-decatur/contacts/detail/c1",
+  ],
+  [
+    "decatur-pa-open-5",
+    "decatur",
+    "google organic",
+    null,
+  ],
+  [
+    "decatur-pa-open-9",
+    "decatur",
+    "google organic",
+    "https://app.gohighlevel.com/v2/location/L-decatur/contacts/detail/c9",
+  ],
+  [
+    "decatur-pa-won-1",
+    "decatur",
+    "google organic",
+    "https://app.gohighlevel.com/v2/location/L-decatur/contacts/detail/c1",
+  ],
+]
+`;
+
+exports[`Google Ads output is unchanged by the parallel + shared-cache rewrite > getGhlGoogleLeads matches the recorded output, in order 3`] = `"ce9c8de9458dc72d88e61d04d12a7837b795e75450d77006a534bf908e61a273"`;
+
+exports[`Google Ads output is unchanged by the parallel + shared-cache rewrite > getGoogleAdsData matches the recorded output 1`] = `
+{
+  "account": {
+    "accountStatus": 1,
+    "currency": "USD",
+    "id": "999",
+    "name": "Chin Up",
+    "timezone": "America/New_York",
+    "totalClicks": 210,
+    "totalImpressions": 4100,
+    "totalResults": 13,
+    "totalSpend": 128.46,
+  },
+  "campaigns": [
+    {
+      "clicks": 210,
+      "costPerResult": 9.8,
+      "cpc": 0.59,
+      "cpm": 30.86,
+      "ctr": 5.25,
+      "id": "11",
+      "impressions": 4000,
+      "name": "Botox Search",
+      "objective": "SEARCH",
+      "results": 13,
+      "roas": 7.29,
+      "spend": 123.46,
+      "startTime": "2026-01-02",
+      "status": "ACTIVE",
+      "stopTime": null,
+    },
+    {
+      "clicks": 0,
+      "costPerResult": 0,
+      "cpc": 0,
+      "cpm": 50,
+      "ctr": 0,
+      "id": "12",
+      "impressions": 100,
+      "name": "PMax",
+      "objective": "PERFORMANCE_MAX",
+      "results": 0,
+      "roas": 0,
+      "spend": 5,
+      "startTime": "2026-01-01",
+      "status": "PAUSED",
+      "stopTime": null,
+    },
+  ],
+  "dailySpend": [
+    {
+      "clicks": 110,
+      "date": "2026-10-01",
+      "impressions": 2100,
+      "results": 6.2,
+      "spend": 64.23,
+    },
+    {
+      "clicks": 100,
+      "date": "2026-10-02",
+      "impressions": 2000,
+      "results": 6.4,
+      "spend": 64.23,
+    },
+  ],
+  "isConfigured": true,
+  "isMock": false,
+}
+`;
