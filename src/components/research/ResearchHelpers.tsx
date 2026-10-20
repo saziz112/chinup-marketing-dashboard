@@ -6,7 +6,7 @@ import React from 'react';
 //  Types & Interfaces
 // ================================================================
 
-export type ResearchTab = 'Trend Scout' | 'Market Intel';
+export type ResearchTab = 'Trend Scout' | 'Market Intel' | 'Viral Outliers';
 
 export interface TrendTopic {
     title: string;
@@ -117,7 +117,7 @@ export interface TrafficSourceData {
 //  Constants
 // ================================================================
 
-export const TABS: ResearchTab[] = ['Trend Scout', 'Market Intel'];
+export const TABS: ResearchTab[] = ['Trend Scout', 'Market Intel', 'Viral Outliers'];
 
 export const FOCUS_OPTIONS = [
     { value: 'all', label: 'All Topics' },

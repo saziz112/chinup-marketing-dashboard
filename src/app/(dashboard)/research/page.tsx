@@ -10,6 +10,7 @@ import {
     CompetitorWatchData, ContentAnalysisData, TrafficSourceData,
     TrendScoutTab, MarketIntelTab,
 } from '@/components/research/ResearchHelpers';
+import { ContentResearchTab } from '@/components/research/ContentResearchTab';
 
 export default function ResearchPage() {
     const { data: session } = useSession();
@@ -153,6 +154,7 @@ export default function ResearchPage() {
                 ))}
             </div>
 
+            {activeTab === 'Viral Outliers' && <ContentResearchTab />}
             {activeTab === 'Trend Scout' && (
                 <TrendScoutTab
                     feedback={feedback}

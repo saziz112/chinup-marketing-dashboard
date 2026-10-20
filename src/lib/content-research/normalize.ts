@@ -30,7 +30,6 @@ export interface NormalizeResult {
 /** YouTube counts a video as a Short up to 3 minutes. */
 export const SHORTS_MAX_SECONDS = 180;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Raw = Record<string, any>;
 
 function count(v: unknown): number | null {
