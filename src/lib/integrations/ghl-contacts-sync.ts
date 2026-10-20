@@ -273,8 +273,26 @@ export async function incrementalGhlSync(): Promise<{ newContacts: number; apiCa
         `;
     }
 
-    console.log(`[ghl-sync] Incremental sync: ${newContacts} new/updated, ${apiCalls} API calls`);
+    const gclidsLinked = await linkCapturedGclids().catch(() => 0);
+
+    console.log(`[ghl-sync] Incremental sync: ${newContacts} new/updated, ${apiCalls} API calls, ${gclidsLinked} gclids linked`);
     return { newContacts, apiCalls };
+}
+
+/**
+ * Copy gclids from gclid_captures (written by /api/track/gclid at form submit) onto
+ * the matching GHL contacts. The beacon fires before the contact reaches this table,
+ * so its own best-effort copy almost never lands; this catches up after each sync.
+ */
+export async function linkCapturedGclids(): Promise<number> {
+    const r = await sql`
+        UPDATE ghl_contacts_map m
+        SET gclid = g.gclid, gclid_captured_at = g.captured_at
+        FROM gclid_captures g
+        WHERE m.email = g.email
+          AND m.gclid IS DISTINCT FROM g.gclid
+    `;
+    return r.rowCount;
 }
 
 // ---------------------------------------------------------------------------
