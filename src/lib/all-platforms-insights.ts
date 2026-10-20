@@ -18,6 +18,7 @@ export interface PlatformHealth {
     score: number;        // 0-100 composite health score
     grade: MetricGrade;   // good/average/poor with color
     primaryEngagementRate: number;
+    engagementRateFormula: string; // each platform divides by something different; never rank ERs against each other
 }
 
 export interface FocusRecommendation {
@@ -59,10 +60,10 @@ interface InsightInput {
     } | null;
 }
 
-const PLATFORM_META: Record<PlatformKey, { label: string; color: string }> = {
-    instagram: { label: 'Instagram', color: '#E1306C' },
-    facebook:  { label: 'Facebook',  color: '#1877F2' },
-    youtube:   { label: 'YouTube',   color: '#FF0000' },
+const PLATFORM_META: Record<PlatformKey, { label: string; color: string; erFormula: string }> = {
+    instagram: { label: 'Instagram', color: '#E1306C', erFormula: 'interactions ÷ reach' },
+    facebook:  { label: 'Facebook',  color: '#1877F2', erFormula: 'engagements ÷ video views' },
+    youtube:   { label: 'YouTube',   color: '#FF0000', erFormula: '(likes + comments) ÷ views' },
 };
 
 // Composite score per platform: weighted blend of ER vs benchmark + cadence/activity vs benchmark
@@ -79,12 +80,10 @@ function scoreIG(ig: NonNullable<InsightInput['ig']>): number {
 }
 
 function scoreFB(fb: NonNullable<InsightInput['fb']>): number {
-    // FB has fewer benchmarks — treat ER+follower growth+video views as the signal
+    // FB ER is engagements ÷ video views; the medspa FB benchmark (0.2-0.5%) is per reach,
+    // so there's no honest benchmark to grade it against. Score on growth + video views only.
     let totalScore = 0;
     let totalWeight = 0;
-    // ER: medspa FB avg 0.2-0.5%, good 1%+
-    const erScore = fb.engagementRate >= 1.0 ? 100 : fb.engagementRate >= 0.5 ? 60 : fb.engagementRate >= 0.1 ? 30 : 10;
-    totalScore += erScore * 50; totalWeight += 50;
     // Follower growth
     const growthScore = fb.followerChangePercent >= 1.0 ? 100 : fb.followerChangePercent >= 0.3 ? 60 : fb.followerChangePercent > 0 ? 30 : 10;
     totalScore += growthScore * 25; totalWeight += 25;
@@ -137,6 +136,7 @@ export function generateAllPlatformsInsights(input: InsightInput): AllPlatformsI
         healths.push({
             key: 'instagram', label: PLATFORM_META.instagram.label, color: PLATFORM_META.instagram.color,
             score, grade: scoreToGrade(score), primaryEngagementRate: input.ig.engagementRate,
+            engagementRateFormula: PLATFORM_META.instagram.erFormula,
         });
     }
     if (input.fb?.configured) {
@@ -144,6 +144,7 @@ export function generateAllPlatformsInsights(input: InsightInput): AllPlatformsI
         healths.push({
             key: 'facebook', label: PLATFORM_META.facebook.label, color: PLATFORM_META.facebook.color,
             score, grade: scoreToGrade(score), primaryEngagementRate: input.fb.engagementRate,
+            engagementRateFormula: PLATFORM_META.facebook.erFormula,
         });
     }
     if (input.yt?.configured) {
@@ -151,6 +152,7 @@ export function generateAllPlatformsInsights(input: InsightInput): AllPlatformsI
         healths.push({
             key: 'youtube', label: PLATFORM_META.youtube.label, color: PLATFORM_META.youtube.color,
             score, grade: scoreToGrade(score), primaryEngagementRate: input.yt.engagementRate,
+            engagementRateFormula: PLATFORM_META.youtube.erFormula,
         });
     }
 
@@ -229,7 +231,7 @@ function computeWhereToFocus(input: InsightInput, healths: PlatformHealth[]): Fo
     if (strongest.score >= 75) {
         return {
             title: `Double down on ${strongest.label}`,
-            body: `${strongest.label} is your strongest channel right now (${Math.round(strongest.score)}/100 health score, ${strongest.primaryEngagementRate}% ER). When something is working, do more of it.`,
+            body: `${strongest.label} is your strongest channel right now (${Math.round(strongest.score)}/100 health score, ${strongest.primaryEngagementRate}% ${strongest.engagementRateFormula}). When something is working, do more of it.`,
             suggestedAction: `Increase your ${strongest.label} cadence by 25% this week. Replicate the format/style of your top-performing post from the last 30 days.`,
             targetPlatform: strongest.key,
         };

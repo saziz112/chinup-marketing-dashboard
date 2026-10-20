@@ -24,7 +24,7 @@ function fbStrengths(m: FBCoachingInput): CoachingStrength[] {
     if (m.engagementRate >= 1.0) {
         out.push({
             label: `${m.engagementRate}% engagement rate`,
-            detail: 'FB Page engagement above 1% is strong — most medspa Pages sit at 0.2–0.5%.',
+            detail: 'Engagements per video view. Track it against your own past periods, not against IG or YouTube.',
         });
     }
 

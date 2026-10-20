@@ -22,7 +22,7 @@ export interface AIFBCoachingInput {
     };
 }
 
-function buildPrompt(input: AIFBCoachingInput): string {
+export function buildPrompt(input: AIFBCoachingInput): string {
     const m = input.metrics;
     return `You are coaching Sharia, a young and ambitious social media manager at Chin Up! Aesthetics, a premium medical spa in metro Atlanta. She's eager to grow but doesn't always know what to do or how to improve. Your job: give her direction, build her confidence on the FB front specifically.
 
@@ -33,7 +33,7 @@ PAGE METRICS:
 - Total video views: ${m.totalVideoViews.toLocaleString()}
 - Total engagements (likes+comments+shares): ${m.totalEngagements.toLocaleString()}
 - Total page views: ${m.totalPageViews.toLocaleString()}
-- Engagement rate: ${m.engagementRate}% (medspa FB Page avg: 0.2-0.5%, good: 1%+)
+- Engagement rate: ${m.engagementRate}% (engagements ÷ video views; NOT comparable to reach-based medspa benchmarks or to IG/YT engagement rates, so don't quote an industry average against it)
 
 CONTEXT (specific to FB Pages in 2026):
 - FB Reels reach non-followers via the Reels feed — cross-posting from IG is the single highest-ROI move

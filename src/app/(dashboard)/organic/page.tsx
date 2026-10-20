@@ -199,10 +199,12 @@ export default function OrganicPage() {
             return Math.round((parts.reduce((s, p) => s + p.pct * p.w, 0) / totalW) * 100) / 100;
         })();
 
-        // Comparison chart data — engagement rate per platform
+        // Comparison chart data: health score per platform. ER isn't charted side by side
+        // because each platform divides by something different (see engagementRateFormula).
         const comparisonData = insights.healthByPlatform.map(h => ({
             platform: h.label,
             engagementRate: h.primaryEngagementRate,
+            engagementRateFormula: h.engagementRateFormula,
             healthScore: Math.round(h.score),
             color: h.color,
         }));
@@ -315,6 +317,7 @@ export default function OrganicPage() {
                                 <div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Engagement</div>
                                     <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{igData.summary.engagementRate}%</div>
+                                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>÷ reach</div>
                                 </div>
                             </div>
                         </div>
@@ -351,6 +354,7 @@ export default function OrganicPage() {
                                 <div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Engagement</div>
                                     <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{fbData.summary.engagementRate}%</div>
+                                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>÷ video views</div>
                                 </div>
                             </div>
                         </div>
@@ -387,6 +391,7 @@ export default function OrganicPage() {
                                 <div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Engagement</div>
                                     <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{ytData.summary.engagementRate}%</div>
+                                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>÷ views</div>
                                 </div>
                             </div>
                         </div>
@@ -394,23 +399,23 @@ export default function OrganicPage() {
 
                 </div>
 
-                {/* Platform Comparison Chart — engagement rate side-by-side */}
+                {/* Platform Comparison Chart: health score, each platform graded against its own benchmarks */}
                 {comparisonData.length > 0 && (
                     <div className="chart-container">
                         <div className="chart-header">
-                            <h3>Platform Comparison — Engagement Rate</h3>
+                            <h3>Platform Comparison — Health Score</h3>
                             <span className="badge info">{period}</span>
                         </div>
                         <ResponsiveContainer width="100%" height={240}>
                             <BarChart data={comparisonData} margin={{ top: 16, right: 20, left: 10, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                                 <XAxis dataKey="platform" tick={{ fill: '#A1A1AA', fontSize: 12 }} />
-                                <YAxis tick={{ fill: '#A1A1AA', fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+                                <YAxis domain={[0, 100]} tick={{ fill: '#A1A1AA', fontSize: 11 }} />
                                 <Tooltip
                                     contentStyle={TOOLTIP_STYLE}
-                                    formatter={(value) => [`${value}%`, 'ER']}
+                                    formatter={(value) => [`${value}/100`, 'Health']}
                                 />
-                                <Bar dataKey="engagementRate" radius={[4, 4, 0, 0]}>
+                                <Bar dataKey="healthScore" radius={[4, 4, 0, 0]}>
                                     {comparisonData.map((d, i) => (
                                         <Cell key={i} fill={d.color} />
                                     ))}
@@ -421,7 +426,7 @@ export default function OrganicPage() {
                             {comparisonData.map(d => (
                                 <div key={d.platform} style={{ textAlign: 'center', fontSize: 11 }}>
                                     <div style={{ color: d.color, fontWeight: 600 }}>{d.platform}</div>
-                                    <div style={{ color: 'var(--text-muted)' }}>Health: {d.healthScore}/100</div>
+                                    <div style={{ color: 'var(--text-muted)' }}>ER {d.engagementRate}% ({d.engagementRateFormula})</div>
                                 </div>
                             ))}
                         </div>

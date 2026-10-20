@@ -296,9 +296,9 @@ export default function OverviewPage() {
                 <h3>Platform Overview</h3>
                 <div className="platform-grid">
                     {[
-                        { name: 'Instagram', icon: 'instagram', color: PLATFORM_COLORS.instagram, tab: 'instagram' },
-                        { name: 'Facebook', icon: 'facebook', color: PLATFORM_COLORS.facebook, tab: 'facebook' },
-                        { name: 'YouTube', icon: 'youtube', color: PLATFORM_COLORS.youtube, tab: 'youtube' },
+                        { name: 'Instagram', icon: 'instagram', color: PLATFORM_COLORS.instagram, tab: 'instagram', erBasis: '÷ reach' },
+                        { name: 'Facebook', icon: 'facebook', color: PLATFORM_COLORS.facebook, tab: 'facebook', erBasis: '÷ video views' },
+                        { name: 'YouTube', icon: 'youtube', color: PLATFORM_COLORS.youtube, tab: 'youtube', erBasis: '÷ views' },
                     ].map(platform => {
                         const data = platforms[platform.name];
                         return (
@@ -320,7 +320,7 @@ export default function OverviewPage() {
                                         <div className="value">{data?.followers || '--'}</div>
                                     </div>
                                     <div className="platform-stat">
-                                        <div className="label">Engagement</div>
+                                        <div className="label" title="Each platform divides by something different, so don't compare these across platforms">Engagement ({platform.erBasis})</div>
                                         <div className="value">{data?.engagement || '--%'}</div>
                                     </div>
                                 </div>
