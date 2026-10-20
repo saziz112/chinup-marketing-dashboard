@@ -84,6 +84,21 @@ describe('POST /api/research/outliers/refresh', () => {
         expect(h.scrapeIg).not.toHaveBeenCalled();
     });
 
+    it('stores a whole-number median when an even video count lands on .5 (median_views is bigint)', async () => {
+        route({ accounts: [igAccount] });
+        h.sql.mockImplementation(async (strings: TemplateStringsArray) => {
+            const q = strings.join('?');
+            if (q.includes('FROM research_watchlist')) return { rows: [igAccount] };
+            if (q.includes('INSERT INTO research_scrape_runs')) return { rows: [{ id: 1 }] };
+            if (q.includes('SELECT account_id, views')) return { rows: [{ account_id: 1, views: '1000' }, { account_id: 1, views: '1001' }] };
+            return { rows: [] };
+        });
+        h.scrapeIg.mockResolvedValue({ videos: [], errors: [] });
+        await post({ confirm: true });
+        const update = calls('UPDATE research_watchlist')[0];
+        expect(update[1]).toBe(1001); // 1000.5 rounded; a fraction makes Postgres reject the whole run
+    });
+
     it('scrapes once per platform, stores videos and updates the account median', async () => {
         route({ accounts: [igAccount] });
         h.scrapeIg.mockResolvedValue({

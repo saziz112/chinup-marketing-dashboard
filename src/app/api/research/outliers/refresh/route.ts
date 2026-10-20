@@ -125,9 +125,10 @@ async function runPlatform(
         `;
         for (const a of accounts) {
             const views = viewRows.filter(r => r.account_id === a.id && r.views !== null).map(r => Number(r.views));
+            const med = median(views);
             const err = errors.find(e => e.input.toLowerCase().includes(a.handle.toLowerCase()));
             await sql`
-                UPDATE research_watchlist SET last_scraped_at = NOW(), median_views = ${median(views)},
+                UPDATE research_watchlist SET last_scraped_at = NOW(), median_views = ${med === null ? null : Math.round(med)}, -- bigint column
                     video_count = ${views.length}, last_error = ${err?.message ?? null}
                 WHERE id = ${a.id}
             `;
