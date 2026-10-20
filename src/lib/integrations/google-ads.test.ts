@@ -12,6 +12,14 @@ vi.mock('./gohighlevel', () => ({
     getOpportunities: h.getOpportunities,
 }));
 vi.mock('./mindbody-db', () => ({ getClientEmailMapFromDB: h.emailMap, getAppointmentsByClientIds: h.appts }));
+const store = vi.hoisted(() => new Map<string, unknown>());
+vi.mock('@/lib/pg-cache', () => ({
+    pgCached: async (k: string, _o: unknown, load: () => Promise<unknown>) => {
+        if (!store.has(k)) store.set(k, JSON.parse(JSON.stringify(await load())));
+        return JSON.parse(JSON.stringify(store.get(k)));
+    },
+}));
+vi.mock('@/lib/api-usage-tracker', () => ({ trackCall: () => {} }));
 
 async function load() {
     vi.resetModules();
@@ -22,6 +30,7 @@ const ENV = ['GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_SECRET', 'GOOGLE_ADS_REF
 
 describe('getGoogleAdsData', () => {
     beforeEach(() => {
+        store.clear();
         for (const k of ENV) vi.stubEnv(k, 'x');
         vi.spyOn(console, 'error').mockImplementation(() => {});
         vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -43,6 +52,7 @@ describe('getGoogleAdsData', () => {
 
 describe('getGhlGoogleLeads', () => {
     beforeEach(() => {
+        store.clear();
         h.getPipelines.mockReset().mockResolvedValue([{ id: 'p1' }]);
         h.getOpportunities.mockReset().mockResolvedValue({ opportunities: [] });
         vi.spyOn(console, 'warn').mockImplementation(() => {});

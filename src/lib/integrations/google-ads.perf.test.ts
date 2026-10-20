@@ -3,11 +3,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 
-const h = vi.hoisted(() => ({ store: new Map<string, unknown>(), oppCalls: 0 }));
-vi.mock('@/lib/api-usage-tracker', () => ({ trackCall: () => {} }));
+const h = vi.hoisted(() => ({ store: new Map<string, unknown>(), oppCalls: 0, track: [] as unknown[][] }));
+vi.mock('@/lib/api-usage-tracker', () => ({ trackCall: (...a: unknown[]) => { h.track.push(a); } }));
 vi.mock('@/lib/pg-cache', () => ({
     pgCacheGet: async (k: string) => (h.store.has(k) ? JSON.parse(JSON.stringify(h.store.get(k))) : null),
     pgCacheSet: async (k: string, v: unknown) => { h.store.set(k, JSON.parse(JSON.stringify(v))); },
+    // Like pg-cache's memory tier: every caller gets the same stored object.
+    pgCached: async (k: string, _o: unknown, load: () => Promise<unknown>) => {
+        if (!h.store.has(k)) h.store.set(k, await load());
+        return h.store.get(k);
+    },
 }));
 vi.mock('./mindbody-db', () => ({ getClientEmailMapFromDB: vi.fn(), getAppointmentsByClientIds: vi.fn() }));
 vi.mock('./gohighlevel', () => ({
@@ -71,6 +76,7 @@ describe('Google Ads output is unchanged by the parallel + shared-cache rewrite'
     beforeEach(() => {
         h.store.clear();
         h.oppCalls = 0;
+        h.track = [];
         for (const k of ENV) vi.stubEnv(k, 'x');
         vi.spyOn(console, 'log').mockImplementation(() => {});
     });
@@ -88,5 +94,27 @@ describe('Google Ads output is unchanged by the parallel + shared-cache rewrite'
         expect(res.count).toMatchSnapshot();
         expect(res.opportunities.slice(0, 4).map(o => [o.id, o.locationKey, o.source, o.ghlUrl])).toMatchSnapshot();
         expect(fingerprint(res)).toMatchSnapshot();
+    });
+
+    it('serves a repeat load on another instance from the shared cache, and logs usage', async () => {
+        const fetchMock = stubAdsApi();
+        const a = await load();
+        await a.getGoogleAdsData('2026-09-20', '2026-10-19');
+        await a.getGhlGoogleLeads('2026-09-20', '2026-10-19');
+        const [adsCalls, oppCalls] = [fetchMock.mock.calls.length, h.oppCalls];
+        const b = await load();
+        await b.getGoogleAdsData('2026-09-20', '2026-10-19');
+        await b.getGhlGoogleLeads('2026-09-20', '2026-10-19');
+        expect([fetchMock.mock.calls.length, h.oppCalls]).toEqual([adsCalls, oppCalls]);
+        expect(h.track.filter(t => t[0] === 'googleAds' && t[2] === false)).toHaveLength(3);
+        expect(h.track.filter(t => t[0] === 'googleAds' && t[2] === true)).toHaveLength(1);
+    });
+
+    it('hands out copies so MindBody enrichment never leaks into the cached leads', async () => {
+        const { getGhlGoogleLeads } = await load();
+        const first = await getGhlGoogleLeads('2026-09-20', '2026-10-19');
+        first.opportunities[0].mbRevenue = 999;
+        const again = await getGhlGoogleLeads('2026-09-20', '2026-10-19');
+        expect(again.opportunities[0].mbRevenue).toBe(0);
     });
 });
