@@ -66,6 +66,14 @@ describe('POST /api/research/outliers/refresh', () => {
         expect(h.scrapeIg).not.toHaveBeenCalled();
     });
 
+    it('does not let a run Apify refused at launch (bad token, nothing billed) start the cooldown', async () => {
+        route({ accounts: [igAccount] });
+        await post({});
+        const cooldown = text(calls('FROM research_scrape_runs')[0]);
+        expect(cooldown).toMatch(/status\s*=\s*'failed'/);
+        expect(cooldown).toContain('Apify start failed: 40[13]');
+    });
+
     it('returns the plan and cost without scraping unless confirmed', async () => {
         route({ accounts: [igAccount] });
         const res = await post({});

@@ -6,7 +6,8 @@
  * scrapes up to 20 stale accounts (not scraped in 7 days), 20 videos each, in
  * one batched Apify run per platform, then refreshes each account's median.
  * A 1-hour cooldown between runs (failed ones too, since Apify may still have
- * billed them) stops double clicks from double billing.
+ * billed them) stops double clicks from double billing. A run Apify refused
+ * at launch with 401/403 is exempt: it never started, so it cost nothing.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -43,7 +44,10 @@ export async function POST(req: NextRequest) {
 
     const { rows: recent } = await sql`
         SELECT started_at FROM research_scrape_runs
-        WHERE started_at > NOW() - make_interval(mins => ${COOLDOWN_MINUTES})        ORDER BY started_at DESC LIMIT 1
+        WHERE started_at > NOW() - make_interval(mins => ${COOLDOWN_MINUTES})
+          -- Apify refused the run at launch (bad or missing token): nothing ran, nothing billed.
+          AND NOT (status = 'failed' AND COALESCE(error, '') ~ '^Apify start failed: 40[13]')
+        ORDER BY started_at DESC LIMIT 1
     `;
     if (recent.length > 0) {
         return NextResponse.json({ error: `A refresh ran in the last ${COOLDOWN_MINUTES} minutes. Try again later.` }, { status: 429 });
