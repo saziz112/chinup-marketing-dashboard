@@ -53,7 +53,6 @@ export interface IGMedia {
     shares?: number;
     saved?: number;
     totalInteractions?: number;
-    plays?: number; // reels only
     avgWatchTime?: number; // reels only
     // Comment-reply tracking (fetched separately, only when commentsCount > 0)
     commentsFetched?: number;       // how many comments we sampled (capped at 50/post)
@@ -408,7 +407,7 @@ export async function getIGMedia(limit: number = 25): Promise<IGMedia[]> {
         try {
             const isReel = m.media_type === 'VIDEO';
             const postMetrics = isReel
-                ? 'views,reach,likes,comments,shares,saved,total_interactions,plays,ig_reels_avg_watch_time'
+                ? 'views,reach,likes,comments,shares,saved,total_interactions,ig_reels_avg_watch_time'
                 : 'views,reach,likes,comments,shares,saved,total_interactions';
 
             const insightsData = await graphGet<{
@@ -426,12 +425,12 @@ export async function getIGMedia(limit: number = 25): Promise<IGMedia[]> {
                     case 'shares': post.shares = value; break;
                     case 'saved': post.saved = value; break;
                     case 'total_interactions': post.totalInteractions = value; break;
-                    case 'plays': post.plays = value; break;
                     case 'ig_reels_avg_watch_time': post.avgWatchTime = value; break;
                 }
             }
-        } catch {
-            // Insights may fail for very new posts or stories — continue
+        } catch (err) {
+            // Leave metrics unset so callers can tell "unknown" from a real 0
+            console.error(`IG insights failed for media ${m.id}:`, err instanceof Error ? err.message : String(err));
         }
 
         // Step 3: Fetch comments + reply detection per post (only if any comments exist)

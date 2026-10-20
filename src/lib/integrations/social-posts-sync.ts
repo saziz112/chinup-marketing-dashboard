@@ -81,7 +81,7 @@ async function fetchIGMediaPage(
         try {
             const isReel = m.media_type === 'VIDEO';
             const postMetrics = isReel
-                ? 'views,reach,likes,comments,shares,saved,total_interactions,plays'
+                ? 'views,reach,likes,comments,shares,saved,total_interactions'
                 : 'views,reach,likes,comments,shares,saved,total_interactions';
 
             const insightsData = await graphGet<{
@@ -97,11 +97,11 @@ async function fetchIGMediaPage(
                     case 'shares': post.shares = value; break;
                     case 'saved': post.saved = value; break;
                     case 'total_interactions': post.totalInteractions = value; break;
-                    case 'plays': post.plays = value; break;
                 }
             }
-        } catch {
-            // Insights may fail for stories or very new posts
+        } catch (err) {
+            // Leave metrics unset so upsertPosts stores NULL rather than a fake 0
+            console.error(`IG insights failed for media ${m.id}:`, err instanceof Error ? err.message : String(err));
         }
 
         posts.push(post);
@@ -120,11 +120,14 @@ async function upsertPosts(posts: IGMedia[]): Promise<number> {
     for (const p of posts) {
         const likes = p.likeCount || 0;
         const comments = p.commentsCount || 0;
-        const shares = p.shares || 0;
-        const saves = p.saved || 0;
-        const views = p.views || 0;
-        const reach = p.reach || 0;
-        const rate = postEngagementRate({ likes, comments, shares, saves, views, reach });
+        // Insights-derived fields are NULL when the insights call failed, not 0
+        const hasInsights = p.views !== undefined || p.reach !== undefined;
+        const shares = hasInsights ? p.shares || 0 : null;
+        const saves = hasInsights ? p.saved || 0 : null;
+        const views = hasInsights ? p.views || 0 : null;
+        const reach = hasInsights ? p.reach || 0 : null;
+        const impressions = hasInsights ? p.totalInteractions || 0 : null;
+        const rate = postEngagementRate({ likes, comments, shares: shares ?? 0, saves: saves ?? 0, views: views ?? 0, reach: reach ?? 0 });
         const engagementRate = rate === null ? null : Math.min(rate, 99.9999);
 
         await sql`
@@ -143,19 +146,19 @@ async function upsertPosts(posts: IGMedia[]): Promise<number> {
                 ${saves},
                 ${views},
                 ${reach},
-                ${p.totalInteractions || 0},
+                ${impressions},
                 ${engagementRate},
                 NOW()
             )
             ON CONFLICT (platform, post_id) DO UPDATE SET
                 likes = EXCLUDED.likes,
                 comments = EXCLUDED.comments,
-                shares = EXCLUDED.shares,
-                saves = EXCLUDED.saves,
-                views = EXCLUDED.views,
-                reach = EXCLUDED.reach,
-                impressions = EXCLUDED.impressions,
-                engagement_rate = EXCLUDED.engagement_rate,
+                shares = COALESCE(EXCLUDED.shares, social_posts.shares),
+                saves = COALESCE(EXCLUDED.saves, social_posts.saves),
+                views = COALESCE(EXCLUDED.views, social_posts.views),
+                reach = COALESCE(EXCLUDED.reach, social_posts.reach),
+                impressions = COALESCE(EXCLUDED.impressions, social_posts.impressions),
+                engagement_rate = CASE WHEN EXCLUDED.views IS NULL THEN social_posts.engagement_rate ELSE EXCLUDED.engagement_rate END,
                 media_url = COALESCE(EXCLUDED.media_url, social_posts.media_url),
                 updated_at = NOW()
         `;

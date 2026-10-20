@@ -310,7 +310,6 @@ export async function GET(request: NextRequest) {
                     engagementRate: postEngagementRate,
                     unrepliedCount: unrepliedCount > 0 ? unrepliedCount : 0,
                     avgReplyHours: p.avgReplyHours ?? null,
-                    plays: p.plays,
                     avgWatchTime: p.avgWatchTime,
                 };
             }),

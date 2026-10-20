@@ -132,7 +132,6 @@ export interface IGData {
         engagementRate: number;
         unrepliedCount?: number;
         avgReplyHours?: number | null;
-        plays?: number;
     }>;
     topPost?: {
         id: string;
