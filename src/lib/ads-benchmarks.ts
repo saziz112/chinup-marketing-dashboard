@@ -95,6 +95,32 @@ export function gradeAllMetrics(
 }
 
 /**
+ * Account-level metrics for the benchmark card, over every campaign that
+ * delivered in the window (paused ones included), so it matches the KPI totals.
+ * ROAS is weighted by spend: a $100 campaign at 10x must not outvote a $900
+ * one at 1x. It is null when no campaign reports any conversion value, which
+ * on Meta means purchases are not tracked, not that ads returned nothing.
+ */
+export function summarizeCampaigns(
+    campaigns: Array<{ impressions: number; clicks: number; spend: number | null; results: number; roas: number }>,
+): { campaignCount: number; ctr: number; cpm: number; costPerResult: number; roas: number | null } {
+    const delivered = campaigns.filter(c => c.impressions > 0 || c.clicks > 0);
+    const impressions = delivered.reduce((s, c) => s + c.impressions, 0);
+    const clicks = delivered.reduce((s, c) => s + c.clicks, 0);
+    const spend = delivered.reduce((s, c) => s + (c.spend || 0), 0);
+    const results = delivered.reduce((s, c) => s + c.results, 0);
+    const value = delivered.reduce((s, c) => s + c.roas * (c.spend || 0), 0);
+    const tracked = delivered.some(c => c.roas > 0);
+    return {
+        campaignCount: delivered.length,
+        ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+        cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
+        costPerResult: results > 0 ? spend / results : 0,
+        roas: tracked && spend > 0 ? value / spend : null,
+    };
+}
+
+/**
  * Compute an overall campaign health score (A-F) from individual grades.
  * Weights: ROAS (30%), Cost/Lead (25%), CTR (25%), CPM (20%)
  */

@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { fmt$, fmtNum, fmtPct } from '@/lib/format';
-import { gradeMetric, gradeAllMetrics, overallGrade, getBenchmarkInfo, type MetricGrade } from '@/lib/ads-benchmarks';
+import { gradeMetric, gradeAllMetrics, overallGrade, getBenchmarkInfo, summarizeCampaigns, type MetricGrade } from '@/lib/ads-benchmarks';
 
 // --- Types (shared with ads/page.tsx) ---
 
@@ -138,21 +138,13 @@ export function PerformanceSummary({ campaigns, platform, isAdmin }: {
     platform: 'meta' | 'google';
     isAdmin: boolean;
 }) {
-    const activeCampaigns = campaigns.filter(c => c.status === 'ACTIVE' && (c.impressions > 0 || c.clicks > 0));
-    if (activeCampaigns.length === 0) return null;
+    const summary = summarizeCampaigns(campaigns);
+    if (summary.campaignCount === 0) return null;
 
-    const totalImpressions = activeCampaigns.reduce((s, c) => s + c.impressions, 0);
-    const totalClicks = activeCampaigns.reduce((s, c) => s + c.clicks, 0);
-    const totalSpend = activeCampaigns.reduce((s, c) => s + (c.spend || 0), 0);
-    const totalResults = activeCampaigns.reduce((s, c) => s + c.results, 0);
-
-    const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
-    const avgCpm = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
-    const avgCpl = totalResults > 0 ? totalSpend / totalResults : 0;
-    const avgRoas = activeCampaigns.reduce((s, c) => s + c.roas, 0) / activeCampaigns.length;
+    const { ctr: avgCtr, cpm: avgCpm, costPerResult: avgCpl, roas: avgRoas } = summary;
 
     const grades = gradeAllMetrics(
-        { ctr: avgCtr, cpm: avgCpm, costPerResult: avgCpl, roas: avgRoas },
+        { ctr: avgCtr, cpm: avgCpm, costPerResult: avgCpl, roas: avgRoas ?? 0 },
         platform,
     );
     const overall = overallGrade(grades);
@@ -161,7 +153,15 @@ export function PerformanceSummary({ campaigns, platform, isAdmin }: {
         { key: 'ctr', label: 'CTR', value: `${avgCtr.toFixed(2)}%`, grade: grades.ctr, show: true },
         { key: 'cpm', label: 'CPM', value: `$${avgCpm.toFixed(0)}`, grade: grades.cpm, show: isAdmin },
         { key: 'costPerLead', label: 'Cost/Lead', value: `$${avgCpl.toFixed(0)}`, grade: grades.costPerLead, show: isAdmin },
-        { key: 'roas', label: 'ROAS', value: `${avgRoas.toFixed(1)}x`, grade: grades.roas, show: true },
+        {
+            key: 'roas',
+            // Google's figure is conversion value / cost, not POS revenue. Meta has
+            // no purchase tracking, so it reports no value at all.
+            label: platform === 'google' ? 'Conv. value / cost' : 'ROAS',
+            value: avgRoas === null ? 'n/a' : `${avgRoas.toFixed(1)}x`,
+            grade: grades.roas,
+            show: true,
+        },
     ].filter(m => m.show);
 
     return (
@@ -189,7 +189,8 @@ export function PerformanceSummary({ campaigns, platform, isAdmin }: {
             ))}
             <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', textAlign: 'right' }}>
                 <div>vs. Med Spa Industry Avg</div>
-                <div>{activeCampaigns.length} active campaign{activeCampaigns.length !== 1 ? 's' : ''}</div>
+                <div>{summary.campaignCount} campaign{summary.campaignCount !== 1 ? 's' : ''} with delivery, spend-weighted</div>
+                {avgRoas === null && <div>ROAS n/a: no purchase tracking</div>}
             </div>
         </div>
     );
@@ -271,9 +272,11 @@ export function TrueRoasBanner({ roas, isMock, onOpenDetails }: { roas: RoasData
                         <div style={{ textAlign: 'center' }}>
                             <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Meta ROAS</div>
                             <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-secondary)' }}>
-                                {roas.metaPlatformRoas !== null && roas.metaPlatformRoas > 0 ? `${roas.metaPlatformRoas.toFixed(2)}x` : '0.00x'}
+                                {roas.metaPlatformRoas !== null && roas.metaPlatformRoas > 0 ? `${roas.metaPlatformRoas.toFixed(2)}x` : 'n/a'}
                             </div>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Platform reported</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                {roas.metaPlatformRoas !== null && roas.metaPlatformRoas > 0 ? 'Platform reported' : 'No purchase tracking on Meta'}
+                            </div>
                         </div>
 
                         <div style={{ width: 1, background: 'var(--border)' }} />
@@ -401,7 +404,7 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
                                 {isAdmin && !!roasDict && <Th label="MB Clients" col="mbClients" />}
                                 {isAdmin && !!roasDict && <Th label="Booked" col="apptsBooked" />}
                                 {isAdmin && !!roasDict && <Th label="Completed" col="apptsCompleted" />}
-                                <Th label={isAdmin && !!roasDict ? "True ROAS" : "ROAS"} col={isAdmin && !!roasDict ? "trueRoas" : "roas"} />
+                                <Th label={isAdmin && !!roasDict ? "True ROAS" : isGoogle ? "Conv. value / cost" : "ROAS"} col={isAdmin && !!roasDict ? "trueRoas" : "roas"} />
                                 {!!onAnalyze && <th style={{ width: 40 }} />}
                             </tr>
                         </thead>
@@ -455,7 +458,9 @@ export function CampaignsTable({ campaigns, roasDict, isAdmin, statusFilter, onS
                                         )}
                                         <td style={{ color: roasVal > 0 ? '#22c55e' : 'var(--text-muted)', fontWeight: 600 }}>
                                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                                {roasVal !== null && roasVal !== undefined ? `${roasVal.toFixed(1)}x` : '\u2014'}
+                                                {!hasTrueRoas && plat === 'meta' && !c.roas
+                                                    ? <span title="Meta has no purchase tracking, so it reports no ROAS">n/a</span>
+                                                    : roasVal !== null && roasVal !== undefined ? `${roasVal.toFixed(1)}x` : '\u2014'}
                                                 <GradeDot grade={gradeMetric('roas', roasVal ?? c.roas, plat)} />
                                             </span>
                                         </td>
