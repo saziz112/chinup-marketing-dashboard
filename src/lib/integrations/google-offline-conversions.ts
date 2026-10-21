@@ -1,5 +1,5 @@
 /**
- * Google Ads offline click conversions: paid Zenoti visits → uploadClickConversions.
+ * Google Ads offline click conversions: paid Zenoti visits → Data Manager events:ingest.
  *
  * Path: landing-page form → /api/track/gclid stores (email, gclid, captured_at) in
  * gclid_captures (or GHL records the gclid on the lead's attributionSource) → Zenoti sync fills mb_sales_history / mb_clients_cache → this job
@@ -8,28 +8,35 @@
  * Event: a PAID visit (Zenoti Closed invoice lines for one guest on one day, summed;
  * $0 package-redemption days are skipped). Value = collected dollars that day.
  *
- * Rules (Google Ads API v23 ClickConversion, verified against developers.google.com
- * 2026-10-19):
- *  - conversion_date_time is `yyyy-mm-dd HH:mm:ss±HH:mm` and must be after the click.
+ * Why Data Manager: Google Ads uploadClickConversions rejects this customer with
+ * CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE (new integrations must use Data Manager;
+ * seen 2026-10-20). Data Manager needs the OAuth scope auth/datamanager on the refresh
+ * token; no developer token.
+ *
+ * Rules (Data Manager v1 events:ingest, verified against developers.google.com 2026-10-20):
+ *  - eventTimestamp is RFC 3339 with an offset and must be after the click.
  *    Zenoti only gives a sale DATE (center-local), so we use 23:59:59 America/New_York
  *    on that date, which is after any same-day click. Today's (unfinished) day waits.
  *  - The click must be inside the action's 90-day click-through window; captured_at
  *    (form submit) stands in for click time, with a one-day buffer.
- *  - order_id is a stable visit key, so Google also dedupes a repeat upload.
+ *  - transactionId is a stable visit key, so Google also dedupes a repeat upload.
+ *  - A 200 only means the request was accepted. Per-event outcomes arrive later, as
+ *    counts per reason, from requestStatus:retrieve with the stored request id.
  *
- * Idempotency: google_offline_uploads keyed by (visit key, action id). success,
- * already_uploaded and failed (permanent) are never re-sent; retry rows are. A request
- * that fails as a whole records nothing, so every visit is retried next run.
+ * Idempotency: google_offline_uploads keyed by (visit key, action id). Accepted visits
+ * are recorded as `sent` (request id in response_error) and never re-sent; so are the
+ * legacy success, already_uploaded and failed rows. Old retry rows are re-sent. A request
+ * that is rejected as a whole records nothing, so every visit is retried next run.
  */
 
 import { sql } from '@/lib/db/sql';
 
-export const GOOGLE_ADS_API_VERSION = 'v23';
+const INGEST_URL = 'https://datamanager.googleapis.com/v1/events:ingest';
 export const CLINIC_TZ = 'America/New_York';
 const CLICK_WINDOW_DAYS = 90;
 const CLICK_BUFFER_DAYS = 1; // captured_at is the form submit, a little after the click
-const LOOKBACK_DAYS = 30;    // how far back to (re)consider visits each run
-const MAX_PER_REQUEST = 2000; // API limit per uploadClickConversions request
+const LOOKBACK_DAYS = CLICK_WINDOW_DAYS; // any older visit is past every click's window anyway
+const MAX_PER_REQUEST = 2000; // API limit per events:ingest request
 const DAY_MS = 86_400_000;
 
 // ---------------------------------------------------------------------------
@@ -40,7 +47,6 @@ const REQUIRED_ENV = [
     'GOOGLE_ADS_OFFLINE_CONVERSION_ACTION_ID',
     'GOOGLE_ADS_CUSTOMER_ID',
     'GOOGLE_ADS_LOGIN_CUSTOMER_ID',
-    'GOOGLE_ADS_DEVELOPER_TOKEN',
     'GOOGLE_ADS_CLIENT_ID',
     'GOOGLE_ADS_CLIENT_SECRET',
     'GOOGLE_ADS_REFRESH_TOKEN',
@@ -52,8 +58,6 @@ export interface OfflineConfig {
     actionId: string;
     customerId: string;
     loginCustomerId: string;
-    conversionAction: string;
-    developerToken: string;
     clientId: string;
     clientSecret: string;
     refreshToken: string;
@@ -68,15 +72,12 @@ export function readOfflineConfig(env: Env = process.env):
     if (!/^\d+$/.test(actionId)) {
         return { ok: false, reason: 'GOOGLE_ADS_OFFLINE_CONVERSION_ACTION_ID must be the numeric conversion action id (ctId)' };
     }
-    const customerId = env.GOOGLE_ADS_CUSTOMER_ID!.replace(/-/g, '').trim();
     return {
         ok: true,
         config: {
             actionId,
-            customerId,
+            customerId: env.GOOGLE_ADS_CUSTOMER_ID!.replace(/-/g, '').trim(),
             loginCustomerId: env.GOOGLE_ADS_LOGIN_CUSTOMER_ID!.replace(/-/g, '').trim(),
-            conversionAction: `customers/${customerId}/conversionActions/${actionId}`,
-            developerToken: env.GOOGLE_ADS_DEVELOPER_TOKEN!,
             clientId: env.GOOGLE_ADS_CLIENT_ID!,
             clientSecret: env.GOOGLE_ADS_CLIENT_SECRET!,
             refreshToken: env.GOOGLE_ADS_REFRESH_TOKEN!,
@@ -103,7 +104,7 @@ export function clinicDate(d: Date): string {
     return clinicParts(d).ymd;
 }
 
-/** 23:59:59 clinic time on `ymd`, as the API string and the instant it denotes. */
+/** 23:59:59 clinic time on `ymd`, as an RFC 3339 string and the instant it denotes. */
 export function endOfDayConversionTime(ymd: string): { text: string; instant: Date } {
     const [y, m, d] = ymd.split('-').map(Number);
     const wall = Date.UTC(y, m - 1, d, 23, 59, 59);
@@ -112,7 +113,7 @@ export function endOfDayConversionTime(ymd: string): { text: string; instant: Da
     const abs = Math.abs(offsetMin);
     const sign = offsetMin < 0 ? '-' : '+';
     const off = `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
-    return { text: `${ymd} 23:59:59${off}`, instant };
+    return { text: `${ymd}T23:59:59${off}`, instant };
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +132,7 @@ export interface PlannedConversion {
     visitKey: string;
     saleDate: string;
     gclid: string;
-    conversionDateTime: string;
+    eventTimestamp: string;
     value: number;
 }
 
@@ -160,74 +161,13 @@ export function planConversions(rows: VisitRow[], now: Date):
         else if (conv.instant.getTime() - captured.getTime() > (CLICK_WINDOW_DAYS - CLICK_BUFFER_DAYS) * DAY_MS) reason = 'click_expired';
 
         if (reason) skipped.push({ visitKey: key, reason });
-        else planned.push({ visitKey: key, saleDate: r.sale_date, gclid: r.gclid, conversionDateTime: conv.text, value });
+        else planned.push({ visitKey: key, saleDate: r.sale_date, gclid: r.gclid, eventTimestamp: conv.text, value });
     }
     return { planned, skipped };
 }
 
 // ---------------------------------------------------------------------------
-// Response classification
-// ---------------------------------------------------------------------------
-
-export interface UploadResponse {
-    results?: Array<{ gclid?: string; conversionAction?: string }>;
-    partialFailureError?: {
-        code?: number;
-        message?: string;
-        details?: Array<{ errors?: Array<{
-            errorCode?: Record<string, string>;
-            message?: string;
-            location?: { fieldPathElements?: Array<{ fieldName?: string; index?: number }> };
-        }> }>;
-    };
-    error?: { code?: number; message?: string; status?: string };
-}
-
-export type RowStatus = 'success' | 'already_uploaded' | 'failed' | 'retry';
-
-/** Google already holds this conversion; re-sending can't help. */
-const ALREADY_UPLOADED = new Set(['CLICK_CONVERSION_ALREADY_EXISTS', 'ORDER_ID_ALREADY_IN_USE']);
-/** Facts about the click/visit that won't change on retry. Anything else (TOO_RECENT_*,
- *  action misconfiguration the owner can fix, unknown) stays retryable. */
-const PERMANENT = new Set([
-    'EXPIRED_EVENT', 'CONVERSION_PRECEDES_EVENT', 'UNPARSEABLE_GCLID', 'EVENT_NOT_FOUND', 'CLICK_NOT_FOUND',
-    'INVALID_CUSTOMER_FOR_CLICK', 'UNAUTHORIZED_CUSTOMER', 'CONVERSION_TRACKING_NOT_ENABLED_AT_IMPRESSION_TIME',
-    'ORDER_ID_CONTAINS_PII',
-]);
-
-export interface RowOutcome { status: RowStatus; code: string | null; error: string | null }
-
-export function classifyResults(resp: UploadResponse, n: number): RowOutcome[] {
-    const rowErrors = new Map<number, { code: string; message: string }>();
-    for (const detail of resp.partialFailureError?.details ?? []) {
-        for (const e of detail.errors ?? []) {
-            const el = e.location?.fieldPathElements?.find(f => f.fieldName === 'conversions');
-            if (!el) continue;
-            const idx = el.index ?? 0;
-            if (rowErrors.has(idx)) continue; // keep the first error per row
-            const code = Object.values(e.errorCode ?? {})[0] ?? 'UNKNOWN';
-            rowErrors.set(idx, { code, message: e.message ?? '' });
-        }
-    }
-
-    const out: RowOutcome[] = [];
-    for (let i = 0; i < n; i++) {
-        const result = resp.results?.[i];
-        if (result?.gclid) { out.push({ status: 'success', code: null, error: null }); continue; }
-        const err = rowErrors.get(i);
-        if (!err) {
-            out.push({ status: 'retry', code: null, error: resp.partialFailureError?.message || 'no result returned' });
-            continue;
-        }
-        const status: RowStatus = ALREADY_UPLOADED.has(err.code) ? 'already_uploaded'
-            : PERMANENT.has(err.code) ? 'failed' : 'retry';
-        out.push({ status, code: err.code, error: `${err.code}: ${err.message}` });
-    }
-    return out;
-}
-
-// ---------------------------------------------------------------------------
-// Google Ads calls
+// Google calls
 // ---------------------------------------------------------------------------
 
 async function getAccessToken(cfg: OfflineConfig): Promise<string> {
@@ -244,36 +184,37 @@ async function getAccessToken(cfg: OfflineConfig): Promise<string> {
     return (await res.json()).access_token as string;
 }
 
-async function uploadClickConversions(
+interface IngestResponse {
+    requestId?: string;
+    error?: { code?: number; message?: string; status?: string };
+}
+
+async function ingestEvents(
     token: string, cfg: OfflineConfig, conversions: PlannedConversion[], validateOnly: boolean,
-): Promise<{ ok: boolean; status: number; body: UploadResponse; raw: string }> {
-    const res = await fetch(
-        `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${cfg.customerId}:uploadClickConversions`,
-        {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'developer-token': cfg.developerToken,
-                'login-customer-id': cfg.loginCustomerId,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                conversions: conversions.map(c => ({
-                    gclid: c.gclid,
-                    conversionAction: cfg.conversionAction,
-                    conversionDateTime: c.conversionDateTime,
-                    conversionValue: c.value,
-                    currencyCode: 'USD',
-                    orderId: c.visitKey,
-                })),
-                partialFailure: true,
-                validateOnly,
-            }),
-            cache: 'no-store',
-        },
-    );
+): Promise<{ ok: boolean; status: number; body: IngestResponse; raw: string }> {
+    const res = await fetch(INGEST_URL, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            destinations: [{
+                operatingAccount: { accountType: 'GOOGLE_ADS', accountId: cfg.customerId },
+                loginAccount: { accountType: 'GOOGLE_ADS', accountId: cfg.loginCustomerId },
+                productDestinationId: cfg.actionId,
+            }],
+            events: conversions.map(c => ({
+                adIdentifiers: { gclid: c.gclid },
+                conversionValue: c.value,
+                currency: 'USD',
+                eventTimestamp: c.eventTimestamp,
+                transactionId: c.visitKey,
+                eventSource: 'WEB',
+            })),
+            validateOnly,
+        }),
+        cache: 'no-store',
+    });
     const raw = await res.text();
-    let body: UploadResponse = {};
+    let body: IngestResponse = {};
     try { body = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON error page */ }
     return { ok: res.ok, status: res.status, body, raw };
 }
@@ -290,12 +231,9 @@ export interface RunResult {
     validateOnly?: boolean;
     candidates?: number;
     planned?: number;
-    uploaded?: number;
-    alreadyUploaded?: number;
-    failed?: number;
-    retry?: number;
+    sent?: number;
+    requestId?: string;
     skippedVisits?: Partial<Record<SkipReason, number>>;
-    errors?: ({ visitKey: string } & RowOutcome)[];
 }
 
 export async function runOfflineConversionUpload(opts: {
@@ -311,8 +249,8 @@ export async function runOfflineConversionUpload(opts: {
     }
     const cfg = cfgResult.config;
 
-    // One row per (guest, day) with a captured gclid, excluding visits already done
-    // for this action. Retry rows come back.
+    // One row per (guest, day) with a captured gclid, excluding visits already sent or
+    // done for this action. Legacy retry rows come back.
     const since = new Date(now.getTime() - LOOKBACK_DAYS * DAY_MS).toISOString().slice(0, 10);
     const candidates = await sql<VisitRow>`
         SELECT s.client_id::text AS client_id,
@@ -343,7 +281,7 @@ export async function runOfflineConversionUpload(opts: {
               SELECT 1 FROM google_offline_uploads u
               WHERE u.sale_id = 'zenoti-visit-' || s.client_id::text || '-' || s.sale_date::text
                 AND u.conversion_action_id = ${cfg.actionId}
-                AND u.response_status IN ('success', 'already_uploaded', 'failed')
+                AND u.response_status IN ('sent', 'success', 'already_uploaded', 'failed')
           )
         GROUP BY s.client_id, s.sale_date, g.gclid, g.captured_at
         ORDER BY s.sale_date ASC
@@ -356,47 +294,33 @@ export async function runOfflineConversionUpload(opts: {
     for (const s of skipped) skippedVisits[s.reason] = (skippedVisits[s.reason] ?? 0) + 1;
 
     const base: RunResult = {
-        ok: true, validateOnly, candidates: candidates.rows.length, planned: planned.length,
-        uploaded: 0, alreadyUploaded: 0, failed: 0, retry: 0, skippedVisits,
+        ok: true, validateOnly, candidates: candidates.rows.length, planned: planned.length, sent: 0, skippedVisits,
     };
     if (planned.length === 0) return base;
 
-    let upload: Awaited<ReturnType<typeof uploadClickConversions>>;
+    let upload: Awaited<ReturnType<typeof ingestEvents>>;
     try {
-        upload = await uploadClickConversions(await getAccessToken(cfg), cfg, planned, validateOnly);
+        upload = await ingestEvents(await getAccessToken(cfg), cfg, planned, validateOnly);
     } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
         console.error('[google-offline-conversions] request failed:', error);
         return { ...base, ok: false, error };
     }
     if (!upload.ok) {
-        // Whole request rejected (auth, quota, bad action). Record nothing: every visit retries.
+        // Whole request rejected (auth, scope, bad destination, bad field). Record nothing: every visit retries.
         const error = `HTTP ${upload.status}: ${upload.body.error?.message ?? upload.raw.slice(0, 500)}`;
-        console.error('[google-offline-conversions] upload rejected:', error);
+        console.error('[google-offline-conversions] ingest rejected:', error);
         return { ...base, ok: false, error };
     }
+    const requestId = upload.body.requestId;
+    if (validateOnly) return { ...base, requestId };
 
-    const outcomes = classifyResults(upload.body, planned.length);
-    const errors = outcomes
-        .map((o, i) => ({ visitKey: planned[i].visitKey, ...o }))
-        .filter(o => o.status !== 'success');
-
-    if (validateOnly) {
-        // Nothing was imported (rows come back empty), so record nothing and report only
-        // the rows Google named an error for.
-        return { ...base, errors: errors.filter(e => e.code).slice(0, 50) };
-    }
-
-    const counts = { success: 0, already_uploaded: 0, failed: 0, retry: 0 };
-    for (let i = 0; i < planned.length; i++) {
-        const p = planned[i];
-        const o = outcomes[i];
-        counts[o.status]++;
+    for (const p of planned) {
         await sql`
             INSERT INTO google_offline_uploads
                 (sale_id, conversion_action_id, gclid, value, currency_code, conversion_datetime, uploaded_at, response_status, response_error)
             VALUES (${p.visitKey}, ${cfg.actionId}, ${p.gclid}, ${p.value}, 'USD',
-                    ${endOfDayConversionTime(p.saleDate).instant}, NOW(), ${o.status}, ${o.error})
+                    ${endOfDayConversionTime(p.saleDate).instant}, NOW(), ${'sent'}, ${`requestId ${requestId ?? 'none'}`})
             ON CONFLICT (sale_id, conversion_action_id) DO UPDATE SET
                 gclid = EXCLUDED.gclid,
                 value = EXCLUDED.value,
@@ -406,16 +330,6 @@ export async function runOfflineConversionUpload(opts: {
                 response_error = EXCLUDED.response_error
         `;
     }
-    if (counts.failed || counts.retry) {
-        console.warn(`[google-offline-conversions] ${counts.failed} failed, ${counts.retry} will retry`, errors.slice(0, 5));
-    }
 
-    return {
-        ...base,
-        uploaded: counts.success,
-        alreadyUploaded: counts.already_uploaded,
-        failed: counts.failed,
-        retry: counts.retry,
-        errors: errors.slice(0, 50),
-    };
+    return { ...base, sent: planned.length, requestId };
 }

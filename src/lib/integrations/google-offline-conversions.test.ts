@@ -17,7 +17,6 @@ import {
     readOfflineConfig,
     endOfDayConversionTime,
     planConversions,
-    classifyResults,
     runOfflineConversionUpload,
 } from './google-offline-conversions';
 
@@ -46,21 +45,24 @@ describe('readOfflineConfig', () => {
         expect(r.ok).toBe(false);
     });
 
-    it('strips dashes from customer ids and builds the resource name', () => {
+    it('strips dashes from customer ids', () => {
         const r = readOfflineConfig(ENV);
         expect(r.ok).toBe(true);
         if (r.ok) {
             expect(r.config.customerId).toBe('1234567890');
             expect(r.config.loginCustomerId).toBe('1112223333');
-            expect(r.config.conversionAction).toBe('customers/1234567890/conversionActions/987654321');
         }
+    });
+
+    it('does not need a developer token (Data Manager is OAuth only)', () => {
+        expect(readOfflineConfig({ ...ENV, GOOGLE_ADS_DEVELOPER_TOKEN: undefined }).ok).toBe(true);
     });
 });
 
 describe('endOfDayConversionTime', () => {
-    it('uses the clinic-local end of day with the DST-correct offset in the API format', () => {
-        expect(endOfDayConversionTime('2026-07-15').text).toBe('2026-07-15 23:59:59-04:00');
-        expect(endOfDayConversionTime('2026-01-15').text).toBe('2026-01-15 23:59:59-05:00');
+    it('uses the clinic-local end of day as RFC 3339 with the DST-correct offset', () => {
+        expect(endOfDayConversionTime('2026-07-15').text).toBe('2026-07-15T23:59:59-04:00');
+        expect(endOfDayConversionTime('2026-01-15').text).toBe('2026-01-15T23:59:59-05:00');
         expect(endOfDayConversionTime('2026-07-15').instant.toISOString()).toBe('2026-07-16T03:59:59.000Z');
     });
 });
@@ -78,7 +80,7 @@ describe('planConversions', () => {
             visitKey: 'zenoti-visit-guest-1-2026-10-10',
             saleDate: '2026-10-10',
             gclid: 'G1',
-            conversionDateTime: '2026-10-10 23:59:59-04:00',
+            eventTimestamp: '2026-10-10T23:59:59-04:00',
             value: 250,
         }]);
     });
@@ -102,32 +104,6 @@ describe('planConversions', () => {
     });
 });
 
-describe('classifyResults', () => {
-    const failure = (index: number, code: string) => ({
-        errorCode: { conversionUploadError: code },
-        message: `${code} message`,
-        location: { fieldPathElements: [{ fieldName: 'conversions', index }, { fieldName: 'gclid' }] },
-    });
-
-    it('maps each row to its own partial-failure error by index', () => {
-        const out = classifyResults({
-            results: [{ gclid: 'A', conversionAction: 'x' }, {}, {}, {}],
-            partialFailureError: {
-                code: 3, message: 'multiple',
-                details: [{ errors: [failure(1, 'EXPIRED_EVENT'), failure(2, 'TOO_RECENT_EVENT'), failure(3, 'CLICK_CONVERSION_ALREADY_EXISTS')] }],
-            },
-        }, 4);
-        expect(out.map(o => o.status)).toEqual(['success', 'failed', 'retry', 'already_uploaded']);
-        expect(out[1].error).toContain('EXPIRED_EVENT');
-        expect(out[0].error).toBeNull();
-    });
-
-    it('treats an empty row with no matching error as retryable, never as done', () => {
-        const out = classifyResults({ results: [{}] }, 1);
-        expect(out[0].status).toBe('retry');
-    });
-});
-
 describe('runOfflineConversionUpload', () => {
     let warn: ReturnType<typeof vi.spyOn>;
     const fetchCalls: { url: string; body: string }[] = [];
@@ -138,7 +114,7 @@ describe('runOfflineConversionUpload', () => {
             if (url.includes('oauth2.googleapis.com')) {
                 return { ok: true, status: 200, json: async () => ({ access_token: 'tok' }), text: async () => '' } as Response;
             }
-            if (url.includes(':uploadClickConversions')) {
+            if (url === 'https://datamanager.googleapis.com/v1/events:ingest') {
                 const status = upload.status ?? 200;
                 return { ok: status < 400, status, text: async () => JSON.stringify(upload.body) } as Response;
             }
@@ -171,61 +147,73 @@ describe('runOfflineConversionUpload', () => {
         expect(h.queries).toHaveLength(0);
     });
 
-    it('uploads to v23 with partial failure and records each row\'s own outcome', async () => {
-        stubFetch({ body: {
-            results: [{ gclid: 'G1', conversionAction: 'x' }, {}],
-            partialFailureError: { code: 3, message: 'm', details: [{ errors: [{
-                errorCode: { conversionUploadError: 'EXPIRED_EVENT' }, message: 'expired',
-                location: { fieldPathElements: [{ fieldName: 'conversions', index: 1 }] },
-            }] }] },
-        } });
+    it('sends each paid visit to Data Manager events:ingest for the conversion action', async () => {
+        stubFetch({ body: { requestId: 'req-1' } });
+        await runOfflineConversionUpload({ env: ENV, now });
+
+        const ingest = fetchCalls.find(c => c.url.includes('events:ingest'))!;
+        const body = JSON.parse(ingest.body);
+        expect(body.destinations).toEqual([{
+            operatingAccount: { accountType: 'GOOGLE_ADS', accountId: '1234567890' },
+            loginAccount: { accountType: 'GOOGLE_ADS', accountId: '1112223333' },
+            productDestinationId: '987654321',
+        }]);
+        expect(body.validateOnly).toBe(false);
+        expect(body.events[0]).toEqual({
+            adIdentifiers: { gclid: 'G1' },
+            conversionValue: 250,
+            currency: 'USD',
+            eventTimestamp: '2026-10-10T23:59:59-04:00',
+            transactionId: 'zenoti-visit-guest-1-2026-10-10',
+            eventSource: 'WEB',
+        });
+        expect(body.events).toHaveLength(2);
+    });
+
+    it('records accepted visits as sent with the request id, since Google confirms them later', async () => {
+        stubFetch({ body: { requestId: 'req-1' } });
         const r = await runOfflineConversionUpload({ env: ENV, now });
 
-        const upload = fetchCalls.find(c => c.url.includes(':uploadClickConversions'))!;
-        expect(upload.url).toBe('https://googleads.googleapis.com/v23/customers/1234567890:uploadClickConversions');
-        const body = JSON.parse(upload.body);
-        expect(body.partialFailure).toBe(true);
-        expect(body.validateOnly).toBe(false);
-        expect(body.conversions[0]).toEqual({
-            gclid: 'G1',
-            conversionAction: 'customers/1234567890/conversionActions/987654321',
-            conversionDateTime: '2026-10-10 23:59:59-04:00',
-            conversionValue: 250,
-            currencyCode: 'USD',
-            orderId: 'zenoti-visit-guest-1-2026-10-10',
-        });
-
-        expect(r).toMatchObject({ ok: true, planned: 2, uploaded: 1, failed: 1, retry: 0 });
+        expect(r).toMatchObject({ ok: true, planned: 2, sent: 2, requestId: 'req-1' });
         const writes = h.queries.filter(q => q.text.includes('INSERT INTO google_offline_uploads'));
         expect(writes).toHaveLength(2);
-        expect(writes[0].values).toContain('success');
-        expect(writes[1].values).toContain('failed');
-        // a retry row must be updatable later, so the write upserts instead of DO NOTHING
+        expect(writes[0].values).toContain('sent');
+        expect(writes[0].values).toContain('requestId req-1');
+        // an older retry row for the same visit must be overwritten
         expect(writes[0].text).toContain('DO UPDATE');
     });
 
-    it('only re-selects visits that are not already done for this action', async () => {
-        stubFetch({ body: { results: [{ gclid: 'G1' }, { gclid: 'G2' }] } });
+    it('only re-selects visits that are not already sent or done for this action', async () => {
+        stubFetch({ body: { requestId: 'req-1' } });
         await runOfflineConversionUpload({ env: ENV, now });
         const select = h.queries.find(q => q.text.includes('FROM mb_sales_history'))!;
-        expect(select.text).toMatch(/response_status IN \('success', 'already_uploaded', 'failed'\)/);
+        expect(select.text).toMatch(/response_status IN \('sent', 'success', 'already_uploaded', 'failed'\)/);
         expect(select.values).toContain('987654321');
     });
 
-    it('records nothing when the whole request fails, so every visit retries next run', async () => {
-        stubFetch({ status: 403, body: { error: { code: 403, message: 'USER_PERMISSION_DENIED' } } });
+    it('looks back the full 90-day click window, so an older paid visit still gets sent', async () => {
+        h.candidates = [];
+        stubFetch({ body: {} });
+        await runOfflineConversionUpload({ env: ENV, now });
+        const select = h.queries.find(q => q.text.includes('FROM mb_sales_history'))!;
+        expect(select.values).toContain('2026-07-21'); // 2026-10-19 minus 90 days
+    });
+
+    it('records nothing when the request is rejected, so every visit retries next run', async () => {
+        stubFetch({ status: 403, body: { error: { code: 403, message: 'PERMISSION_DENIED: datamanager scope' } } });
         const r = await runOfflineConversionUpload({ env: ENV, now });
         expect(r.ok).toBe(false);
-        expect(r.error).toContain('USER_PERMISSION_DENIED');
+        expect(r.error).toContain('PERMISSION_DENIED');
         expect(h.queries.filter(q => q.text.includes('INSERT INTO google_offline_uploads'))).toHaveLength(0);
     });
 
-    it('validateOnly sends validate_only and writes nothing', async () => {
-        stubFetch({ body: {} });
+    it('validateOnly sends validateOnly and writes nothing', async () => {
+        stubFetch({ body: { requestId: 'req-v' } });
         const r = await runOfflineConversionUpload({ env: ENV, now, validateOnly: true });
-        const body = JSON.parse(fetchCalls.find(c => c.url.includes(':uploadClickConversions'))!.body);
+        const body = JSON.parse(fetchCalls.find(c => c.url.includes('events:ingest'))!.body);
         expect(body.validateOnly).toBe(true);
         expect(r.validateOnly).toBe(true);
+        expect(r.sent).toBe(0);
         expect(h.queries.filter(q => q.text.includes('INSERT INTO google_offline_uploads'))).toHaveLength(0);
     });
 
@@ -242,7 +230,7 @@ describe('runOfflineConversionUpload', () => {
         h.candidates = [];
         stubFetch({ body: {} });
         const r = await runOfflineConversionUpload({ env: ENV, now });
-        expect(r).toMatchObject({ ok: true, planned: 0, uploaded: 0 });
+        expect(r).toMatchObject({ ok: true, planned: 0, sent: 0 });
         expect(fetchCalls).toHaveLength(0);
     });
 });

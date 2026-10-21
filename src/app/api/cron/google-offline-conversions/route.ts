@@ -1,5 +1,6 @@
 /**
- * Vercel Cron: upload paid Zenoti visits to Google Ads as offline click conversions.
+ * Vercel Cron: upload paid Zenoti visits to Google Ads as offline click conversions
+ * (via the Data Manager API).
  *
  * Runs daily at 10:00 UTC (vercel.json), after the 08:00 Zenoti sync. Logic, rules and
  * idempotency live in lib/integrations/google-offline-conversions.ts.
