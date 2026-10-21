@@ -62,12 +62,12 @@ export async function syncGhlAttribution(deadline: number): Promise<{
                 }
                 const attr = (await res.json()).contact?.attributionSource ?? null;
 
-                // Send JSON text with an explicit ::jsonb cast. The backfill script
-                // once stored 4,228 rows as JSON *strings* via sql.json(), after
-                // which ->>'sessionSource' read NULL everywhere.
+                // Bind the object itself. postgres.js JSON-encodes a ::jsonb param,
+                // so JSON.stringify() here double-encodes into a jsonb *string* and
+                // ->>'sessionSource' / ->>'gclid' read NULL (1,671 rows on 2026-10-20).
                 await sql`
                     UPDATE ghl_contacts_map
-                       SET attribution_source = ${attr ? JSON.stringify(attr) : null}::jsonb,
+                       SET attribution_source = ${attr}::jsonb,
                            attribution_synced_at = NOW()
                      WHERE contact_id = ${row.contact_id}
                        AND location_key = ${row.location_key}

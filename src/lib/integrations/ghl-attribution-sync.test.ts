@@ -32,7 +32,9 @@ describe('syncGhlAttribution', () => {
         expect(fetchMock.mock.calls[0][0]).toBe('https://services.leadconnectorhq.com/contacts/c1');
         const [call] = updates();
         expect(text(call)).toMatch(/attribution_source = \?::jsonb/);
-        expect(JSON.parse(call[1] as string)).toEqual(attr);
+        // Bound as the object: postgres.js JSON-encodes a ::jsonb param itself, so a
+        // pre-stringified value lands as a jsonb *string* and ->>'gclid' reads NULL.
+        expect(call[1]).toEqual(attr);
         expect(res).toEqual({ fetched: 1, withAttribution: 1, failed: 0, remaining: 0 });
     });
 
