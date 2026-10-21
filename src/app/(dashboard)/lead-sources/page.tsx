@@ -146,48 +146,54 @@ export default function LeadSourcesPage() {
                 </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center' }}>
-                <span style={{ fontSize: '13px', opacity: 0.7 }}>Lead age:</span>
-                {COHORTS.map(opt => (
-                    <button
-                        key={opt.id}
-                        className={`period-btn ${mode === 'rolling' && cohort === opt.id ? 'active' : ''}`}
-                        onClick={() => { setMode('rolling'); setCohort(opt.id); }}
-                    >
-                        {opt.label}
-                    </button>
-                ))}
-                <span style={{ fontSize: '13px', opacity: 0.7, marginLeft: '12px' }}>Or by month:</span>
-                <select
-                    className={`period-btn ${mode === 'month' ? 'active' : ''}`}
-                    value={mode === 'month' ? month : ''}
-                    onChange={e => {
-                        if (!e.target.value) return;
-                        setMonth(e.target.value);
-                        setMode('month');
-                    }}
-                >
-                    <option value="">Select a month…</option>
-                    {months.map(m => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
+            <div style={{ display: 'flex', gap: '12px 24px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', opacity: 0.7 }}>Lead age:</span>
+                    {COHORTS.map(opt => (
+                        <button
+                            key={opt.id}
+                            className={`period-btn ${mode === 'rolling' && cohort === opt.id ? 'active' : ''}`}
+                            onClick={() => { setMode('rolling'); setCohort(opt.id); }}
+                        >
+                            {opt.label}
+                        </button>
                     ))}
-                </select>
-                <span style={{ fontSize: '13px', opacity: 0.7, marginLeft: '12px' }}>Or exact dates:</span>
-                <input
-                    type="date"
-                    className={`period-btn ${mode === 'range' ? 'active' : ''}`}
-                    value={from}
-                    max={to || undefined}
-                    onChange={e => { setFrom(e.target.value); if (e.target.value && to) setMode('range'); }}
-                />
-                <span style={{ fontSize: '13px', opacity: 0.7 }}>to</span>
-                <input
-                    type="date"
-                    className={`period-btn ${mode === 'range' ? 'active' : ''}`}
-                    value={to}
-                    min={from || undefined}
-                    onChange={e => { setTo(e.target.value); if (from && e.target.value) setMode('range'); }}
-                />
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', opacity: 0.7 }}>Or by month:</span>
+                    <select
+                        className={`period-btn ${mode === 'month' ? 'active' : ''}`}
+                        value={mode === 'month' ? month : ''}
+                        onChange={e => {
+                            if (!e.target.value) return;
+                            setMonth(e.target.value);
+                            setMode('month');
+                        }}
+                    >
+                        <option value="">Select a month…</option>
+                        {months.map(m => (
+                            <option key={m.id} value={m.id}>{m.label}</option>
+                        ))}
+                    </select>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', opacity: 0.7 }}>Or exact dates:</span>
+                    <input
+                        type="date"
+                        className={`period-btn ${mode === 'range' ? 'active' : ''}`}
+                        value={from}
+                        max={to || undefined}
+                        onChange={e => { setFrom(e.target.value); if (e.target.value && to) setMode('range'); }}
+                    />
+                    <span style={{ fontSize: '13px', opacity: 0.7 }}>to</span>
+                    <input
+                        type="date"
+                        className={`period-btn ${mode === 'range' ? 'active' : ''}`}
+                        value={to}
+                        min={from || undefined}
+                        onChange={e => { setTo(e.target.value); if (from && e.target.value) setMode('range'); }}
+                    />
+                </div>
             </div>
 
             {loading && <div className="section-card"><div className="empty-state">Loading…</div></div>}
@@ -361,7 +367,7 @@ export default function LeadSourcesPage() {
                                 <strong>Some channels cannot be measured at all.</strong> A lead that arrives
                                 with neither a phone number nor an email can never be matched to a patient, so
                                 it can never be seen buying. Where most of a channel&rsquo;s leads look like that
-                                &mdash; organic social, mainly &mdash; the row says <em>not measurable</em>
+                                &mdash; organic social, mainly &mdash; the row says <em>not measurable</em>{' '}
                                 rather than showing a rate near zero. That is a gap in what reaches us, not a
                                 verdict on the channel, and it is not a reason to cut it.
                             </li>

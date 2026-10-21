@@ -782,7 +782,7 @@ export default function OrganicPage() {
                     <h1>Organic Performance</h1>
                     <p className="subtitle">Track your social media growth and engagement across all platforms</p>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     {lastFetched && (
                         <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                             Updated {lastFetched.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -804,7 +804,7 @@ export default function OrganicPage() {
                     >
                         {loading ? 'Loading…' : '↻ Refresh'}
                     </button>
-                    <div className="period-selector">
+                    <div className="period-selector is-scroll">
                         {(['7d', '30d', '90d'] as Period[]).map(p => (
                             <button
                                 key={p}

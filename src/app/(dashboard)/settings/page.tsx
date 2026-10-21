@@ -524,7 +524,7 @@ export default function SettingsPage() {
                                 {pwMsg.text}
                             </div>
                         )}
-                        <form onSubmit={handleChangeOwnPassword} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
+                        <form onSubmit={handleChangeOwnPassword} className="password-form">
                             <div>
                                 <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Current Password</label>
                                 <input
@@ -660,7 +660,7 @@ export default function SettingsPage() {
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '24px' }}>
                                 {[
                                     ...posSyncCards(syncStatus),
-                                    { label: 'GHL Contacts', value: syncStatus.ghl?.totalContacts?.toLocaleString() || '0', sub: syncStatus.ghl?.lastSync || 'Never synced' },
+                                    { label: 'GHL Contacts', value: syncStatus.ghl?.totalContacts?.toLocaleString() || '0', sub: syncStatus.ghl?.lastSync ? `synced ${String(syncStatus.ghl.lastSync).slice(0, 10)}` : 'Never synced' },
                                     { label: 'GHL w/ Phone', value: syncStatus.ghl?.withPhone?.toLocaleString() || '0', sub: `${syncStatus.ghl?.totalContacts ? Math.round((syncStatus.ghl.withPhone / syncStatus.ghl.totalContacts) * 100) : 0}% of total` },
                                     { label: 'GHL w/ Email', value: syncStatus.ghl?.withEmail?.toLocaleString() || '0', sub: `${syncStatus.ghl?.totalContacts ? Math.round((syncStatus.ghl.withEmail / syncStatus.ghl.totalContacts) * 100) : 0}% of total` },
                                 ].map(stat => (

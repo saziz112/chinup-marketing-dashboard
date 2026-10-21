@@ -1796,6 +1796,13 @@ button {
 
 .page-toolbar .sub-tabs { margin-bottom: 0; }
 
+.password-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+
 /* Scrollable segmented control (periods, locations, channels) */
 .period-selector.is-scroll {
   max-width: 100%;
@@ -2382,6 +2389,8 @@ a.platform-card { display: block; text-decoration: none; color: inherit; }
   .page-header-row > .period-selector .period-btn { flex: 1 0 auto; }
 
   .period-btn { min-height: 40px; }
+
+  .password-form { grid-template-columns: 1fr; }
 
   .page-toolbar { flex-direction: column; align-items: stretch; margin-bottom: 20px; }
   .page-toolbar .drp-toggle { width: 100%; min-height: var(--tap); }
