@@ -68,7 +68,11 @@ export async function GET(req: NextRequest) {
             const bySource = { sales: {}, appts: {}, clients: {} } as Record<string, Record<string, number>>;
             for (const r of rows) bySource[r.t as string][(r.source as string) ?? 'null'] = r.n as number;
             const states = await sql`SELECT sync_type, last_sync_date FROM mb_sync_state WHERE sync_type LIKE 'zenoti%'`;
-            return { migrated: true, bySource, syncStates: states.rows };
+            // Zenoti clients refresh daily via the appointments sync, which writes no
+            // state row of its own (zenoti_guests is the one-time backfill), so date
+            // them by their latest upsert instead.
+            const clients = await sql`SELECT MAX(synced_at) AS last FROM mb_clients_cache WHERE source = 'zenoti'`;
+            return { migrated: true, bySource, syncStates: states.rows, clientsLastSync: clients.rows[0]?.last ?? null };
         } catch {
             return { migrated: false };
         }

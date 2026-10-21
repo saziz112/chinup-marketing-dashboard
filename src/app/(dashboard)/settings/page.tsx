@@ -3,6 +3,7 @@
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { posSyncCards } from '@/lib/pos-sync-cards';
 
 interface UserRow {
     id: number;
@@ -658,9 +659,7 @@ export default function SettingsPage() {
                             {/* Status Cards */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '24px' }}>
                                 {[
-                                    { label: 'POS Sales', value: syncStatus.mindbody?.salesCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.syncType === 'sales')?.lastSyncDate || 'Never synced' },
-                                    { label: 'POS Appointments', value: syncStatus.mindbody?.appointmentsCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.syncType === 'appointments')?.lastSyncDate || 'Never synced' },
-                                    { label: 'POS Clients', value: syncStatus.mindbody?.clientsCount?.toLocaleString() || '0', sub: syncStatus.mindbody?.syncStates?.find((s: any) => s.syncType === 'clients')?.lastSyncDate || 'Never synced' },
+                                    ...posSyncCards(syncStatus),
                                     { label: 'GHL Contacts', value: syncStatus.ghl?.totalContacts?.toLocaleString() || '0', sub: syncStatus.ghl?.lastSync || 'Never synced' },
                                     { label: 'GHL w/ Phone', value: syncStatus.ghl?.withPhone?.toLocaleString() || '0', sub: `${syncStatus.ghl?.totalContacts ? Math.round((syncStatus.ghl.withPhone / syncStatus.ghl.totalContacts) * 100) : 0}% of total` },
                                     { label: 'GHL w/ Email', value: syncStatus.ghl?.withEmail?.toLocaleString() || '0', sub: `${syncStatus.ghl?.totalContacts ? Math.round((syncStatus.ghl.withEmail / syncStatus.ghl.totalContacts) * 100) : 0}% of total` },
